@@ -35,7 +35,8 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Obsidian-style resolution: `[[Title]]` if the title is unique, otherwise the shortest unique path `[[archive/2019/Title]]`.
 - `[[Title|alias]]` fully supported. `[[Title#Heading]]` links to the note (no heading jump yet). No embeds.
 - Ambiguous link: warning style, click opens a picker. Unresolved link: distinct style, click creates the note.
-- Rename rewrites links in other notes in the same transaction, in the same form.
+- A note whose folder *equals* the link path wins outright (so `[[T]]` → root `T`, `[[a/T]]` → `a/T` over `x/a/T`); otherwise every folder *ending in* the path matches.
+- Rename, move **and create** preserve meaning: any link that resolved uniquely before the change but not after is rewritten to the shortest unique link of its original target (keeping `#heading` and `|alias`), in the same transaction. Bulk import skips this and reports ambiguities instead.
 - Backlinks and outgoing-links panels.
 
 ## Data model

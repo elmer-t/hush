@@ -1,0 +1,135 @@
+//! The encrypted vault: one SQLCipher database file per vault. All database access goes
+//! through [`Vault`].
+
+mod links;
+mod notes;
+mod schema;
+mod search;
+
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
+
+pub use links::{Backlink, OutgoingLink, Resolution};
+pub use notes::{Note, NoteSummary};
+pub use search::{DateField, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("wrong passphrase, or not a Hush vault")]
+    WrongPassphrase,
+    #[error("passphrase must not be empty")]
+    EmptyPassphrase,
+    #[error("vault file not found")]
+    VaultNotFound,
+    #[error("a file already exists at that location")]
+    VaultExists,
+    #[error("vault was created by a newer version of Hush")]
+    UnsupportedVersion,
+    #[error("invalid title: {0}")]
+    InvalidTitle(String),
+    #[error("a note with this title already exists in this folder")]
+    TitleTaken,
+    #[error("note not found")]
+    NoteNotFound,
+    #[error(transparent)]
+    Sql(#[from] rusqlite::Error),
+}
+
+pub struct Vault {
+    conn: Connection,
+}
+
+impl Vault {
+    pub fn create(path: &Path, passphrase: &str) -> Result<Self> {
+        if path.exists() {
+            return Err(Error::VaultExists);
+        }
+        let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
+        Self::init(conn)
+    }
+
+    pub fn open(path: &Path, passphrase: &str) -> Result<Self> {
+        if !path.is_file() {
+            return Err(Error::VaultNotFound);
+        }
+        let conn = connect(path, passphrase, OpenFlags::empty())?;
+        Self::init(conn)
+    }
+
+    fn init(mut conn: Connection) -> Result<Self> {
+        schema::migrate(&mut conn)?;
+        Ok(Self { conn })
+    }
+
+    pub fn change_passphrase(&self, new_passphrase: &str) -> Result<()> {
+        if new_passphrase.is_empty() {
+            return Err(Error::EmptyPassphrase);
+        }
+        self.conn.pragma_update(None, "rekey", new_passphrase)?;
+        Ok(())
+    }
+
+    /// Closes the connection; SQLCipher wipes its key material on close.
+    pub fn close(self) -> Result<()> {
+        self.conn.close().map_err(|(_, e)| e.into())
+    }
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [key, value],
+        )?;
+        Ok(())
+    }
+}
+
+fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection> {
+    if passphrase.is_empty() {
+        return Err(Error::EmptyPassphrase);
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | extra,
+    )?;
+    // SQLCipher logs decryption failures to stderr; keep logs silent.
+    run_pragma(&conn, "PRAGMA cipher_log_level = NONE")?;
+    conn.pragma_update(None, "key", passphrase)?;
+    // The key is only checked on the first read.
+    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
+        Ok(_) => {}
+        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => return Err(Error::WrongPassphrase),
+        Err(e) => return Err(e.into()),
+    }
+    conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "secure_delete", "ON")?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(conn)
+}
+
+/// Runs a pragma and discards whatever rows it returns.
+fn run_pragma(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
