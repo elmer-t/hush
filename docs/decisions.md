@@ -1,0 +1,81 @@
+# Hush MVP – Decisions
+
+Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](project-brief.md); where they differ, this document wins.
+
+## Platform & stack
+- **Windows only** for the MVP. Keep code free of platform-specific shortcuts so macOS/Linux can follow.
+- Tauri 2 + **Svelte 5** + TypeScript + Vite, CodeMirror 6, **npm**.
+- rusqlite with **`bundled-sqlcipher-vendored-openssl`** (OpenSSL libcrypto compiled from source and statically linked; needs Strawberry Perl at build time). SQLCipher needs a crypto provider; vendoring avoids system OpenSSL on Windows.
+- Bundle identifier `com.redheadit.hush`. No licence file for now.
+
+## Vaults & security
+- Multiple vaults (one `.db` file each). Unlock screen offers "Open existing…" / "Create new…" and remembers recent vault **paths** in an app config file — paths only, never content or key material.
+- SQLCipher default KDF (PBKDF2). Passphrase/key never written to disk. **No recovery**: the create screen states this plainly.
+- Change passphrase via `PRAGMA rekey`.
+- Auto-lock after N minutes idle (default 10, configurable, stored inside the vault) and on demand. OS sleep / screen-lock hooks deferred to v2.
+- On lock: close the connection, zeroize the key in Rust, wipe frontend state.
+- Preview: Markdown rendered with raw HTML **disabled**, output sanitised with DOMPurify. Strict CSP blocking all remote loads (images, scripts, fonts). External links open in the system browser, on click only.
+- Delete is a hard delete with confirmation; `PRAGMA secure_delete=ON`.
+- No export in the MVP.
+- No note content in logs; devtools disabled in release builds.
+
+## Notes
+- Identity: **`(folder, title)` is unique**, not the title alone. `folder` is the full path (e.g. `archive/2019/march`), indexed.
+- Title is a separate field (from the filename on import). Renaming happens in the title field.
+- Autosave 500 ms after typing stops; no save button.
+- Editor: split view (source | preview) with a preview-only toggle. Live preview deferred to v2.
+- **Frontmatter in the body is the single source of truth.** Author, topic, tags and attributes are derived from it on every save. The metadata panel edits the frontmatter.
+- Tags = inline `#tags` ∪ frontmatter `tags`.
+- Author: free text, defaults to a vault-level "default author" setting.
+- Topic: free field, defaults to the top-level folder on import; rules can override.
+- Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree. Folder rename deferred to v2.
+
+## Links
+- Stored as `links(from_note_id, target_text)` and resolved at query time.
+- Obsidian-style resolution: `[[Title]]` if the title is unique, otherwise the shortest unique path `[[archive/2019/Title]]`.
+- `[[Title|alias]]` fully supported. `[[Title#Heading]]` links to the note (no heading jump yet). No embeds.
+- Ambiguous link: warning style, click opens a picker. Unresolved link: distinct style, click creates the note.
+- Rename rewrites links in other notes in the same transaction, in the same form.
+- Backlinks and outgoing-links panels.
+
+## Data model
+- `notes` (id, folder, title, body, author, topic, created_at, updated_at), unique `(folder, title)`
+- `tags` (id, name), `note_tags` (note_id, tag_id)
+- `note_attributes` (note_id, key, value), indexed on `(key, value)`
+- `links` (from_note_id, target_text)
+- `notes_fts` (FTS5 over title and body)
+- `settings` (key, value) — auto-lock minutes, default author, …
+- `import_rules` (see Import)
+- WAL mode. Indexes on folder, topic, author, updated_at, created_at, note_tags.
+
+## Search
+- FTS5, bm25 ranking, highlighted snippets, search as you type (~150 ms debounce).
+- Filters: tags (multi-select, AND), topic, author, folder, date range (created/updated toggle), attribute key = value.
+
+## Import
+- Source: an existing Markdown folder (Obsidian vault). Real data is mostly an online archive with partial, malformed HTML. Real files are not available on the dev machine: develop against a **dummy fixture vault** (~20 files) that mimics them.
+- Background task with progress and cancel; tens of thousands of files expected; transactions in batches of 500. Note list is virtualised.
+- Dry-run preview (before/after samples, per-file warnings) before anything is written. Source folder never modified. Raw text is not kept.
+- **HTML cleanup per block**: split on blank lines; only blocks containing tags go through a tolerant HTML5 parser (`html5ever` via `htmd`); unclosed tags are closed at block end; unconvertible markup is dropped and reported.
+- **Unwrap hard wraps** inside paragraphs; leave headings, list items, quotes, code blocks, tables and blank-line breaks alone; never join a line ending in two spaces.
+- **Label/attribute rules** (user-configurable, stored inside the vault, run at import only):
+  - `source`: filename | frontmatter | first N lines | body
+  - `pattern`: Rust `regex` (linear time; no lookarounds/backreferences)
+  - `target`: tag | author | author_email | topic | created_at | attribute:<key>
+  - `map`: optional value mapping (e.g. `jr → Journal`, `dr → Dream`)
+  - `strip`: remove matched text from the body
+  - Test button previews matches against a pasted sample. Ship a few defaults (frontmatter tags/author, one example label rule).
+  - Rule results are written into the note's frontmatter.
+- `created_at` precedence: rule match → frontmatter `created`/`date` → date in filename → file mtime. `updated_at` = file mtime.
+- Import report lists warnings and ambiguous links.
+
+## UI
+Three panes: left = search, filters, note list / folder tree (sorted by updated); centre = title + editor; right = metadata panel, backlinks, outgoing links. Side panes collapsible.
+
+## Tests
+- Rust integration tests on encrypted temp DBs: create, rename + link rewrite, search with filters, backlinks, lock/unlock, wrong passphrase, rekey.
+- Importer built test-first with `insta` snapshot tests against the fixture vault.
+- Frontend: `svelte-check` / type checking only.
+
+## Build order
+1. Scaffold  2. DB layer + tests  3. Unlock/lock  4. Notes + editor  5. Links/backlinks  6. Search  7. Import (test-first), rules editor last.
