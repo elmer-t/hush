@@ -22,6 +22,8 @@ pub struct Parsed {
     /// Unix millis from frontmatter `created` (or `date`).
     pub created_at: Option<i64>,
     pub tags: Vec<String>,
+    /// The subset of `tags` listed in the frontmatter (as opposed to inline `#tags`).
+    pub frontmatter_tags: Vec<String>,
     /// Every other frontmatter key, lowercased; list values become one pair per item.
     pub attributes: Vec<(String, String)>,
     pub links: Vec<WikiLink>,
@@ -128,6 +130,88 @@ pub fn split_frontmatter(body: &str) -> Option<(&str, usize)> {
     None
 }
 
+/// Sets the top-level frontmatter `key` to `values`, or removes it when `values` is empty.
+/// Creates the frontmatter block when needed and drops it once it is empty; every other
+/// line is left exactly as written.
+pub fn set_frontmatter_field(body: &str, key: &str, values: &[String]) -> String {
+    let crlf = body.starts_with("---\r\n") || (!body.starts_with("---\n") && body.contains("\r\n"));
+    let eol = if crlf { "\r\n" } else { "\n" };
+    let Some((yaml, end)) = split_frontmatter(body) else {
+        if values.is_empty() {
+            return body.to_string();
+        }
+        return format!("---{eol}{}---{eol}{body}", render_field(key, values, eol));
+    };
+    let yaml_start = if body.starts_with("---\r\n") { 5 } else { 4 };
+    let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
+
+    let mut new_yaml = String::new();
+    match lines.iter().position(|l| top_level_key(l).is_some_and(|k| k.eq_ignore_ascii_case(key))) {
+        Some(start) => {
+            let end = start + 1 + lines[start + 1..].iter().take_while(|l| l.starts_with([' ', '\t', '-'])).count();
+            let written_key = top_level_key(lines[start]).unwrap_or(key);
+            new_yaml.extend(lines[..start].iter().copied());
+            if !values.is_empty() {
+                new_yaml.push_str(&render_field(written_key, values, eol));
+            }
+            new_yaml.extend(lines[end..].iter().copied());
+        }
+        None => {
+            new_yaml.push_str(yaml);
+            if !values.is_empty() {
+                if !new_yaml.is_empty() && !new_yaml.ends_with('\n') {
+                    new_yaml.push_str(eol);
+                }
+                new_yaml.push_str(&render_field(key, values, eol));
+            }
+        }
+    }
+
+    let rest = &body[end..];
+    if new_yaml.trim().is_empty() {
+        return rest.to_string();
+    }
+    let open = &body[..yaml_start];
+    let close = &body[yaml_start + yaml.len()..end];
+    format!("{open}{new_yaml}{close}{rest}")
+}
+
+/// The key of a `key: value` line at the top level of the frontmatter.
+fn top_level_key(line: &str) -> Option<&str> {
+    if line.starts_with([' ', '\t', '-', '#']) {
+        return None;
+    }
+    line.split_once(':').map(|(k, _)| k.trim()).filter(|k| !k.is_empty())
+}
+
+/// `tags` is always a list; other keys are a plain value when there is only one.
+fn render_field(key: &str, values: &[String], eol: &str) -> String {
+    let rendered: Vec<String> = values.iter().map(|v| yaml_scalar(v)).collect();
+    if rendered.len() == 1 && !key.eq_ignore_ascii_case("tags") {
+        format!("{key}: {}{eol}", rendered[0])
+    } else {
+        format!("{key}: [{}]{eol}", rendered.join(", "))
+    }
+}
+
+/// A YAML scalar that reads back as the same string, quoted only when it has to be.
+fn yaml_scalar(value: &str) -> String {
+    let value = value.replace(['\r', '\n'], " ");
+    let value = value.trim();
+    let reserved = matches!(value.to_lowercase().as_str(), "" | "~" | "null" | "true" | "false");
+    let plain = !reserved
+        && !value.starts_with(|c: char| "-?:,[]{}#&*!|>'\"%@`".contains(c))
+        && !value.contains([',', '[', ']', '{', '}'])
+        && !value.contains(": ")
+        && !value.contains(" #")
+        && !value.ends_with(':');
+    if plain {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
 /// Parses `2019-03-04`, `2019-03-04 10:30[:00]`, `2019-03-04T10:30[:00]` or RFC 3339 into
 /// unix millis. Dates without an offset are taken as UTC.
 pub fn parse_date(s: &str) -> Option<i64> {
@@ -162,6 +246,7 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
                     let tag = tag.trim().trim_start_matches('#');
                     if !tag.is_empty() {
                         push_unique(&mut parsed.tags, tag);
+                        push_unique(&mut parsed.frontmatter_tags, tag);
                     }
                 }
             }
@@ -311,6 +396,48 @@ mod tests {
         let body = "---\na: 1\n---\nsee [[X]]";
         let p = parse(body);
         assert_eq!(&body[p.links[0].target_range.clone()], "X");
+    }
+
+    fn set(body: &str, key: &str, values: &[&str]) -> String {
+        let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+        set_frontmatter_field(body, key, &values)
+    }
+
+    #[test]
+    fn set_field_creates_frontmatter() {
+        assert_eq!(set("Body", "author", &["Ada"]), "---\nauthor: Ada\n---\nBody");
+        assert_eq!(set("Body", "author", &[]), "Body");
+        assert_eq!(set("a\r\nb", "topic", &["T"]), "---\r\ntopic: T\r\n---\r\na\r\nb");
+    }
+
+    #[test]
+    fn set_field_replaces_only_its_own_lines() {
+        let body = "---\n# comment\nTags:\n  - a\n  - b\nauthor: Ada\n---\nBody #x";
+        assert_eq!(
+            set(body, "tags", &["a", "c"]),
+            "---\n# comment\nTags: [a, c]\nauthor: Ada\n---\nBody #x"
+        );
+        assert_eq!(set(body, "author", &["Bea"]), "---\n# comment\nTags:\n  - a\n  - b\nauthor: Bea\n---\nBody #x");
+        assert_eq!(set(body, "mood", &["calm"]), "---\n# comment\nTags:\n  - a\n  - b\nauthor: Ada\nmood: calm\n---\nBody #x");
+    }
+
+    #[test]
+    fn set_field_removes_key_and_empty_frontmatter() {
+        assert_eq!(set("---\nauthor: Ada\ntopic: T\n---\nBody", "author", &[]), "---\ntopic: T\n---\nBody");
+        assert_eq!(set("---\nauthor: Ada\n---\nBody", "author", &[]), "Body");
+    }
+
+    #[test]
+    fn set_field_values_round_trip() {
+        let tricky = ["a: b", "#notcomment", "x, y", "say \"hi\"", "null", "2019", "back\\slash", "[x]"];
+        for value in tricky {
+            let body = set("", "note", &[value]);
+            assert_eq!(parse(&body).attributes, vec![("note".to_string(), value.to_string())], "{body}");
+        }
+        let body = set("", "tags", &["a b", "c,d"]);
+        assert_eq!(parse(&body).frontmatter_tags, vec!["a", "b", "c", "d"]);
+        let body = set("", "tags", &["one"]);
+        assert_eq!(body, "---\ntags: [one]\n---\n");
     }
 
     #[test]

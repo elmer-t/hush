@@ -6,13 +6,15 @@ pub mod session;
 
 use std::time::Duration;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
-use crate::commands::LOCKED_EVENT;
+use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
 use crate::config::Config;
 use crate::session::Session;
 
 const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// How long the frontend gets to save pending edits before the app exits anyway.
+const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,18 +39,50 @@ pub fn run() {
             });
             Ok(())
         })
+        // Closing is handled here rather than with a webview close listener, which would
+        // keep the window open forever if the page reloaded (as it does on lock).
+        .on_window_event(|window, event| {
+            let WindowEvent::CloseRequested { api, .. } = event else { return };
+            let app = window.app_handle();
+            if app.state::<Session>().path().is_none() {
+                return;
+            }
+            api.prevent_close();
+            let _ = window.emit(CLOSE_EVENT, ());
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(CLOSE_GRACE);
+                app.exit(0);
+            });
+        })
         .invoke_handler(tauri::generate_handler![
-            commands::recent_vaults,
-            commands::forget_recent_vault,
-            commands::create_vault,
-            commands::open_vault,
-            commands::lock_vault,
-            commands::vault_status,
-            commands::touch,
-            commands::auto_lock_minutes,
-            commands::set_auto_lock_minutes,
-            commands::change_passphrase,
+            commands::vault::recent_vaults,
+            commands::vault::forget_recent_vault,
+            commands::vault::create_vault,
+            commands::vault::open_vault,
+            commands::vault::lock_vault,
+            commands::vault::vault_status,
+            commands::vault::touch,
+            commands::vault::auto_lock_minutes,
+            commands::vault::set_auto_lock_minutes,
+            commands::vault::change_passphrase,
+            commands::vault::exit_app,
+            commands::notes::list_notes,
+            commands::notes::folders,
+            commands::notes::create_note,
+            commands::notes::open_note,
+            commands::notes::save_note,
+            commands::notes::rename_note,
+            commands::notes::delete_note,
+            commands::notes::edit_frontmatter,
+            commands::notes::default_author,
+            commands::notes::set_default_author,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                app.state::<Session>().lock();
+            }
+        });
 }

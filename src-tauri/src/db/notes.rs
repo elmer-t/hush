@@ -33,6 +33,20 @@ pub struct NoteSummary {
     pub updated_at: i64,
 }
 
+impl Note {
+    pub fn summary(&self) -> NoteSummary {
+        NoteSummary {
+            id: self.id,
+            folder: self.folder.clone(),
+            title: self.title.clone(),
+            author: self.author.clone(),
+            topic: self.topic.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
 pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at";
 
@@ -68,6 +82,18 @@ impl Vault {
         })?;
         tx.commit()?;
         Ok(id)
+    }
+
+    /// Creates a note with the first free title of "Untitled", "Untitled 2", … in `folder`.
+    pub fn create_untitled(&mut self, folder: &str, body: &str) -> Result<i64> {
+        let mut n = 1;
+        loop {
+            let title = if n == 1 { "Untitled".to_string() } else { format!("Untitled {n}") };
+            match self.create_note(folder, &title, body) {
+                Err(Error::TitleTaken) => n += 1,
+                result => return result,
+            }
+        }
     }
 
     pub fn note(&self, id: i64) -> Result<Note> {

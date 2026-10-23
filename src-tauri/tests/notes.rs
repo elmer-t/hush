@@ -42,6 +42,18 @@ fn titles_are_unique_per_folder_case_insensitive() {
 }
 
 #[test]
+fn untitled_notes_get_the_first_free_title() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_untitled("x", "").unwrap();
+    let b = vault.create_untitled("x", "").unwrap();
+    let c = vault.create_untitled("y", "").unwrap();
+    vault.delete_note(a).unwrap();
+    let d = vault.create_untitled("x", "").unwrap();
+    let titles: Vec<String> = [b, c, d].iter().map(|id| vault.note(*id).unwrap().title).collect();
+    assert_eq!(titles, vec!["Untitled 2", "Untitled", "Untitled"]);
+}
+
+#[test]
 fn invalid_titles_are_rejected() {
     let (_dir, mut vault) = common::vault();
     for bad in ["", "  ", "a/b", "a|b", "a#b", "[[x]]"] {

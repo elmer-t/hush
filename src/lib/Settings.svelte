@@ -13,9 +13,24 @@
   let passphraseStatus = $state("");
   let passphraseError = $state("");
 
+  let author = $state("");
+  let authorStatus = $state("");
+  let authorError = $state("");
+
   onMount(async () => {
-    minutes = await api.autoLockMinutes();
+    [minutes, author] = await Promise.all([api.autoLockMinutes(), api.defaultAuthor().then((a) => a ?? "")]);
   });
+
+  async function saveAuthor(e: SubmitEvent) {
+    e.preventDefault();
+    authorStatus = authorError = "";
+    try {
+      await api.setDefaultAuthor(author);
+      authorStatus = "Saved.";
+    } catch (err) {
+      authorError = errorMessage(err);
+    }
+  }
 
   async function saveMinutes(e: SubmitEvent) {
     e.preventDefault();
@@ -49,6 +64,19 @@
 </script>
 
 <div class="settings">
+  <form onsubmit={saveAuthor}>
+    <h2>Default author</h2>
+    <label>
+      Added to the frontmatter of new notes
+      <input bind:value={author} placeholder="No default author" />
+    </label>
+    {#if authorError}<p class="error" role="alert">{authorError}</p>{/if}
+    <div class="actions">
+      {#if authorStatus}<span class="muted">{authorStatus}</span>{/if}
+      <button type="submit">Save</button>
+    </div>
+  </form>
+
   <form onsubmit={saveMinutes}>
     <h2>Auto-lock</h2>
     <label>

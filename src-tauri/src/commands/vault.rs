@@ -1,67 +1,15 @@
-//! Tauri commands for the vault lifecycle: recent vaults, create/open, lock, auto-lock and
-//! passphrase changes.
+//! Vault lifecycle: recent vaults, create/open, lock, auto-lock and passphrase changes.
 
 use std::path::PathBuf;
 
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroizing;
 
+use super::{LOCKED_EVENT, Result};
 use crate::config::Config;
-use crate::db::{self, Vault};
-use crate::session::{self, Session, SessionError};
-
-/// Emitted with the reason (`"manual"` or `"idle"`) whenever the vault locks.
-pub const LOCKED_EVENT: &str = "vault-locked";
-
-#[derive(Debug, thiserror::Error)]
-pub enum CommandError {
-    #[error(transparent)]
-    Session(#[from] SessionError),
-    #[error("could not save app config: {0}")]
-    Config(#[from] std::io::Error),
-}
-
-impl From<db::Error> for CommandError {
-    fn from(e: db::Error) -> Self {
-        Self::Session(e.into())
-    }
-}
-
-impl CommandError {
-    fn kind(&self) -> &'static str {
-        use db::Error as D;
-        match self {
-            Self::Session(SessionError::Locked) => "locked",
-            Self::Session(SessionError::InvalidAutoLock) => "invalidAutoLock",
-            Self::Session(SessionError::Db(e)) => match e {
-                D::WrongPassphrase => "wrongPassphrase",
-                D::EmptyPassphrase => "emptyPassphrase",
-                D::VaultNotFound => "vaultNotFound",
-                D::VaultExists => "vaultExists",
-                D::UnsupportedVersion => "unsupportedVersion",
-                D::InvalidTitle(_) => "invalidTitle",
-                D::TitleTaken => "titleTaken",
-                D::NoteNotFound => "noteNotFound",
-                D::Sql(_) => "database",
-            },
-            Self::Config(_) => "config",
-        }
-    }
-}
-
-/// Reaches the frontend as `{ kind, message }`.
-impl Serialize for CommandError {
-    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("CommandError", 2)?;
-        st.serialize_field("kind", self.kind())?;
-        st.serialize_field("message", &self.to_string())?;
-        st.end()
-    }
-}
-
-type Result<T> = std::result::Result<T, CommandError>;
+use crate::db::Vault;
+use crate::session::{self, Session};
 
 #[derive(Serialize)]
 pub struct VaultInfo {
@@ -166,4 +114,10 @@ pub async fn change_passphrase(session: State<'_, Session>, current: String, new
         v.verify_passphrase(&current)?;
         v.change_passphrase(&new)
     })?)
+}
+
+/// Exits after the frontend has saved pending edits; the vault is locked on exit.
+#[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
 }

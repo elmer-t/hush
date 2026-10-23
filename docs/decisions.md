@@ -28,7 +28,8 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Tags = inline `#tags` ∪ frontmatter `tags`.
 - Author: free text, defaults to a vault-level "default author" setting.
 - Topic: free field, defaults to the top-level folder on import; rules can override.
-- Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree. Folder rename deferred to v2.
+- Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree (they are not stored, so one without notes disappears on lock).
+- New notes are titled "Untitled", "Untitled 2", … in the selected folder, with the default author in their frontmatter. Shortcuts: Ctrl+N new note, Ctrl+L lock. Folder rename deferred to v2.
 
 ## Links
 - Stored as `links(from_note_id, target_text)` and resolved at query time.
@@ -79,4 +80,4 @@ Three panes: left = search, filters, note list / folder tree (sorted by updated)
 - Frontend: `svelte-check` / type checking only.
 
 ## Build order
-1. Scaffold  2. DB layer + tests  3. Unlock/lock  4. Notes + editor  5. Links/backlinks  6. Search  7. Import (test-first), rules editor last.
+1. Scaffold  2. DB layer + tests  3. Unlock/lock  4. Notes + editor  5. Search  6. Import (test-first), rules editor last. Nice to have: links/backlinks
