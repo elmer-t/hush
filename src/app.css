@@ -11,6 +11,7 @@
   --warning-border: #f0c36d;
   --selection: #d7defa;
   --active-line: #f1f1ee;
+  --highlight: #ffe58a;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 
   font-family: system-ui, "Segoe UI", sans-serif;
@@ -35,6 +36,7 @@
     --warning-border: #8a6a24;
     --selection: #34406b;
     --active-line: #2b2b2f;
+    --highlight: #6b5a1e;
   }
 }
 
@@ -48,12 +50,14 @@ body {
 }
 
 input,
+select,
 button {
   font: inherit;
   color: inherit;
 }
 
-input {
+input,
+select {
   width: 100%;
   padding: 0.5em 0.65em;
   border: 1px solid var(--border);
@@ -62,6 +66,7 @@ input {
 }
 
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

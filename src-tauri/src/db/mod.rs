@@ -13,7 +13,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use links::{Backlink, OutgoingLink, Resolution};
 pub use notes::{Note, NoteSummary};
-pub use search::{DateField, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
 
 pub type Result<T> = std::result::Result<T, Error>;
 

@@ -1,6 +1,7 @@
 //! Tauri commands. Every error reaches the frontend as `{ kind, message }`.
 
 pub mod notes;
+pub mod search;
 pub mod vault;
 
 use serde::{Serialize, Serializer};

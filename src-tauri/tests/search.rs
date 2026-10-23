@@ -1,6 +1,6 @@
 mod common;
 
-use hush_lib::db::{DateField, SearchQuery, Vault};
+use hush_lib::db::{DateField, Facets, SearchQuery, Vault};
 use hush_lib::markdown::parse_date;
 
 fn titles(vault: &Vault, q: &SearchQuery) -> Vec<String> {
@@ -36,6 +36,7 @@ fn text_search_ranks_title_matches_first_with_snippets() {
     let (_dir, vault) = seeded();
     let hits = vault.search(&text("lighthouse")).unwrap();
     assert_eq!(hits.iter().map(|h| h.note.title.as_str()).collect::<Vec<_>>(), vec!["Lighthouse", "Dream of the sea"]);
+    assert_eq!(hits[0].snippet, None, "title-only match has no body snippet");
     let snippet = hits[1].snippet.as_deref().unwrap();
     assert!(snippet.contains("\u{2}lighthouse\u{3}"), "{snippet}");
 }
@@ -111,4 +112,26 @@ fn limit_and_offset() {
     let (_dir, vault) = seeded();
     let q = SearchQuery { limit: Some(1), offset: 1, ..Default::default() };
     assert_eq!(titles(&vault, &q), vec!["Dream of the sea"]);
+}
+
+#[test]
+fn facets_list_values_in_use() {
+    let (_dir, mut vault) = seeded();
+    let strings = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        vault.facets().unwrap(),
+        Facets {
+            tags: strings(&["dr", "jr", "jr/night"]),
+            topics: strings(&["Dreams", "Travel"]),
+            authors: strings(&["Ada", "Bob"]),
+            attribute_keys: strings(&["mood"]),
+        }
+    );
+    assert_eq!(vault.attribute_values("MOOD").unwrap(), strings(&["calm"]));
+
+    let id = vault.search(&text("dream")).unwrap()[0].note.id;
+    vault.delete_note(id).unwrap();
+    let facets = vault.facets().unwrap();
+    assert_eq!(facets.tags, strings(&["jr"]), "tags of deleted notes are not offered");
+    assert_eq!(facets.authors, strings(&["Ada"]));
 }

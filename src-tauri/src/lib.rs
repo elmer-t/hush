@@ -67,7 +67,6 @@ pub fn run() {
             commands::vault::set_auto_lock_minutes,
             commands::vault::change_passphrase,
             commands::vault::exit_app,
-            commands::notes::list_notes,
             commands::notes::folders,
             commands::notes::create_note,
             commands::notes::open_note,
@@ -77,6 +76,9 @@ pub fn run() {
             commands::notes::edit_frontmatter,
             commands::notes::default_author,
             commands::notes::set_default_author,
+            commands::search::search_notes,
+            commands::search::search_facets,
+            commands::search::attribute_values,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

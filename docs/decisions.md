@@ -29,7 +29,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Author: free text, defaults to a vault-level "default author" setting.
 - Topic: free field, defaults to the top-level folder on import; rules can override.
 - Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree (they are not stored, so one without notes disappears on lock).
-- New notes are titled "Untitled", "Untitled 2", … in the selected folder, with the default author in their frontmatter. Shortcuts: Ctrl+N new note, Ctrl+L lock. Folder rename deferred to v2.
+- New notes are titled "Untitled", "Untitled 2", … in the selected folder, with the default author in their frontmatter. Shortcuts: Ctrl+N new note, Ctrl+K search, Ctrl+L lock. Folder rename deferred to v2.
 
 ## Links
 - Stored as `links(from_note_id, target_text)` and resolved at query time.

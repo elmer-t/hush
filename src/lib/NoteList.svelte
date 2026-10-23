@@ -1,44 +1,47 @@
 <script lang="ts">
-  import type { NoteSummary } from "$lib/api";
+  import type { SearchHit } from "$lib/api";
   import { shortDate } from "$lib/dates";
+  import { highlightParts } from "$lib/search";
 
   type Props = {
-    notes: NoteSummary[];
+    hits: SearchHit[];
     selectedId: number | null;
     hasMore: boolean;
     onselect: (id: number) => void;
     /** Asks for the next page when the user nears the end of the list. */
     onmore: () => void;
+    emptyText: string;
   };
-  let { notes, selectedId, hasMore, onselect, onmore }: Props = $props();
+  let { hits, selectedId, hasMore, onselect, onmore, emptyText }: Props = $props();
 
   // Rows have a fixed height, so only the visible slice (plus a margin) is rendered.
-  const ROW_HEIGHT = 52;
+  // Rows grow to fit two lines of snippet whenever any hit has one.
   const OVERSCAN = 8;
+  const rowHeight = $derived(hits.some((h) => h.snippet) ? 96 : 52);
 
   let scrollTop = $state(0);
   let height = $state(0);
 
-  const first = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN));
-  const last = $derived(Math.min(notes.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN));
+  const first = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN));
+  const last = $derived(Math.min(hits.length, Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN));
 
   $effect(() => {
-    if (hasMore && last >= notes.length - OVERSCAN) onmore();
+    if (hasMore && last >= hits.length - OVERSCAN) onmore();
   });
 </script>
 
 <div class="list" bind:clientHeight={height} onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}>
-  {#if notes.length === 0}
-    <p class="muted empty">No notes here yet.</p>
+  {#if hits.length === 0}
+    <p class="muted empty">{emptyText}</p>
   {/if}
-  <div class="spacer" style:height="{notes.length * ROW_HEIGHT}px">
-    {#each notes.slice(first, last) as note, i (note.id)}
+  <div class="spacer" style:height="{hits.length * rowHeight}px">
+    {#each hits.slice(first, last) as { note, snippet }, i (note.id)}
       <button
         class="item"
         class:selected={note.id === selectedId}
         aria-current={note.id === selectedId}
-        style:top="{(first + i) * ROW_HEIGHT}px"
-        style:height="{ROW_HEIGHT}px"
+        style:top="{(first + i) * rowHeight}px"
+        style:height="{rowHeight}px"
         onclick={() => onselect(note.id)}
       >
         <span class="title">{note.title}</span>
@@ -46,6 +49,13 @@
           <span class="folder">{note.folder}</span>
           <span>{shortDate(note.updatedAt)}</span>
         </span>
+        {#if snippet}
+          <span class="snippet muted">
+            {#each highlightParts(snippet) as part, j (j)}
+              {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
+            {/each}
+          </span>
+        {/if}
       </button>
     {/each}
   </div>
@@ -108,5 +118,22 @@
 
   .sub span:last-child {
     flex: none;
+  }
+
+  .snippet {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    font-size: 0.8em;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  mark {
+    background: var(--highlight);
+    color: inherit;
+    border-radius: 2px;
   }
 </style>

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage, type NoteSummary } from "$lib/api";
+  import { api, errorMessage, type Facets, type NoteSummary, type SearchHit } from "$lib/api";
   import { inFolder } from "$lib/markdown";
+  import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import FolderTree from "$lib/FolderTree.svelte";
   import NoteList from "$lib/NoteList.svelte";
+  import SearchFilters from "$lib/SearchFilters.svelte";
 
   type Props = {
     selectedId: number | null;
@@ -13,23 +15,50 @@
   let { selectedId, onselect, oncreate }: Props = $props();
 
   const PAGE_SIZE = 500;
+  const SEARCH_DEBOUNCE_MS = 150;
 
   let folders = $state<string[]>([]);
   // Folders made in the tree that have no notes yet; they exist only until the vault locks.
   let emptyFolders = $state<string[]>([]);
   let selectedFolder = $state<string | null>(null);
-  let notes = $state<NoteSummary[]>([]);
+  let text = $state("");
+  let filters = $state(emptyFilters());
+  let showFilters = $state(false);
+  let facets = $state<Facets>({ tags: [], topics: [], authors: [], attributeKeys: [] });
+  let hits = $state<SearchHit[]>([]);
   let hasMore = $state(false);
   let error = $state("");
+  // Bumped when the query changes, so the list starts again at the top.
+  let queryVersion = $state(0);
+  let searchInput = $state<HTMLInputElement>();
   let loading = false;
   let generation = 0;
 
   const allFolders = $derived([...folders, ...emptyFolders]);
+  const filterCount = $derived(activeFilterCount(filters));
+  const searching = $derived(text.trim() !== "" || filterCount > 0);
 
-  onMount(() => void refresh());
+  onMount(() => void Promise.all([loadFolders(), loadFacets()]));
+
+  // Search as you type: any change to the text, filters or folder reruns the query.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let firstRun = true;
+  $effect(() => {
+    JSON.stringify([text, filters, selectedFolder]);
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => {
+        queryVersion++;
+        void loadNotes(true);
+      },
+      firstRun ? 0 : SEARCH_DEBOUNCE_MS,
+    );
+    firstRun = false;
+    return () => clearTimeout(timer);
+  });
 
   export async function refresh() {
-    await Promise.all([loadFolders(), loadNotes(true)]);
+    await Promise.all([loadFolders(), loadFacets(), loadNotes(true)]);
   }
 
   /** The folder new notes go into. */
@@ -37,10 +66,21 @@
     return selectedFolder ?? "";
   }
 
-  /** Moves a just-saved note to the top, or drops it if it left the selected folder. */
+  export function focusSearch() {
+    searchInput?.focus();
+    searchInput?.select();
+  }
+
+  /** Keeps the list in step with a just-saved note. */
   export function noteSaved(summary: NoteSummary) {
-    const others = notes.filter((n) => n.id !== summary.id);
-    notes = inFolder(summary.folder, selectedFolder) ? [summary, ...others] : others;
+    if (searching) {
+      // Keep the ranking stable while typing; the next search re-checks the match.
+      hits = hits.map((h) => (h.note.id === summary.id ? { ...h, note: summary } : h));
+      return;
+    }
+    // Unfiltered, the list is newest first: move the note to the top, or drop it if it left the folder.
+    const others = hits.filter((h) => h.note.id !== summary.id);
+    hits = inFolder(summary.folder, selectedFolder) ? [{ note: summary, snippet: null }, ...others] : others;
   }
 
   async function loadFolders() {
@@ -53,18 +93,27 @@
     }
   }
 
+  async function loadFacets() {
+    try {
+      facets = await api.searchFacets();
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
   async function loadNotes(reset: boolean) {
     if (!reset && (loading || !hasMore)) return;
     const run = reset ? ++generation : generation;
     loading = true;
     try {
-      const page = await api.listNotes(selectedFolder, reset ? 0 : notes.length, PAGE_SIZE);
+      const query = toQuery(text, selectedFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
+      const page = await api.searchNotes(query);
       if (run !== generation) return;
       if (reset) {
-        notes = page;
+        hits = page;
       } else {
-        const seen = new Set(notes.map((n) => n.id));
-        notes = [...notes, ...page.filter((n) => !seen.has(n.id))];
+        const seen = new Set(hits.map((h) => h.note.id));
+        hits = [...hits, ...page.filter((h) => !seen.has(h.note.id))];
       }
       hasMore = page.length === PAGE_SIZE;
       error = "";
@@ -75,9 +124,10 @@
     }
   }
 
-  function selectFolder(folder: string | null) {
-    selectedFolder = folder;
-    void loadNotes(true);
+  function toggleFilters() {
+    showFilters = !showFilters;
+    // Tags and attributes change as notes are edited.
+    if (showFilters) void loadFacets();
   }
 
   function addFolder(folder: string) {
@@ -88,32 +138,95 @@
 <div class="sidebar">
   <div class="top">
     <button class="primary" onclick={() => oncreate(currentFolder())} title="New note (Ctrl+N)">New note</button>
+    <div class="search">
+      <input
+        type="search"
+        placeholder="Search (Ctrl+K)"
+        aria-label="Search notes"
+        spellcheck="false"
+        bind:this={searchInput}
+        bind:value={text}
+      />
+      <button onclick={toggleFilters} aria-expanded={showFilters} aria-pressed={filterCount > 0} title="Filters">
+        Filters{#if filterCount > 0}&nbsp;<span class="count">{filterCount}</span>{/if}
+      </button>
+    </div>
   </div>
+  {#if showFilters}
+    <div class="panel"><SearchFilters bind:filters {facets} /></div>
+  {/if}
   <div class="folders">
-    <FolderTree folders={allFolders} selected={selectedFolder} onselect={selectFolder} oncreate={addFolder} />
+    <FolderTree
+      folders={allFolders}
+      selected={selectedFolder}
+      onselect={(f) => (selectedFolder = f)}
+      oncreate={addFolder}
+    />
   </div>
   {#if error}<p class="error">{error}</p>{/if}
-  <NoteList {notes} {selectedId} {hasMore} {onselect} onmore={() => void loadNotes(false)} />
+  <div class="results">
+    {#key queryVersion}
+      <NoteList
+        {hits}
+        {selectedId}
+        {hasMore}
+        {onselect}
+        onmore={() => void loadNotes(false)}
+        emptyText={searching ? "No matching notes." : "No notes here yet."}
+      />
+    {/key}
+  </div>
 </div>
 
 <style>
   .sidebar {
-    display: grid;
-    grid-template-rows: auto auto auto 1fr;
+    display: flex;
+    flex-direction: column;
     height: 100%;
     min-height: 0;
   }
 
   .top {
+    display: grid;
+    gap: 0.5rem;
     padding: 0.75rem;
   }
 
-  .top button {
-    width: 100%;
+  .search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem;
+  }
+
+  .search button {
+    padding-inline: 0.6em;
+  }
+
+  .search button[aria-pressed="true"] {
+    border-color: var(--accent);
+  }
+
+  .count {
+    display: inline-block;
+    min-width: 1.4em;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 0.8em;
+    text-align: center;
+  }
+
+  .panel {
+    flex: none;
+    margin-bottom: 0.75rem;
+    max-height: 45vh;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--border);
   }
 
   .folders {
-    max-height: 40vh;
+    flex: none;
+    max-height: 30vh;
     overflow-y: auto;
     padding: 0 0.75rem 0.75rem;
     border-bottom: 1px solid var(--border);
@@ -121,5 +234,12 @@
 
   .error {
     padding: 0.5rem 0.75rem;
+  }
+
+  .results {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
   }
 </style>

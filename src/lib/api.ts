@@ -29,6 +29,30 @@ export type NoteMeta = {
 export type OpenedNote = { note: Note; meta: NoteMeta };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
+export type DateField = "created" | "updated";
+
+/** Mirrors `db::SearchQuery`. Dates are Unix millis; `from` is inclusive, `to` exclusive. */
+export type SearchQuery = {
+  text: string;
+  tags: string[];
+  topic: string | null;
+  author: string | null;
+  folder: string | null;
+  dateField: DateField;
+  from: number | null;
+  to: number | null;
+  attributes: [string, string][];
+  limit: number;
+  offset: number;
+};
+
+/** `snippet` marks matches with the control characters below. */
+export type SearchHit = { note: NoteSummary; snippet: string | null };
+export const HIGHLIGHT_START = "\u0002";
+export const HIGHLIGHT_END = "\u0003";
+
+export type Facets = { tags: string[]; topics: string[]; authors: string[]; attributeKeys: string[] };
+
 /** The shape of every command error (see `CommandError` in commands/mod.rs). */
 export type ApiError = { kind: string; message: string };
 
@@ -48,8 +72,6 @@ export const api = {
   setAutoLockMinutes: (minutes: number) => invoke<void>("set_auto_lock_minutes", { minutes }),
   changePassphrase: (current: string, next: string) => invoke<void>("change_passphrase", { current, new: next }),
 
-  listNotes: (folder: string | null, offset: number, limit: number) =>
-    invoke<NoteSummary[]>("list_notes", { folder, offset, limit }),
   folders: () => invoke<string[]>("folders"),
   createNote: (folder: string) => invoke<OpenedNote>("create_note", { folder }),
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
@@ -60,6 +82,10 @@ export const api = {
     invoke<string>("edit_frontmatter", { body, key, values }),
   defaultAuthor: () => invoke<string | null>("default_author"),
   setDefaultAuthor: (author: string) => invoke<void>("set_default_author", { author }),
+
+  searchNotes: (query: SearchQuery) => invoke<SearchHit[]>("search_notes", { query }),
+  searchFacets: () => invoke<Facets>("search_facets"),
+  attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
 };
 
 export function isApiError(e: unknown): e is ApiError {

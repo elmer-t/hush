@@ -45,7 +45,18 @@ pub struct SearchQuery {
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     pub note: NoteSummary,
+    /// Part of the body around the first match; `None` when the body has no match.
     pub snippet: Option<String>,
+}
+
+/// The values the search filters can pick from: only those used by at least one note.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Facets {
+    pub tags: Vec<String>,
+    pub topics: Vec<String>,
+    pub authors: Vec<String>,
+    pub attribute_keys: Vec<String>,
 }
 
 impl Vault {
@@ -125,10 +136,37 @@ impl Vault {
         let mut stmt = self.conn.prepare(&sql)?;
         let hits = stmt
             .query_map(params_from_iter(args), |r| {
-                Ok(SearchHit { note: NoteSummary::from_row(r)?, snippet: r.get(7)? })
+                let snippet: Option<String> = r.get(7)?;
+                Ok(SearchHit {
+                    note: NoteSummary::from_row(r)?,
+                    snippet: snippet.and_then(|s| clean_snippet(&s)),
+                })
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(hits)
+    }
+
+    pub fn facets(&self) -> Result<Facets> {
+        Ok(Facets {
+            tags: self.strings(
+                "SELECT t.name FROM tags t
+                 WHERE EXISTS (SELECT 1 FROM note_tags nt WHERE nt.tag_id = t.id) ORDER BY t.name",
+                [],
+            )?,
+            topics: self.strings("SELECT DISTINCT topic FROM notes WHERE topic IS NOT NULL ORDER BY topic", [])?,
+            authors: self.strings("SELECT DISTINCT author FROM notes WHERE author IS NOT NULL ORDER BY author", [])?,
+            attribute_keys: self.strings("SELECT DISTINCT key FROM note_attributes ORDER BY key", [])?,
+        })
+    }
+
+    pub fn attribute_values(&self, key: &str) -> Result<Vec<String>> {
+        self.strings("SELECT DISTINCT value FROM note_attributes WHERE key = ?1 ORDER BY value", [key])
+    }
+
+    fn strings(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(params, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
     }
 }
 
@@ -153,13 +191,31 @@ fn fts_query(text: &str) -> Option<String> {
     )
 }
 
+/// `None` unless the snippet contains a match. Text before the match up to a `---`
+/// (the end of the frontmatter, usually) is dropped.
+fn clean_snippet(snippet: &str) -> Option<String> {
+    let first = snippet.find(HIGHLIGHT_START)?;
+    let start = snippet[..first].rfind("---").map_or(0, |i| i + 3);
+    Some(snippet[start..].trim_start().to_string())
+}
+
 fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fts_query;
+    use super::{clean_snippet, fts_query};
+
+    #[test]
+    fn snippets_need_a_match_and_skip_frontmatter() {
+        assert_eq!(clean_snippet("no match"), None);
+        assert_eq!(
+            clean_snippet("--- created: 2021 --- Budget \u{2}review\u{3} --- end").as_deref(),
+            Some("Budget \u{2}review\u{3} --- end")
+        );
+        assert_eq!(clean_snippet("\u{2}a\u{3} b").as_deref(), Some("\u{2}a\u{3} b"));
+    }
 
     #[test]
     fn fts_query_quotes_words_and_prefixes_last() {

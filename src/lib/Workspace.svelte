@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { api, CLOSE_EVENT, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote, type VaultInfo } from "$lib/api";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
@@ -53,7 +53,17 @@
       e.preventDefault();
       e.stopPropagation();
       void create(sidebar?.currentFolder() ?? "");
+    } else if (key === "k") {
+      e.preventDefault();
+      e.stopPropagation();
+      void focusSearch();
     }
+  }
+
+  async function focusSearch() {
+    showLeft = true;
+    await tick();
+    sidebar?.focusSearch();
   }
 
   async function lock() {

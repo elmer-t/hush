@@ -1,10 +1,10 @@
-//! Notes: listing, opening, autosave, rename/move, delete and frontmatter edits.
+//! Notes: opening, autosave, rename/move, delete and frontmatter edits.
 
 use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{Note, NoteSummary, SearchQuery, Vault};
+use crate::db::{Note, NoteSummary, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -50,13 +50,6 @@ fn opened(vault: &Vault, id: i64) -> crate::db::Result<OpenedNote> {
     let note = vault.note(id)?;
     let meta = NoteMeta::of(&note.body);
     Ok(OpenedNote { note, meta })
-}
-
-/// Notes in `folder` and its subfolders (all notes when `None`), most recently updated first.
-#[tauri::command]
-pub fn list_notes(session: State<'_, Session>, folder: Option<String>, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
-    let query = SearchQuery { folder, offset, limit: Some(limit), ..Default::default() };
-    Ok(session.with_vault(|v| Ok(v.search(&query)?.into_iter().map(|hit| hit.note).collect()))?)
 }
 
 #[tauri::command]
