@@ -65,6 +65,16 @@ impl Vault {
         Ok(Self { conn })
     }
 
+    /// Checks `passphrase` against the vault file on a separate, read-only connection.
+    pub fn verify_passphrase(&self, passphrase: &str) -> Result<()> {
+        let path = self.conn.path().ok_or(Error::VaultNotFound)?;
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        apply_key(&conn, passphrase)
+    }
+
     pub fn change_passphrase(&self, new_passphrase: &str) -> Result<()> {
         if new_passphrase.is_empty() {
             return Err(Error::EmptyPassphrase);
@@ -103,20 +113,28 @@ fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | extra,
     )?;
-    // SQLCipher logs decryption failures to stderr; keep logs silent.
-    run_pragma(&conn, "PRAGMA cipher_log_level = NONE")?;
-    conn.pragma_update(None, "key", passphrase)?;
-    // The key is only checked on the first read.
-    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
-        Ok(_) => {}
-        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => return Err(Error::WrongPassphrase),
-        Err(e) => return Err(e.into()),
-    }
+    apply_key(&conn, passphrase)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "secure_delete", "ON")?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(conn)
+}
+
+/// Keys the connection and checks the key by reading from it.
+fn apply_key(conn: &Connection, passphrase: &str) -> Result<()> {
+    if passphrase.is_empty() {
+        return Err(Error::EmptyPassphrase);
+    }
+    // SQLCipher logs decryption failures to stderr; keep logs silent.
+    run_pragma(conn, "PRAGMA cipher_log_level = NONE")?;
+    conn.pragma_update(None, "key", passphrase)?;
+    // The key is only checked on the first read.
+    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
+        Ok(_) => Ok(()),
+        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => Err(Error::WrongPassphrase),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Runs a pragma and discards whatever rows it returns.

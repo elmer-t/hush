@@ -67,7 +67,10 @@ fn change_passphrase() {
     let (dir, mut vault) = common::vault();
     let path = dir.path().join("vault.hush");
     let id = vault.create_note("", "Kept", "still here").unwrap();
+    assert!(matches!(vault.verify_passphrase("nope"), Err(Error::WrongPassphrase)));
+    vault.verify_passphrase(PASS).unwrap();
     vault.change_passphrase("new passphrase").unwrap();
+    vault.verify_passphrase("new passphrase").unwrap();
     vault.close().unwrap();
 
     assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)));

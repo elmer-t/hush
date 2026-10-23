@@ -9,10 +9,10 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Bundle identifier `com.redheadit.hush`. No licence file for now.
 
 ## Vaults & security
-- Multiple vaults (one `.db` file each). Unlock screen offers "Open existing…" / "Create new…" and remembers recent vault **paths** in an app config file — paths only, never content or key material.
+- Multiple vaults (one SQLCipher file each, extension `.hush`). Unlock screen offers "Open existing…" / "Create new…" and remembers recent vault **paths** in an app config file — paths only, never content or key material.
 - SQLCipher default KDF (PBKDF2). Passphrase/key never written to disk. **No recovery**: the create screen states this plainly.
 - Change passphrase via `PRAGMA rekey`.
-- Auto-lock after N minutes idle (default 10, configurable, stored inside the vault) and on demand. OS sleep / screen-lock hooks deferred to v2.
+- Auto-lock after N minutes idle (default 10, 1–1440, stored inside the vault) and on demand (Lock button, Ctrl+L). Enforced by a backend timer; the frontend only reports activity. Idle time uses both the monotonic and wall clock so a machine waking from sleep locks immediately. OS sleep / screen-lock hooks deferred to v2.
 - On lock: close the connection, zeroize the key in Rust, wipe frontend state.
 - Preview: Markdown rendered with raw HTML **disabled**, output sanitised with DOMPurify. Strict CSP blocking all remote loads (images, scripts, fonts). External links open in the system browser, on click only.
 - Delete is a hard delete with confirmation; `PRAGMA secure_delete=ON`.
