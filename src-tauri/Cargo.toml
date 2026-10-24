@@ -32,6 +32,11 @@ yaml-rust2 = "0.13"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tauri-plugin-dialog = "2"
 htmd = "0.5.6"
+# Local embedding model (see docs/decisions.md, AI classification). ONNX Runtime is
+# fetched at build time (`download-binaries`); nothing here can reach the network at runtime.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs", "api-24"] }
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 insta = "1.49.0"

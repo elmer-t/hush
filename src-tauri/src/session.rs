@@ -1,7 +1,9 @@
 //! The unlocked vault, if any, and when it was last used. Held in Tauri state; every
-//! vault access goes through [`Session::with_vault`], which also counts as activity.
+//! vault access goes through [`Session::with_vault`], which also counts as activity,
+//! except background work, which uses [`Session::with_vault_quiet`].
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -24,11 +26,17 @@ pub enum SessionError {
 #[derive(Default)]
 pub struct Session {
     open: Mutex<Option<Unlocked>>,
+    /// Counts unlocks, so a background job started for one unlock never touches the
+    /// vault of a later one.
+    unlocks: AtomicU64,
+    /// The generation of the open vault, 0 while locked. Readable without the mutex.
+    current: AtomicU64,
 }
 
 struct Unlocked {
     vault: Vault,
     path: PathBuf,
+    generation: u64,
     auto_lock: Duration,
     activity: Activity,
 }
@@ -54,28 +62,34 @@ impl Activity {
 
 impl Session {
     /// Makes `vault` the open vault, locking any vault that was open before. Notes past
-    /// the trash retention period are deleted first.
-    pub fn unlock(&self, mut vault: Vault, path: PathBuf) -> Result<(), SessionError> {
+    /// the trash retention period are deleted first. Returns the unlock's generation,
+    /// for [`Session::with_vault_quiet`].
+    pub fn unlock(&self, mut vault: Vault, path: PathBuf) -> Result<u64, SessionError> {
         vault.purge_trash()?;
         let minutes = match vault.setting(AUTO_LOCK_SETTING)? {
             Some(v) => v.parse().ok().filter(|m| valid_minutes(*m)).unwrap_or(DEFAULT_AUTO_LOCK_MINUTES),
             None => DEFAULT_AUTO_LOCK_MINUTES,
         };
-        let previous = self.guard().replace(Unlocked {
+        let mut guard = self.guard();
+        let generation = self.unlocks.fetch_add(1, Ordering::SeqCst) + 1;
+        let previous = guard.replace(Unlocked {
             vault,
             path,
+            generation,
             auto_lock: minutes_to_duration(minutes),
             activity: Activity::now(),
         });
+        self.current.store(generation, Ordering::SeqCst);
+        drop(guard);
         if let Some(previous) = previous {
             let _ = previous.vault.close();
         }
-        Ok(())
+        Ok(generation)
     }
 
     /// Closes the open vault. Returns whether one was open.
     pub fn lock(&self) -> bool {
-        let Some(unlocked) = self.guard().take() else { return false };
+        let Some(unlocked) = self.take() else { return false };
         // On failure the connection is dropped, which closes it all the same.
         let _ = unlocked.vault.close();
         true
@@ -92,10 +106,17 @@ impl Session {
             Some(u) if u.activity.idle_at(now) >= u.auto_lock => {}
             _ => return false,
         }
+        self.current.store(0, Ordering::SeqCst);
         if let Some(unlocked) = guard.take() {
             let _ = unlocked.vault.close();
         }
         true
+    }
+
+    fn take(&self) -> Option<Unlocked> {
+        let mut guard = self.guard();
+        self.current.store(0, Ordering::SeqCst);
+        guard.take()
     }
 
     pub fn touch(&self) {
@@ -113,6 +134,31 @@ impl Session {
         let unlocked = guard.as_mut().ok_or(SessionError::Locked)?;
         unlocked.activity = Activity::now();
         Ok(f(&mut unlocked.vault)?)
+    }
+
+    /// Like [`Session::with_vault`], but for background work: it does not count as
+    /// activity, so it never postpones auto-lock, and it fails with
+    /// [`SessionError::Locked`] unless the vault of unlock `generation` is still open.
+    pub fn with_vault_quiet<T>(
+        &self,
+        generation: u64,
+        f: impl FnOnce(&mut Vault) -> db::Result<T>,
+    ) -> Result<T, SessionError> {
+        let mut guard = self.guard();
+        match guard.as_mut() {
+            Some(unlocked) if unlocked.generation == generation => Ok(f(&mut unlocked.vault)?),
+            _ => Err(SessionError::Locked),
+        }
+    }
+
+    /// Whether the vault of unlock `generation` is still open. Doesn't wait for the vault.
+    pub fn is_open(&self, generation: u64) -> bool {
+        self.current.load(Ordering::SeqCst) == generation
+    }
+
+    /// How long the vault has been idle; `None` while locked.
+    pub fn idle_for(&self) -> Option<Duration> {
+        self.guard().as_ref().map(|u| u.activity.idle_at(Activity::now()))
     }
 
     pub fn auto_lock_minutes(&self) -> Result<u32, SessionError> {

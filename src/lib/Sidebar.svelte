@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import { listen } from "@tauri-apps/api/event";
   import {
     api,
     errorMessage,
+    INDEX_STATUS_EVENT,
     type Facets,
+    type IndexStatus,
     type MetadataEdit,
     type MetadataEditReport,
     type NoteSummary,
@@ -82,9 +85,15 @@
   const filterCount = $derived(activeFilterCount(filters));
   const searching = $derived(text.trim() !== "" || filterCount > 0);
 
+  // The background indexing job (embeddings): a progress line while it works.
+  let indexStatus = $state<IndexStatus>({ state: "idle" });
+
   onMount(() => {
     void Promise.all([loadFolders(), loadFacets()]);
     api.sidebarView().then((v) => (view = v), () => {});
+    const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
+    api.indexStatus().then((s) => (indexStatus = s), () => {});
+    return () => void unlisten.then((stop) => stop());
   });
 
   function setView(next: SidebarView) {
@@ -601,6 +610,15 @@
     />
   {/if}
   <div class="footer">
+    {#if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
+      <div class="index" role="status">
+        Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}
+      </div>
+    {:else if indexStatus.state === "failed"}
+      <div class="index failed" role="status" title={indexStatus.message}>
+        Indexing stopped: {indexStatus.message}
+      </div>
+    {/if}
     <button class="trash" class:open={trashOpen} aria-current={trashOpen ? "page" : undefined} onclick={ontrash}>
       <Icon name="trash" />
       <span>Trash</span>
@@ -851,5 +869,19 @@
 
   .trash.open .n {
     color: inherit;
+  }
+
+  .index {
+    padding: 2px 8px 6px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .index.failed {
+    color: var(--warn);
   }
 </style>

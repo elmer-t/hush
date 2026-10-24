@@ -204,7 +204,18 @@ export const api = {
   defaultImportRules: () => invoke<Rule[]>("default_import_rules"),
   testImportRules: (rules: Rule[], fileName: string, sample: string) =>
     invoke<RuleOutput>("test_import_rules", { rules, fileName, sample }),
+
+  /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
+  indexStatus: () => invoke<IndexStatus>("index_status"),
 };
+
+/** The embedding job's state (see `IndexStatus` in embed/job.rs). */
+export type IndexStatus =
+  | { state: "idle" }
+  | { state: "indexing"; done: number; total: number }
+  | { state: "failed"; message: string };
+
+export const INDEX_STATUS_EVENT = "index-status";
 
 export function isApiError(e: unknown): e is ApiError {
   return typeof e === "object" && e !== null && "kind" in e && "message" in e;
