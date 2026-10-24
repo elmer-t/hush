@@ -20,6 +20,10 @@
     onselectall: () => void;
     onclearselection: () => void;
     oncreatefolder: (folder: string) => void;
+    /** Right-click, Shift+F10 or the menu key on a note; `x`/`y` are where the menu opens. */
+    onnotemenu: (id: number, x: number, y: number) => void;
+    /** Delete on a focused note. */
+    ondeletenote: (id: number) => void;
     onerror: (e: unknown) => void;
   };
   let {
@@ -32,12 +36,19 @@
     onselectall,
     onclearselection,
     oncreatefolder,
+    onnotemenu,
+    ondeletenote,
     onerror,
   }: Props = $props();
 
   /** The visible note rows in display order; notes in collapsed folders are left out. */
   export function visibleNoteIds(): number[] {
     return rows.flatMap((r) => (r.kind === "note" ? [r.note.id] : []));
+  }
+
+  /** Puts keyboard focus on a note's row, if it is shown. */
+  export function focusNote(id: number) {
+    if (rows.some((r) => r.key === `n:${id}`)) void moveFocus(`n:${id}`);
   }
 
   type Row =
@@ -163,6 +174,17 @@
     else showMore(row.folder);
   }
 
+  function openMenu(row: Extract<Row, { kind: "note" }>, e?: MouseEvent) {
+    focusKey = row.key;
+    if (e) {
+      e.preventDefault();
+      onnotemenu(row.note.id, e.clientX, e.clientY);
+      return;
+    }
+    const rect = rowElement(row.key)?.getBoundingClientRect();
+    onnotemenu(row.note.id, rect ? rect.left + 24 : 0, rect ? rect.bottom : 0);
+  }
+
   async function moveFocus(k: string | undefined) {
     if (!k) return;
     focusKey = k;
@@ -198,6 +220,16 @@
         break;
       case "Enter":
         activate(row, e);
+        break;
+      case "ContextMenu":
+        if (row.kind === "note") openMenu(row);
+        break;
+      case "F10":
+        if (e.shiftKey && row.kind === "note") openMenu(row);
+        else handled = false;
+        break;
+      case "Delete":
+        if (row.kind === "note") ondeletenote(row.note.id);
         break;
       default:
         handled = false;
@@ -310,6 +342,7 @@
           title={row.note.folder ? `${row.note.folder}/${row.note.title}` : row.note.title}
           style:padding-left="{indent(row.level)}px"
           onclick={(e) => activate(row, e)}
+          oncontextmenu={(e) => openMenu(row, e)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
         >
