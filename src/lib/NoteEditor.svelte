@@ -9,11 +9,13 @@
   type Props = {
     opened: OpenedNote;
     focusTitle: boolean;
+    /** The remembered "Preview only" choice, shared across notes for the session. */
+    previewOnly: boolean;
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
   };
-  let { opened, focusTitle, onsaved, onrenamed, ondeleted }: Props = $props();
+  let { opened, focusTitle, previewOnly = $bindable(), onsaved, onrenamed, ondeleted }: Props = $props();
 
   const SAVE_DELAY_MS = 500;
 
@@ -26,7 +28,9 @@
   let title = $state(initial.title);
   let folder = $state(initial.folder);
   let committed = { title: initial.title, folder: initial.folder };
-  let previewOnly = $state(false);
+  // A new note opens in split view so it can be typed in, without changing the remembered choice.
+  let forceSplit = $state(untrack(() => focusTitle));
+  const showPreviewOnly = $derived(previewOnly && !forceSplit);
   let status = $state<"saved" | "pending" | "saving" | "failed">("saved");
   let error = $state("");
   let editor = $state<ReturnType<typeof MarkdownEditor>>();
@@ -106,6 +110,11 @@
     }
   }
 
+  function togglePreview() {
+    previewOnly = !showPreviewOnly;
+    forceSplit = false;
+  }
+
   function nameKeydown(e: KeyboardEvent & { currentTarget: HTMLInputElement }) {
     if (e.key === "Enter") {
       e.currentTarget.blur();
@@ -157,8 +166,8 @@
     </div>
     <div class="tools">
       <span class="muted status" class:failed={status === "failed"}>{statusText}</span>
-      <button onclick={() => (previewOnly = !previewOnly)} aria-pressed={previewOnly}>
-        {previewOnly ? "Split view" : "Preview only"}
+      <button onclick={togglePreview} aria-pressed={showPreviewOnly}>
+        {showPreviewOnly ? "Split view" : "Preview only"}
       </button>
       <button class="danger" onclick={remove}>Delete</button>
     </div>
@@ -166,7 +175,7 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  <div class="panes" class:preview-only={previewOnly}>
+  <div class="panes" class:preview-only={showPreviewOnly}>
     <div class="source">
       <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} />
     </div>
