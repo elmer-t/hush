@@ -22,6 +22,13 @@ pub struct NoteText {
     pub hash: [u8; 32],
 }
 
+/// A stored vector, as the related-notes index loads it.
+pub struct StoredVector {
+    pub id: i64,
+    pub hash: [u8; 32],
+    pub vector: Zeroizing<Vec<f32>>,
+}
+
 /// One page of a scan for notes whose vector is missing or out of date.
 #[derive(Debug, Default)]
 pub struct EmbeddingScan {
@@ -154,6 +161,45 @@ impl Vault {
             .query_row(params![id, model], |r| r.get(0))
             .optional()?;
         Ok(blob.map(|b| embed::blob_to_vector(&b)))
+    }
+
+    /// Every live note with a `model` vector, with the hash of the text it was made
+    /// from, in id order. Cheap enough to call after every change: no vectors.
+    pub fn embedding_hashes(&self, model: &str) -> Result<Vec<(i64, [u8; 32])>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT e.note_id, e.content_hash FROM note_embeddings e JOIN notes n ON n.id = e.note_id
+             WHERE e.model = ?1 AND n.deleted_at IS NULL ORDER BY e.note_id",
+        )?;
+        let mut rows = stmt.query([model])?;
+        let mut hashes = Vec::new();
+        while let Some(r) = rows.next()? {
+            let hash: Vec<u8> = r.get(1)?;
+            if let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) {
+                hashes.push((r.get(0)?, hash));
+            }
+        }
+        Ok(hashes)
+    }
+
+    /// The `model` vectors of those of `ids` that are live and have one, each with the
+    /// hash of the text it was made from.
+    pub fn embedding_vectors(&self, model: &str, ids: &[i64]) -> Result<Vec<StoredVector>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT e.content_hash, e.vector FROM note_embeddings e JOIN notes n ON n.id = e.note_id
+             WHERE e.note_id = ?1 AND e.model = ?2 AND n.deleted_at IS NULL",
+        )?;
+        let mut vectors = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let Some((hash, blob)) = stmt
+                .query_row(params![id, model], |r| Ok((r.get::<_, Vec<u8>>(0)?, Zeroizing::new(r.get::<_, Vec<u8>>(1)?))))
+                .optional()?
+            else {
+                continue;
+            };
+            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else { continue };
+            vectors.push(StoredVector { id, hash, vector: Zeroizing::new(embed::blob_to_vector(&blob)) });
+        }
+        Ok(vectors)
     }
 
     /// How many vectors are stored for `model`.

@@ -2,14 +2,15 @@
 //! unlock, embeds notes with no vector for the active model (or a stale one), then
 //! waits for the vault to change. It reaches the vault only through
 //! [`Session::with_vault_quiet`], so it never postpones auto-lock, and only to read a
-//! batch or write its results: never while the model runs.
+//! batch or write its results: never while the model runs. After each pass it brings
+//! the related-notes index ([`super::related`]) up to date.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 
-use super::{EmbedError, Embedder};
+use super::{EmbedError, Embedder, related};
 use crate::db;
 use crate::session::{Session, SessionError};
 
@@ -64,6 +65,8 @@ pub struct Pass {
     pub stale: usize,
     /// Notes with text to embed.
     pub total: usize,
+    /// Whether the related-notes index changed.
+    pub related_changed: bool,
 }
 
 /// Runs the job for unlock `generation` until the vault locks or the job fails.
@@ -75,6 +78,18 @@ pub fn run(
     source: &dyn EmbedderSource,
     poll: Duration,
     report: impl Fn(&IndexStatus),
+) {
+    run_with(session, generation, source, poll, report, || {});
+}
+
+/// [`run`], also calling `related_changed` whenever the related-notes index changed.
+pub fn run_with(
+    session: &Session,
+    generation: u64,
+    source: &dyn EmbedderSource,
+    poll: Duration,
+    report: impl Fn(&IndexStatus),
+    related_changed: impl Fn(),
 ) {
     let mut last: Option<IndexStatus> = None;
     let mut report = |status: IndexStatus| {
@@ -98,6 +113,7 @@ pub fn run(
         // Taken before the pass, so changes made during it trigger another one.
         seen = Some(changes);
         match pass(session, generation, source, &mut report) {
+            Ok(p) if p.related_changed => related_changed(),
             Ok(_) => {}
             Err(JobError::Locked) => return,
             Err(e) => {
@@ -112,7 +128,8 @@ pub fn run(
 
 /// One pass: finds every note whose vector for the active model is missing or stale
 /// and embeds it. When a pass finds nothing to do, the active model's vectors are
-/// complete: it becomes the ready model and other models' vectors are deleted.
+/// complete: it becomes the ready model and other models' vectors are deleted. Ends by
+/// syncing the related-notes index.
 pub fn pass(
     session: &Session,
     generation: u64,
@@ -141,7 +158,8 @@ pub fn pass(
             session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
         }
         report(IndexStatus::Idle);
-        return Ok(Pass { stale: 0, total });
+        let related_changed = related::sync(session, generation)?;
+        return Ok(Pass { stale: 0, total, related_changed });
     }
 
     let show = stale.len() >= PROGRESS_MIN;
@@ -165,7 +183,8 @@ pub fn pass(
     if show {
         report(IndexStatus::Indexing { done: total, total });
     }
-    Ok(Pass { stale: stale.len(), total })
+    let related_changed = related::sync(session, generation)?;
+    Ok(Pass { stale: stale.len(), total, related_changed })
 }
 
 /// Sleeps for `duration`, waking early if the vault locks. Returns whether it is still open.

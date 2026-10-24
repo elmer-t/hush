@@ -370,6 +370,20 @@ impl Vault {
         Ok(notes)
     }
 
+    /// Summaries of the live notes among `ids`, in the order given; trashed or deleted
+    /// ones are left out.
+    pub fn note_summaries(&self, ids: &[i64]) -> Result<Vec<NoteSummary>> {
+        let mut stmt =
+            self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.id = ?1 AND n.deleted_at IS NULL"))?;
+        let mut notes = Vec::with_capacity(ids.len());
+        for &id in ids {
+            if let Some(note) = stmt.query_row([id], NoteSummary::from_row).optional()? {
+                notes.push(note);
+            }
+        }
+        Ok(notes)
+    }
+
     /// Every folder that contains at least one note, sorted.
     pub fn folders(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL ORDER BY folder")?;

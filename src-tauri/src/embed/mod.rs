@@ -7,6 +7,7 @@
 
 pub mod job;
 pub mod onnx;
+pub mod related;
 
 use std::path::{Path, PathBuf};
 
