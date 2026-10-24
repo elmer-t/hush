@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { api, errorMessage, type Facets, type NoteSummary, type SearchHit, type SidebarView } from "$lib/api";
+  import {
+    api,
+    errorMessage,
+    type Facets,
+    type MetadataEdit,
+    type MetadataEditReport,
+    type NoteSummary,
+    type SearchHit,
+    type SidebarView,
+  } from "$lib/api";
   import { clearLoaded, findNote, refreshFolders, updateNote } from "$lib/explorer.svelte";
   import { isToggle } from "$lib/selection";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
@@ -20,8 +29,10 @@
     onmove: (ids: number[], folder: string, sources: string[]) => Promise<boolean>;
     /** Bulk delete (to the trash). Resolves to whether it worked. */
     ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
+    /** Bulk metadata edit. Resolves to the report, or null when it failed. */
+    onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
   };
-  let { selected, onselect, oncreate, onmove, ondelete }: Props = $props();
+  let { selected, onselect, oncreate, onmove, ondelete, onedit }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
@@ -53,6 +64,11 @@
   let anchor: number | null = null;
   let moving = $state(false);
   let moveTarget = $state("");
+  let editing = $state(false);
+  let editKind = $state<MetadataEdit["kind"]>("addTag");
+  let editValue = $state("");
+  // What the last bulk edit did.
+  let editNotice = $state<{ text: string; titles: string[] } | null>(null);
   let busy = $state(false);
 
   const allFolders = $derived([...folders, ...emptyFolders]);
@@ -180,6 +196,8 @@
     picked.clear();
     anchor = null;
     moving = false;
+    editing = false;
+    editNotice = null;
   }
 
   /** The notes shown, in order, that a Shift+click range or Ctrl/Cmd+A can cover. */
@@ -244,6 +262,75 @@
     if (ok) clearSelection();
   }
 
+  const EDITS: { kind: MetadataEdit["kind"]; label: string }[] = [
+    { kind: "addTag", label: "Add tag" },
+    { kind: "removeTag", label: "Remove tag" },
+    { kind: "setTopic", label: "Set topic" },
+    { kind: "setAuthor", label: "Set author" },
+  ];
+  const editSuggestions = $derived(
+    editKind === "setTopic" ? facets.topics : editKind === "setAuthor" ? facets.authors : facets.tags,
+  );
+  const tagEdit = $derived(editKind === "addTag" || editKind === "removeTag");
+
+  function togglePanel(panel: "move" | "edit") {
+    moving = panel === "move" && !moving;
+    editing = panel === "edit" && !editing;
+    if (editing) void loadFacets();
+  }
+
+  async function editSelection(e: SubmitEvent) {
+    e.preventDefault();
+    if (busy) return;
+    const value = editValue.trim();
+    if (tagEdit && value.replace(/^#+/, "") === "") return;
+    busy = true;
+    const ids = [...picked];
+    const report = await onedit(ids, { kind: editKind, value }, pickedNotes().map((n) => n.folder));
+    busy = false;
+    if (!report) return;
+    editNotice = describeEdit(editKind, value.replace(/^#+/, ""), report);
+    editValue = "";
+    // A filtered list may have dropped some of them; keep only what is still shown.
+    if (view === "recent" || searching) {
+      const shown = new Set(hits.map((h) => h.note.id));
+      for (const id of ids) if (!shown.has(id)) picked.delete(id);
+    }
+  }
+
+  function describeEdit(kind: MetadataEdit["kind"], value: string, r: MetadataEditReport) {
+    const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
+    const n = notes(r.changed.length);
+    const parts = [
+      kind === "addTag"
+        ? `Added “${value}” to ${n}`
+        : kind === "removeTag"
+          ? `Removed “${value}” from ${n}`
+          : value === ""
+            ? `Removed the ${kind === "setTopic" ? "topic" : "author"} from ${n}`
+            : `Set the ${kind === "setTopic" ? "topic" : "author"} to “${value}” on ${n}`,
+    ];
+    if (r.unchanged > 0) {
+      const field = kind === "setTopic" ? "topic" : "author";
+      const why =
+        kind === "addTag"
+          ? "already had it"
+          : kind === "removeTag"
+            ? "didn't have it in the frontmatter"
+            : value === ""
+              ? `had no ${field}`
+              : `already had that ${field}`;
+      parts.push(`${notes(r.unchanged)} ${why}`);
+    }
+    if (r.stillInline.length > 0) {
+      const have = r.stillInline.length === 1 ? "still has" : "still have";
+      parts.push(`${r.stillInline.length} ${have} it as an inline #${value}`);
+    }
+    if (r.unreadable.length > 0) parts.push(`${notes(r.unreadable.length)} skipped: frontmatter can't be read`);
+    const title = (t: { folder: string; title: string }) => (t.folder ? `${t.folder}/${t.title}` : t.title);
+    return { text: parts.join("; ") + ".", titles: [...r.stillInline, ...r.unreadable].map(title) };
+  }
+
   function addFolder(folder: string) {
     if (!allFolders.some((f) => f.toLowerCase() === folder.toLowerCase())) emptyFolders = [...emptyFolders, folder];
   }
@@ -277,7 +364,8 @@
   {#if picked.size > 0}
     <div class="actions" role="toolbar" aria-label="Selected notes">
       <span><strong>{picked.size}</strong> selected</span>
-      <button onclick={() => (moving = !moving)} aria-expanded={moving} disabled={busy}>Move to…</button>
+      <button onclick={() => togglePanel("move")} aria-expanded={moving} disabled={busy}>Move to…</button>
+      <button onclick={() => togglePanel("edit")} aria-expanded={editing} disabled={busy}>Edit…</button>
       <button class="danger" onclick={deleteSelection} disabled={busy} title="Move the selected notes to the trash">
         Delete
       </button>
@@ -300,6 +388,37 @@
         </datalist>
         <button type="submit" class="primary" disabled={busy}>Move</button>
       </form>
+    {/if}
+    {#if editing}
+      <form class="edit" onsubmit={editSelection}>
+        <select aria-label="Edit" bind:value={editKind} disabled={busy}>
+          {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
+        </select>
+        <input
+          list="edit-values"
+          placeholder={tagEdit ? "Tag" : "Empty = remove"}
+          aria-label={EDITS.find((e) => e.kind === editKind)?.label}
+          spellcheck="false"
+          bind:value={editValue}
+          onkeydown={(e) => e.key === "Escape" && (editing = false)}
+          disabled={busy}
+          {@attach (el) => el.focus()}
+        />
+        <datalist id="edit-values">
+          {#each editSuggestions as v (v)}<option value={v}></option>{/each}
+        </datalist>
+        <button type="submit" class="primary" disabled={busy || (tagEdit && editValue.trim() === "")}>Apply</button>
+      </form>
+    {/if}
+    {#if editNotice}
+      <div class="notice" role="status">
+        <p>{editNotice.text}</p>
+        {#if editNotice.titles.length > 0}
+          <ul>
+            {#each editNotice.titles as t, i (i)}<li>{t}</li>{/each}
+          </ul>
+        {/if}
+      </div>
     {/if}
   {/if}
   {#if view === "tree" && !searching}
@@ -433,6 +552,31 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.3rem;
     margin: 0 0.75rem 0.5rem;
+  }
+
+  .edit {
+    flex: none;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.3rem;
+    margin: 0 0.75rem 0.5rem;
+  }
+
+  .notice {
+    flex: none;
+    max-height: 20vh;
+    overflow-y: auto;
+    margin: 0 0.75rem 0.5rem;
+    font-size: 0.85em;
+  }
+
+  .notice p,
+  .notice ul {
+    margin: 0;
+  }
+
+  .notice ul {
+    padding-left: 1.2em;
   }
 
   .views {

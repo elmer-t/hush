@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{Note, NoteSummary, TrashedNote, Vault};
+use crate::db::{MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashedNote, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -133,6 +133,12 @@ pub fn move_notes(session: State<'_, Session>, ids: Vec<i64>, folder: String) ->
 #[tauri::command]
 pub fn trash_notes(session: State<'_, Session>, ids: Vec<i64>) -> Result<()> {
     Ok(session.with_vault(|v| v.trash_notes(&ids))?)
+}
+
+/// Adds or removes a tag, or sets the topic or author, on several notes, all or nothing.
+#[tauri::command]
+pub fn edit_notes_metadata(session: State<'_, Session>, ids: Vec<i64>, edit: MetadataEdit) -> Result<MetadataEditReport> {
+    Ok(session.with_vault(|v| v.edit_notes_metadata(&ids, &edit))?)
 }
 
 /// Deletes a note for good, whether live or in the trash.
