@@ -12,6 +12,8 @@
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
+  import { confirmTrash } from "$lib/confirmTrash";
+  import { findNote } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
@@ -239,6 +241,13 @@
   }
 
   async function deleteNotes(ids: number[], sources: string[]): Promise<boolean> {
+    const title = ids.length === 1 ? (summary?.id === ids[0] ? summary.title : findNote(ids[0])?.title) : undefined;
+    try {
+      if (!(await confirmTrash(ids.length, title))) return false;
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
     const open = await flushIfIn(ids);
     try {
       await api.trashNotes(ids);

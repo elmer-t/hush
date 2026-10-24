@@ -161,6 +161,9 @@ export const api = {
     invoke<NoteSummary[]>("folder_notes", { folder, offset, limit }),
   sidebarView: () => invoke<SidebarView>("sidebar_view"),
   setSidebarView: (view: SidebarView) => invoke<void>("set_sidebar_view", { view }),
+  /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
+  confirmTrash: () => invoke<boolean>("confirm_trash"),
+  setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),
   createNote: (folder: string) => invoke<OpenedNote>("create_note", { folder }),
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
   saveNote: (id: number, body: string) => invoke<SavedNote>("save_note", { id, body }),
