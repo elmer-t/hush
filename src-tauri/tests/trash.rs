@@ -192,3 +192,15 @@ fn auto_purge_zero_means_never() {
     assert_eq!(vault.purge_trash_at(i64::MAX / 2).unwrap(), 0);
     assert_eq!(trashed(&vault), ["Keep"]);
 }
+
+#[test]
+fn trashed_notes_are_left_out_of_folder_counts_and_the_tree() {
+    let (_dir, mut vault) = common::vault();
+    let id = vault.create_note("OldVault/a", "T", "").unwrap();
+    let live = vault.create_note("OldVault/a", "Live", "").unwrap();
+    vault.trash_note(id).unwrap();
+    assert_eq!(vault.count_in_folder("OldVault").unwrap(), 1);
+    assert_eq!(vault.count_in_folder("").unwrap(), 1);
+    let tree: Vec<i64> = vault.folder_notes("OldVault/a", 0, 500).unwrap().iter().map(|n| n.id).collect();
+    assert_eq!(tree, [live]);
+}
