@@ -174,6 +174,64 @@ impl Vault {
         Ok(())
     }
 
+    /// Moves several notes into `folder` in one transaction, with one link-preserving
+    /// pass over all their titles, so links are judged against the state after the
+    /// whole batch has moved. All or nothing: if any note would clash on
+    /// `(folder, title)` with a note already there or with another note in the batch,
+    /// nothing moves and [`Error::MoveClash`] lists the titles. Notes already in
+    /// `folder` are left alone.
+    pub fn move_notes(&mut self, ids: &[i64], folder: &str) -> Result<()> {
+        let folder = markdown::normalize_folder(folder);
+        let tx = self.conn.transaction()?;
+        let mut moving: Vec<(i64, String)> = Vec::new();
+        {
+            let mut stmt = tx.prepare_cached("SELECT folder, title FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
+            for &id in ids {
+                let (from, title): (String, String) = stmt
+                    .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()?
+                    .ok_or(Error::NoteNotFound)?;
+                if !from.eq_ignore_ascii_case(&folder) && !moving.iter().any(|(m, _)| *m == id) {
+                    moving.push((id, title));
+                }
+            }
+        }
+
+        // Titles compare case-insensitively, like the unique index.
+        let mut clashes: Vec<String> = Vec::new();
+        {
+            let mut taken = tx.prepare_cached(
+                "SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2 AND deleted_at IS NULL",
+            )?;
+            for (i, (_, title)) in moving.iter().enumerate() {
+                let in_batch = moving[..i].iter().any(|(_, t)| t.to_lowercase() == title.to_lowercase());
+                if (in_batch || taken.exists(params![folder, title])?)
+                    && !clashes.iter().any(|c| c.to_lowercase() == title.to_lowercase())
+                {
+                    clashes.push(title.clone());
+                }
+            }
+        }
+        if !clashes.is_empty() {
+            return Err(Error::MoveClash(clashes));
+        }
+        if moving.is_empty() {
+            return Ok(());
+        }
+
+        let titles: Vec<&str> = moving.iter().map(|(_, t)| t.as_str()).collect();
+        links::preserving_links(&tx, &titles, |conn| {
+            let now = now_ms();
+            let mut stmt = conn.prepare_cached("UPDATE notes SET folder = ?2, updated_at = ?3 WHERE id = ?1")?;
+            for (id, _) in &moving {
+                stmt.execute(params![id, folder, now]).map_err(title_taken)?;
+            }
+            Ok(())
+        })?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Inserts imported notes in one transaction, returning each note's id or why it
     /// was not inserted. Unlike [`Vault::create_note`], links in other notes are not
     /// rewritten: an import reports ambiguous links instead.

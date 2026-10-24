@@ -44,6 +44,8 @@ pub enum Error {
     TitleTaken,
     #[error("note not found")]
     NoteNotFound,
+    #[error("nothing was moved: the target folder would get more than one note named {}", quote_list(.0))]
+    MoveClash(Vec<String>),
     #[error("{0}")]
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
@@ -173,4 +175,9 @@ pub(crate) fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// `“A”, “B”` for error messages.
+fn quote_list(items: &[String]) -> String {
+    items.iter().map(|t| format!("“{t}”")).collect::<Vec<_>>().join(", ")
 }

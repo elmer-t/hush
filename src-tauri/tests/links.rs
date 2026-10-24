@@ -109,3 +109,39 @@ fn self_links_follow_rename() {
     vault.rename_note(id, "", "Myself").unwrap();
     assert_eq!(vault.note(id).unwrap().body, "I am [[Myself]]");
 }
+
+#[test]
+fn move_notes_keeps_links_pointing_at_the_same_notes() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("inbox", "Alpha", "").unwrap();
+    let b = vault.create_note("drafts", "Beta", "").unwrap();
+    let src = vault.create_note("", "Src", "[[Alpha]] [[drafts/Beta|b]]").unwrap();
+
+    vault.move_notes(&[a, b], "archive/2020").unwrap();
+    assert_eq!(vault.note(a).unwrap().folder, "archive/2020");
+    assert_eq!(vault.note(b).unwrap().folder, "archive/2020");
+    // `[[drafts/Beta]]` no longer matches anything, so it was rewritten; `[[Alpha]]` still resolves.
+    assert_eq!(vault.note(src).unwrap().body, "[[Alpha]] [[Beta|b]]");
+    assert_eq!(vault.resolve_link("Alpha").unwrap(), Resolution::Unique(a));
+    assert_eq!(vault.resolve_link("Beta").unwrap(), Resolution::Unique(b));
+}
+
+#[test]
+fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
+    let (_dir, mut vault) = common::vault();
+    // Bystanders reached through a folder suffix: `[[T/N]]` → q/T/N, `[[T/M]]` → q/T/M.
+    let n = vault.create_note("q/T", "N", "").unwrap();
+    let m = vault.create_note("q/T", "M", "").unwrap();
+    let src = vault.create_note("", "Src", "[[T/N]] and [[T/M#h]]").unwrap();
+    let x = vault.create_note("x", "N", "").unwrap();
+    let y = vault.create_note("y", "M", "").unwrap();
+    let before = vault.note(src).unwrap().updated_at;
+
+    // Moving both into `T` would make `T/N` and `T/M` mean the moved notes (exact folder wins).
+    vault.move_notes(&[x, y], "T").unwrap();
+    let body = vault.note(src).unwrap().body;
+    assert_eq!(body, "[[q/T/N]] and [[q/T/M#h]]", "both links rewritten in one pass");
+    assert_eq!(vault.resolve_link("q/T/N").unwrap(), Resolution::Unique(n));
+    assert_eq!(vault.resolve_link("q/T/M").unwrap(), Resolution::Unique(m));
+    assert!(vault.note(src).unwrap().updated_at >= before);
+}

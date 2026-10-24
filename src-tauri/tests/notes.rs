@@ -92,3 +92,69 @@ fn folder_notes_are_the_folders_own_notes_only() {
     assert_eq!(page(1), [a2]);
     assert!(page(2).is_empty());
 }
+
+fn folders_of(vault: &hush_lib::db::Vault, ids: &[i64]) -> Vec<String> {
+    ids.iter().map(|id| vault.note(*id).unwrap().folder).collect()
+}
+
+#[test]
+fn move_notes_clash_with_an_existing_note_moves_nothing() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("a", "Ideas", "").unwrap();
+    let b = vault.create_note("b", "Plans", "").unwrap();
+    vault.create_note("target", "ideas", "").unwrap();
+    let err = vault.move_notes(&[b, a], "target").unwrap_err();
+    assert!(matches!(&err, Error::MoveClash(t) if t == &["Ideas"]), "{err}");
+    assert!(err.to_string().contains("“Ideas”"));
+    assert_eq!(folders_of(&vault, &[a, b]), ["a", "b"]);
+}
+
+#[test]
+fn move_notes_clash_inside_the_batch_moves_nothing() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("a", "Ideas", "").unwrap();
+    let b = vault.create_note("b", "IDEAS", "").unwrap();
+    let c = vault.create_note("c", "Other", "").unwrap();
+    let err = vault.move_notes(&[a, b, c], "target").unwrap_err();
+    assert!(matches!(&err, Error::MoveClash(t) if t == &["IDEAS"]), "{err}");
+    assert_eq!(folders_of(&vault, &[a, b, c]), ["a", "b", "c"]);
+}
+
+#[test]
+fn move_notes_already_in_the_target_are_no_ops() {
+    let (_dir, mut vault) = common::vault();
+    let here = vault.create_note("Target", "Here", "").unwrap();
+    let there = vault.create_note("elsewhere", "There", "").unwrap();
+    let before = vault.note(here).unwrap().updated_at;
+    vault.move_notes(&[here, there, there], "/target/").unwrap();
+    assert_eq!(folders_of(&vault, &[here, there]), ["Target", "target"]);
+    assert_eq!(vault.note(here).unwrap().updated_at, before, "not touched");
+    vault.move_notes(&[], "x").unwrap();
+}
+
+#[test]
+fn move_notes_unknown_id_moves_nothing() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("a", "A", "").unwrap();
+    assert!(matches!(vault.move_notes(&[a, 9999], "b"), Err(Error::NoteNotFound)));
+    assert_eq!(folders_of(&vault, &[a]), ["a"]);
+}
+
+#[test]
+fn bulk_delete_moves_all_to_the_trash_or_nothing() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("", "A", "").unwrap();
+    let b = vault.create_note("x", "B", "").unwrap();
+    let c = vault.create_note("", "C", "").unwrap();
+
+    assert!(matches!(vault.trash_notes(&[a, 9999]), Err(Error::NoteNotFound)));
+    assert!(vault.trashed_notes().unwrap().is_empty(), "an unknown id deletes nothing");
+    vault.note(a).unwrap();
+
+    vault.trash_notes(&[a, b]).unwrap();
+    let mut trashed: Vec<i64> = vault.trashed_notes().unwrap().iter().map(|n| n.id).collect();
+    trashed.sort();
+    assert_eq!(trashed, [a, b]);
+    assert!(matches!(vault.note(a), Err(Error::NoteNotFound)));
+    vault.note(c).unwrap();
+}

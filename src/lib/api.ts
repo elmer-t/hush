@@ -149,6 +149,10 @@ export const api = {
   renameNote: (id: number, folder: string, title: string) => invoke<OpenedNote>("rename_note", { id, folder, title }),
   /** The default delete: moves the note to the trash. */
   trashNote: (id: number) => invoke<void>("trash_note", { id }),
+  /** Bulk delete: moves the notes to the trash, all or nothing. */
+  trashNotes: (ids: number[]) => invoke<void>("trash_notes", { ids }),
+  /** Moves notes into `folder`, all or nothing; fails with kind `moveClash` on a name clash. */
+  moveNotes: (ids: number[], folder: string) => invoke<void>("move_notes", { ids, folder }),
   /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
   trashedNotes: () => invoke<TrashedNote[]>("trashed_notes"),

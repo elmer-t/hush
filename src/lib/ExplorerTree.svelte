@@ -3,6 +3,7 @@
   import type { NoteSummary } from "$lib/api";
   import { ensureNote, expanded, expandTo, key, loaded, loadFolder, loadMore } from "$lib/explorer.svelte";
   import { normalizeFolder } from "$lib/markdown";
+  import { selectionKeys } from "$lib/selection";
 
   type Props = {
     folders: string[];
@@ -13,10 +14,30 @@
     onselectfolder: (folder: string | null) => void;
     /** Plain click or Enter on a note. The event is passed on so modifier clicks can be told apart. */
     onopen: (id: number, event: MouseEvent | KeyboardEvent) => void;
+    /** Notes picked for a bulk action; folders can't be picked. */
+    picked: ReadonlySet<number>;
+    onselectall: () => void;
+    onclearselection: () => void;
     oncreatefolder: (folder: string) => void;
     onerror: (e: unknown) => void;
   };
-  let { folders, selectedFolder, selectedNote, onselectfolder, onopen, oncreatefolder, onerror }: Props = $props();
+  let {
+    folders,
+    selectedFolder,
+    selectedNote,
+    onselectfolder,
+    onopen,
+    picked,
+    onselectall,
+    onclearselection,
+    oncreatefolder,
+    onerror,
+  }: Props = $props();
+
+  /** The visible note rows in display order; notes in collapsed folders are left out. */
+  export function visibleNoteIds(): number[] {
+    return rows.flatMap((r) => (r.kind === "note" ? [r.note.id] : []));
+  }
 
   type Row =
     | { kind: "folder"; key: string; level: number; path: string; name: string; open: boolean; parent: string }
@@ -228,7 +249,16 @@
     </form>
   {/if}
 
-  <div class="rows" role="tree" tabindex="-1" aria-label="Folders and notes" bind:this={tree} {onkeydown}>
+  <div
+    class="rows"
+    role="tree"
+    tabindex="-1"
+    aria-label="Folders and notes"
+    aria-multiselectable="true"
+    bind:this={tree}
+    {onkeydown}
+    {@attach selectionKeys(onselectall, onclearselection)}
+  >
     {#if rows.length === 0}
       <p class="muted empty">No notes yet.</p>
     {/if}
@@ -256,9 +286,10 @@
         <div
           class="row note"
           class:selected={row.note.id === selectedNote?.id}
+          class:picked={picked.has(row.note.id)}
           role="treeitem"
           aria-level={row.level}
-          aria-selected={row.note.id === selectedNote?.id}
+          aria-selected={picked.size > 0 ? picked.has(row.note.id) : row.note.id === selectedNote?.id}
           aria-current={row.note.id === selectedNote?.id}
           tabindex={row.key === activeKey ? 0 : -1}
           data-key={row.key}
@@ -349,6 +380,11 @@
 
   .row.selected {
     background: var(--selection);
+  }
+
+  .row.picked {
+    background: var(--selection);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .row:focus-visible {

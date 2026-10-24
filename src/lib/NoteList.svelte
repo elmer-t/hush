@@ -2,17 +2,23 @@
   import type { SearchHit } from "$lib/api";
   import { shortDate } from "$lib/dates";
   import { highlightParts } from "$lib/search";
+  import { selectionKeys } from "$lib/selection";
 
   type Props = {
     hits: SearchHit[];
     selectedId: number | null;
+    /** Notes picked for a bulk action. */
+    picked: ReadonlySet<number>;
     hasMore: boolean;
-    onselect: (id: number) => void;
+    /** Every click; the event tells a plain click from Ctrl/Cmd or Shift. */
+    onselect: (id: number, e: MouseEvent) => void;
+    onselectall: () => void;
+    onclearselection: () => void;
     /** Asks for the next page when the user nears the end of the list. */
     onmore: () => void;
     emptyText: string;
   };
-  let { hits, selectedId, hasMore, onselect, onmore, emptyText }: Props = $props();
+  let { hits, selectedId, picked, hasMore, onselect, onselectall, onclearselection, onmore, emptyText }: Props = $props();
 
   // Rows have a fixed height, so only the visible slice (plus a margin) is rendered.
   // Rows grow to fit two lines of snippet whenever any hit has one.
@@ -30,7 +36,12 @@
   });
 </script>
 
-<div class="list" bind:clientHeight={height} onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}>
+<div
+  class="list"
+  bind:clientHeight={height}
+  onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
+  {@attach selectionKeys(onselectall, onclearselection)}
+>
   {#if hits.length === 0}
     <p class="muted empty">{emptyText}</p>
   {/if}
@@ -39,10 +50,11 @@
       <button
         class="item"
         class:selected={note.id === selectedId}
+        class:picked={picked.has(note.id)}
         aria-current={note.id === selectedId}
         style:top="{(first + i) * rowHeight}px"
         style:height="{rowHeight}px"
-        onclick={() => onselect(note.id)}
+        onclick={(e) => onselect(note.id, e)}
       >
         <span class="title">{note.title}</span>
         <span class="sub muted">
@@ -96,6 +108,11 @@
 
   .item.selected {
     background: var(--selection);
+  }
+
+  .item.picked {
+    background: var(--selection);
+    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .title,

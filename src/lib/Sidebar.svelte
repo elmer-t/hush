@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { api, errorMessage, type Facets, type NoteSummary, type SearchHit, type SidebarView } from "$lib/api";
-  import { clearLoaded, refreshFolders, updateNote } from "$lib/explorer.svelte";
+  import { clearLoaded, findNote, refreshFolders, updateNote } from "$lib/explorer.svelte";
+  import { isToggle } from "$lib/selection";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
@@ -14,8 +16,12 @@
     selected: NoteSummary | null;
     onselect: (id: number) => void;
     oncreate: (folder: string) => void;
+    /** Bulk move; `sources` are the notes' current folders. Resolves to whether it worked. */
+    onmove: (ids: number[], folder: string, sources: string[]) => Promise<boolean>;
+    /** Bulk delete (to the trash). Resolves to whether it worked. */
+    ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
   };
-  let { selected, onselect, oncreate }: Props = $props();
+  let { selected, onselect, oncreate, onmove, ondelete }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
@@ -39,6 +45,15 @@
   let searchInput = $state<HTMLInputElement>();
   let loading = false;
   let generation = 0;
+  let explorer = $state<ReturnType<typeof ExplorerTree>>();
+
+  // Notes picked for a bulk action, in the visible list only. Frontend state, never stored.
+  const picked = new SvelteSet<number>();
+  // The last note clicked, where a Shift+click range starts.
+  let anchor: number | null = null;
+  let moving = $state(false);
+  let moveTarget = $state("");
+  let busy = $state(false);
 
   const allFolders = $derived([...folders, ...emptyFolders]);
   const filterCount = $derived(activeFilterCount(filters));
@@ -50,9 +65,17 @@
   });
 
   function setView(next: SidebarView) {
+    if (next !== view) clearSelection();
     view = next;
     api.setSidebarView(next).catch((e) => (error = errorMessage(e)));
   }
+
+  // A new search, or another folder in the Recent list, shows other notes. In the tree
+  // the folder is only the target for new notes, so the selection stays.
+  $effect(() => {
+    JSON.stringify([text, filters, view === "recent" ? selectedFolder : null]);
+    untrack(clearSelection);
+  });
 
   // Search as you type: any change to the text, filters or folder reruns the query.
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -153,6 +176,74 @@
     if (showFilters) void loadFacets();
   }
 
+  function clearSelection() {
+    picked.clear();
+    anchor = null;
+    moving = false;
+  }
+
+  /** The notes shown, in order, that a Shift+click range or Ctrl/Cmd+A can cover. */
+  function visibleIds(): number[] {
+    if (view === "tree" && !searching) return explorer?.visibleNoteIds() ?? [];
+    return hits.map((h) => h.note.id);
+  }
+
+  /** Plain click opens; Ctrl/Cmd+click toggles; Shift+click picks a range from the last click. */
+  function pick(id: number, e: MouseEvent | KeyboardEvent) {
+    if (e.shiftKey && anchor !== null) {
+      const ids = visibleIds();
+      const from = ids.indexOf(anchor);
+      const to = ids.indexOf(id);
+      if (from >= 0 && to >= 0) {
+        if (!isToggle(e)) picked.clear();
+        for (const i of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) picked.add(i);
+        return;
+      }
+    }
+    if (isToggle(e)) {
+      if (picked.has(id)) picked.delete(id);
+      else picked.add(id);
+      anchor = id;
+      return;
+    }
+    clearSelection();
+    anchor = id;
+    onselect(id);
+  }
+
+  function selectAll() {
+    for (const id of visibleIds()) picked.add(id);
+  }
+
+  function pickedNotes(): NoteSummary[] {
+    return [...picked].flatMap((id) => {
+      const note = hits.find((h) => h.note.id === id)?.note ?? findNote(id);
+      return note ? [note] : [];
+    });
+  }
+
+  async function moveSelection(e: SubmitEvent) {
+    e.preventDefault();
+    if (busy) return;
+    busy = true;
+    const notes = pickedNotes();
+    const ok = await onmove([...picked], moveTarget, notes.map((n) => n.folder));
+    busy = false;
+    if (ok) {
+      clearSelection();
+      moveTarget = "";
+    }
+  }
+
+  async function deleteSelection() {
+    if (busy) return;
+    busy = true;
+    const notes = pickedNotes();
+    const ok = await ondelete([...picked], notes.map((n) => n.folder));
+    busy = false;
+    if (ok) clearSelection();
+  }
+
   function addFolder(folder: string) {
     if (!allFolders.some((f) => f.toLowerCase() === folder.toLowerCase())) emptyFolders = [...emptyFolders, folder];
   }
@@ -183,14 +274,46 @@
     <button aria-pressed={view === "recent"} onclick={() => setView("recent")}>Recent</button>
   </div>
   {#if error}<p class="error">{error}</p>{/if}
+  {#if picked.size > 0}
+    <div class="actions" role="toolbar" aria-label="Selected notes">
+      <span><strong>{picked.size}</strong> selected</span>
+      <button onclick={() => (moving = !moving)} aria-expanded={moving} disabled={busy}>Move to…</button>
+      <button class="danger" onclick={deleteSelection} disabled={busy} title="Move the selected notes to the trash">
+        Delete
+      </button>
+      <button onclick={clearSelection} disabled={busy}>Clear</button>
+    </div>
+    {#if moving}
+      <form class="move" onsubmit={moveSelection}>
+        <input
+          list="move-folders"
+          placeholder="Folder (empty = top level)"
+          aria-label="Move to folder"
+          spellcheck="false"
+          bind:value={moveTarget}
+          onkeydown={(e) => e.key === "Escape" && (moving = false)}
+          disabled={busy}
+          {@attach (el) => el.focus()}
+        />
+        <datalist id="move-folders">
+          {#each allFolders as f (f)}<option value={f}></option>{/each}
+        </datalist>
+        <button type="submit" class="primary" disabled={busy}>Move</button>
+      </form>
+    {/if}
+  {/if}
   {#if view === "tree" && !searching}
     <div class="explorer">
       <ExplorerTree
+        bind:this={explorer}
         folders={allFolders}
         {selectedFolder}
         selectedNote={selected}
         onselectfolder={(f) => (selectedFolder = f)}
-        onopen={(id) => onselect(id)}
+        onopen={pick}
+        {picked}
+        onselectall={selectAll}
+        onclearselection={clearSelection}
         oncreatefolder={addFolder}
         onerror={(e) => (error = errorMessage(e))}
       />
@@ -211,8 +334,11 @@
         <NoteList
           {hits}
           {selectedId}
+          {picked}
           {hasMore}
-          {onselect}
+          onselect={pick}
+          onselectall={selectAll}
+          onclearselection={clearSelection}
           onmore={() => void loadNotes(false)}
           emptyText={searching ? "No matching notes." : "No notes here yet."}
         />
@@ -277,6 +403,36 @@
 
   .error {
     padding: 0.5rem 0.75rem;
+  }
+
+  .actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0 0.75rem 0.5rem;
+    font-size: 0.85em;
+  }
+
+  .actions span {
+    flex: 1;
+  }
+
+  .actions button {
+    padding: 0.1em 0.5em;
+  }
+
+  .danger:hover:not(:disabled) {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  .move {
+    flex: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.3rem;
+    margin: 0 0.75rem 0.5rem;
   }
 
   .views {
