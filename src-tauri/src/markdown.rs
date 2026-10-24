@@ -322,9 +322,9 @@ fn code_ranges(body: &str, from: usize) -> Vec<Range<usize>> {
     ranges
 }
 
+/// Tags are case-sensitive: `jr` and `Jr` are both kept.
 fn push_unique(list: &mut Vec<String>, value: &str) {
-    let lower = value.to_lowercase();
-    if !list.iter().any(|v| v.to_lowercase() == lower) {
+    if !list.iter().any(|v| v == value) {
         list.push(value.to_string());
     }
 }
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn inline_tags() {
         let p = parse("# Heading\n#one and #two/sub, (#three) #123 a#notatag http://x/#anchor #One");
-        assert_eq!(p.tags, vec!["one", "two/sub", "three"]);
+        assert_eq!(p.tags, vec!["one", "two/sub", "three", "One"], "tags are case-sensitive");
     }
 
     #[test]

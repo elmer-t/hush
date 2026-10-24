@@ -68,11 +68,13 @@ impl Vault {
         for tag in &q.tags {
             filters.push(
                 "EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
-                 WHERE nt.note_id = n.id AND (t.name = ? OR t.name LIKE ? ESCAPE '\\'))"
+                 WHERE nt.note_id = n.id AND (t.name = ? OR (t.name >= ? AND t.name < ?)))"
                     .into(),
             );
+            // Tags are case-sensitive, so nested tags are a binary range ('0' follows '/'), not LIKE.
             args.push(tag.trim().to_string().into());
-            args.push(format!("{}/%", escape_like(tag.trim())).into());
+            args.push(format!("{}/", tag.trim()).into());
+            args.push(format!("{}0", tag.trim()).into());
         }
         if let Some(topic) = &q.topic {
             filters.push("n.topic = ?".into());
@@ -165,7 +167,7 @@ impl Vault {
         Ok(Facets {
             tags: self.strings(
                 "SELECT t.name FROM tags t
-                 WHERE EXISTS (SELECT 1 FROM note_tags nt WHERE nt.tag_id = t.id) ORDER BY t.name",
+                 WHERE EXISTS (SELECT 1 FROM note_tags nt WHERE nt.tag_id = t.id) ORDER BY t.name COLLATE NOCASE, t.name",
                 [],
             )?,
             topics: self.strings("SELECT DISTINCT topic FROM notes WHERE topic IS NOT NULL AND deleted_at IS NULL ORDER BY topic", [])?,
