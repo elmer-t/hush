@@ -238,7 +238,9 @@ pub fn apply(rules: &[CompiledRule], input: &RuleInput) -> RuleOutput {
                         out.warnings.push(format!("rule '{}': '{value}' is not a valid tag", rule.name));
                     }
                     for tag in tags {
-                        push_unique(&mut out.tags, tag);
+                        if !out.tags.contains(&tag) {
+                            out.tags.push(tag);
+                        }
                     }
                     true
                 }
@@ -285,9 +287,11 @@ fn first_lines(text: &str, n: usize) -> &str {
     &text[..end]
 }
 
+/// An exact match wins, so `jr` and `Jr` can map to different values; otherwise case is ignored.
 fn map_value(map: &[(String, String)], value: &str) -> String {
     map.iter()
-        .find(|(from, _)| from.trim().to_lowercase() == value.to_lowercase())
+        .find(|(from, _)| from.trim() == value)
+        .or_else(|| map.iter().find(|(from, _)| from.trim().to_lowercase() == value.to_lowercase()))
         .map_or(value, |(_, to)| to.trim())
         .to_string()
 }
@@ -403,6 +407,15 @@ mod tests {
         let out = run(&[r], "2004-03-12 jr Walk dr", "", "");
         assert_eq!(out.tags, ["journal", "dr"]);
         assert_eq!(out.file_name, "2004-03-12 Walk");
+    }
+
+    #[test]
+    fn map_prefers_an_exact_case_match() {
+        let r = Rule {
+            map: vec![("jr".into(), "journal".into()), ("Jr".into(), "junior".into()), ("jR".into(), "jury".into())],
+            ..rule(Source::Body, r"\b(jr|Jr|jR)\b", Target::Tag)
+        };
+        assert_eq!(run(&[r], "", "", "jR Jr jr JR").tags, ["jury", "junior", "journal"]);
     }
 
     #[test]

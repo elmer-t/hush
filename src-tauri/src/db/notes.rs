@@ -129,7 +129,7 @@ impl Vault {
             .optional()?
             .ok_or(Error::NoteNotFound)?;
         let mut stmt = self.conn.prepare_cached(
-            "SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = ?1 ORDER BY t.name",
+            "SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = ?1 ORDER BY t.name COLLATE NOCASE, t.name",
         )?;
         note.tags = stmt.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(note)

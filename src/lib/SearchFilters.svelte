@@ -21,7 +21,7 @@
     if (e.key !== "Enter") return;
     const tag = e.currentTarget.value.trim().replace(/^#/, "");
     e.currentTarget.value = "";
-    if (tag && !filters.tags.some((t) => same(t, tag))) filters.tags = [...filters.tags, tag];
+    if (tag && !filters.tags.includes(tag)) filters.tags = [...filters.tags, tag];
   }
 
   function addAttribute(e: SubmitEvent) {

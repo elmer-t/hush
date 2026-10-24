@@ -93,6 +93,26 @@ ALTER TABLE notes ADD COLUMN deleted_at INTEGER;
 DROP INDEX notes_folder_title;
 CREATE UNIQUE INDEX notes_folder_title ON notes(folder, title) WHERE deleted_at IS NULL;
 CREATE INDEX notes_deleted ON notes(deleted_at) WHERE deleted_at IS NOT NULL;
+"#, r#"
+-- Tags become case-sensitive: `jr` and `Jr` are different tags. The collation can't be
+-- altered in place, so both tables are rebuilt; the child goes first so that dropping
+-- `tags` doesn't cascade.
+CREATE TABLE tags_new (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+INSERT INTO tags_new(id, name) SELECT id, name FROM tags;
+CREATE TABLE note_tags_new (
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags_new(id) ON DELETE CASCADE,
+    PRIMARY KEY (note_id, tag_id)
+) WITHOUT ROWID;
+INSERT INTO note_tags_new(note_id, tag_id) SELECT note_id, tag_id FROM note_tags;
+DROP TABLE note_tags;
+DROP TABLE tags;
+ALTER TABLE tags_new RENAME TO tags;
+ALTER TABLE note_tags_new RENAME TO note_tags;
+CREATE INDEX note_tags_tag ON note_tags(tag_id, note_id);
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -141,5 +161,31 @@ mod tests {
         assert!(conn.execute(insert, []).is_err(), "still unique among live notes");
         conn.execute("UPDATE notes SET deleted_at = 5", []).unwrap();
         conn.execute(insert, []).unwrap();
+    }
+
+    /// A vault from before case-sensitive tags (version 3) keeps its tags and gains `Jr` next to `jr`.
+    #[test]
+    fn tag_case_migration_keeps_note_tags() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..3] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, created_at, updated_at) VALUES (1, 'T', 1, 1);
+             INSERT INTO tags(id, name) VALUES (7, 'jr');
+             INSERT INTO note_tags VALUES (1, 7);",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let tagged: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(tagged, 7);
+        conn.execute("INSERT INTO tags(name) VALUES ('Jr')", []).unwrap();
+        assert!(conn.execute("INSERT INTO tags(name) VALUES ('jr')", []).is_err());
+        conn.execute("DELETE FROM notes", []).unwrap();
+        let left: i64 = conn.query_row("SELECT count(*) FROM note_tags", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "note_tags still cascades from notes");
     }
 }

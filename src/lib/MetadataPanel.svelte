@@ -14,8 +14,6 @@
   let newValue = $state("");
   let attributeError = $state("");
 
-  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-
   const attributes = $derived.by(() => {
     const groups = new Map<string, string[]>();
     for (const [key, value] of meta.attributes) groups.set(key, [...(groups.get(key) ?? []), value]);
@@ -31,13 +29,13 @@
     if (e.key !== "Enter") return;
     const tag = e.currentTarget.value.trim().replace(/^#/, "");
     e.currentTarget.value = "";
-    if (tag && !meta.tags.some((t) => same(t, tag))) onset("tags", [...meta.frontmatterTags, tag]);
+    if (tag && !meta.tags.includes(tag)) onset("tags", [...meta.frontmatterTags, tag]);
   }
 
   function removeTag(tag: string) {
     onset(
       "tags",
-      meta.frontmatterTags.filter((t) => !same(t, tag)),
+      meta.frontmatterTags.filter((t) => t !== tag),
     );
   }
 
@@ -74,7 +72,7 @@
     {#if meta.tags.length > 0}
       <ul class="tags">
         {#each meta.tags as tag (tag)}
-          {#if meta.frontmatterTags.some((t) => same(t, tag))}
+          {#if meta.frontmatterTags.includes(tag)}
             <li class="tag">
               #{tag}
               <button aria-label="Remove tag {tag}" onclick={() => removeTag(tag)}>×</button>

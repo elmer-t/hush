@@ -32,6 +32,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Editor: split view (source | preview) with a preview-only toggle. Live preview deferred to v2.
 - **Frontmatter in the body is the single source of truth.** Author, topic, tags and attributes are derived from it on every save. The metadata panel edits the frontmatter.
 - Tags = inline `#tags` ∪ frontmatter `tags`.
+- **Tags are case-sensitive** (2026-10-24): `jr`, `Jr` and `jR` are different tags, everywhere (dedup, filters, nested-tag matching). Lists sort ignoring case. Folders, titles, author, topic and attributes stay case-insensitive. Import rule maps prefer an exact-case entry and fall back to ignoring case.
 - Author: free text, defaults to a vault-level "default author" setting.
 - Topic: free field, defaults on import to the top-level folder relative to the import source (not the target folder); rules can override.
 - Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree (they are not stored, so one without notes disappears on lock).

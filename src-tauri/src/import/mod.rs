@@ -281,7 +281,7 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
     if !found.tags.is_empty() {
         let mut tags = parsed.frontmatter_tags.clone();
         for tag in &found.tags {
-            if !tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+            if !tags.contains(tag) {
                 tags.push(tag.clone());
             }
         }

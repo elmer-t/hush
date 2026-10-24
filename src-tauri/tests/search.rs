@@ -65,7 +65,9 @@ fn filters() {
         titles(&vault, &q)
     };
     assert_eq!(q(|q| q.tags = vec!["jr".into()]), vec!["Dream of the sea", "Lighthouse"]);
-    assert_eq!(q(|q| q.tags = vec!["JR".into(), "dr".into()]), vec!["Dream of the sea"]);
+    assert_eq!(q(|q| q.tags = vec!["jr".into(), "dr".into()]), vec!["Dream of the sea"]);
+    assert_eq!(q(|q| q.tags = vec!["JR".into()]), Vec::<String>::new(), "tags are case-sensitive");
+    assert_eq!(q(|q| q.tags = vec!["Jr".into()]), Vec::<String>::new(), "also for nested tags");
     assert_eq!(q(|q| q.topic = Some("travel".into())), vec!["Lighthouse"]);
     assert_eq!(q(|q| q.author = Some("bob".into())), vec!["Dream of the sea"]);
     assert_eq!(q(|q| q.folder = Some("journal".into())), vec!["Dream of the sea", "Lighthouse"]);
