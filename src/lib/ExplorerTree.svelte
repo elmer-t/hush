@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import type { NoteSummary } from "$lib/api";
   import { ensureNote, expanded, expandTo, key, loaded, loadFolder, loadMore } from "$lib/explorer.svelte";
+  import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import { selectionKeys } from "$lib/selection";
 
@@ -220,20 +221,32 @@
     el.focus();
   }
 
+  const indent = (level: number) => 8 + (level - 1) * 16;
+
   const isSelectedFolder = (path: string) => selectedFolder !== null && key(selectedFolder) === key(path);
 </script>
 
 <div class="explorer">
   <div class="heading">
+    <span class="label">Folders</span>
+    {#if selectedFolder}
+      <button
+        class="link target"
+        onclick={() => onselectfolder(null)}
+        title="New notes and folders go to {selectedFolder}. Click to use the top level."
+      >
+        in {selectedFolder}
+      </button>
+    {/if}
+    <span class="spacer"></span>
     <button
-      class="small target"
-      onclick={() => onselectfolder(null)}
-      disabled={selectedFolder === null}
-      title="New notes and folders go to the top level"
+      class="ghost small icon"
+      onclick={() => (naming = true)}
+      aria-label="New folder"
+      title={selectedFolder ? `New folder in ${selectedFolder}` : "New folder"}
     >
-      {selectedFolder ? `In ${selectedFolder}` : "Top level"}
+      <Icon name="folderPlus" />
     </button>
-    <button class="small" onclick={() => (naming = true)} title="New folder inside the selected folder">+ Folder</button>
   </div>
 
   {#if naming}
@@ -274,12 +287,13 @@
           tabindex={row.key === activeKey ? 0 : -1}
           data-key={row.key}
           title={row.path}
-          style:padding-left="{(row.level - 1) * 14}px"
+          style:padding-left="{indent(row.level)}px"
           onclick={() => clickFolder(row)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
         >
-          <span class="twisty" aria-hidden="true">{row.open ? "▾" : "▸"}</span>
+          <span class="twisty"><Icon name={row.open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={2} /></span>
+          <span class="glyph"><Icon name="folder" /></span>
           <span class="name">{row.name}</span>
         </div>
       {:else if row.kind === "note"}
@@ -294,12 +308,13 @@
           tabindex={row.key === activeKey ? 0 : -1}
           data-key={row.key}
           title={row.note.folder ? `${row.note.folder}/${row.note.title}` : row.note.title}
-          style:padding-left="{(row.level - 1) * 14}px"
+          style:padding-left="{indent(row.level)}px"
           onclick={(e) => activate(row, e)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
         >
-          <span class="twisty" aria-hidden="true"></span>
+          <span class="twisty"></span>
+          <span class="glyph note-glyph"><Icon name="note" /></span>
           <span class="name">{row.note.title}</span>
         </div>
       {:else}
@@ -310,12 +325,12 @@
           aria-selected="false"
           tabindex={row.key === activeKey ? 0 : -1}
           data-key={row.key}
-          style:padding-left="{(row.level - 1) * 14}px"
+          style:padding-left="{indent(row.level)}px"
           onclick={(e) => activate(row, e)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
         >
-          <span class="twisty" aria-hidden="true"></span>
+          <span class="twisty"></span>
           <span class="name muted">Show more…</span>
         </div>
       {/if}
@@ -327,63 +342,84 @@
   .explorer {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 2px;
     height: 100%;
     min-height: 0;
-    padding: 0 0.75rem 0.75rem;
+    padding: 0 8px 8px;
   }
 
   .heading {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-size: 0.8em;
-    color: var(--muted);
+    gap: 8px;
+    min-width: 0;
+    padding: 0 4px 0 8px;
   }
 
-  .small {
-    padding: 0.1em 0.5em;
-    font-size: 0.95em;
+  .label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
   }
 
   .target {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  form {
+    padding: 0 4px 4px;
   }
 
   .rows {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .empty {
     margin: 0;
-    padding: 0.25rem;
+    padding: 4px 8px;
   }
 
   .row {
+    flex: none;
     display: flex;
     align-items: center;
-    padding-block: 0.15em;
-    border-radius: 4px;
+    gap: 6px;
+    height: 30px;
+    padding-right: 8px;
+    border-radius: 6px;
+    font-size: 13.5px;
     cursor: default;
     user-select: none;
   }
 
   .row:hover {
-    background: var(--active-line);
+    background: var(--hover);
   }
 
   .row.selected {
     background: var(--selection);
+    color: var(--selection-text);
+    font-weight: 500;
   }
 
   .row.picked {
     background: var(--selection);
+    color: var(--selection-text);
     box-shadow: inset 3px 0 0 var(--accent);
   }
 
@@ -393,22 +429,28 @@
   }
 
   .twisty {
-    width: 1.4em;
+    width: 14px;
     flex: none;
+    display: flex;
     color: var(--muted);
-    text-align: center;
+  }
+
+  .glyph {
+    flex: none;
+    display: flex;
+    color: var(--muted);
+  }
+
+  .note-glyph {
+    color: inherit;
+    opacity: 0.7;
   }
 
   .name {
     flex: 1;
     min-width: 0;
-    padding: 0 0.25em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .folder .name {
-    font-weight: 600;
   }
 </style>

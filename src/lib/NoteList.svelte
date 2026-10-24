@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SearchHit } from "$lib/api";
   import { shortDate } from "$lib/dates";
+  import Icon from "$lib/Icon.svelte";
   import { highlightParts } from "$lib/search";
   import { selectionKeys } from "$lib/selection";
 
@@ -23,7 +24,7 @@
   // Rows have a fixed height, so only the visible slice (plus a margin) is rendered.
   // Rows grow to fit two lines of snippet whenever any hit has one.
   const OVERSCAN = 8;
-  const rowHeight = $derived(hits.some((h) => h.snippet) ? 96 : 52);
+  const rowHeight = $derived(hits.some((h) => h.snippet) ? 100 : 64);
 
   let scrollTop = $state(0);
   let height = $state(0);
@@ -52,22 +53,30 @@
         class:selected={note.id === selectedId}
         class:picked={picked.has(note.id)}
         aria-current={note.id === selectedId}
+        aria-pressed={picked.size > 0 ? picked.has(note.id) : undefined}
         style:top="{(first + i) * rowHeight}px"
-        style:height="{rowHeight}px"
+        style:height="{rowHeight - 2}px"
         onclick={(e) => onselect(note.id, e)}
       >
-        <span class="title">{note.title}</span>
-        <span class="sub muted">
-          <span class="folder">{note.folder}</span>
-          <span>{shortDate(note.updatedAt)}</span>
-        </span>
-        {#if snippet}
-          <span class="snippet muted">
-            {#each highlightParts(snippet) as part, j (j)}
-              {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
-            {/each}
+        {#if picked.size > 0}
+          <span class="check" class:on={picked.has(note.id)} aria-hidden="true">
+            {#if picked.has(note.id)}<Icon name="check" size={12} strokeWidth={3} />{/if}
           </span>
         {/if}
+        <span class="text">
+          <span class="head">
+            <span class="title">{note.title}</span>
+            <span class="date">{shortDate(note.updatedAt)}</span>
+          </span>
+          <span class="folder">{note.folder || "vault root"}</span>
+          {#if snippet}
+            <span class="snippet">
+              {#each highlightParts(snippet) as part, j (j)}
+                {#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}
+              {/each}
+            </span>
+          {/if}
+        </span>
       </button>
     {/each}
   </div>
@@ -77,6 +86,7 @@
   .list {
     overflow-y: auto;
     min-height: 0;
+    padding: 0 8px 8px;
   }
 
   .spacer {
@@ -84,7 +94,7 @@
   }
 
   .empty {
-    padding: 0.5rem 0.75rem;
+    padding: 4px 8px;
     margin: 0;
   }
 
@@ -92,27 +102,64 @@
     position: absolute;
     left: 0;
     right: 0;
-    display: grid;
-    align-content: center;
-    gap: 0.1rem;
-    padding: 0 0.75rem;
-    border: none;
-    border-radius: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
     background: none;
+    color: var(--text);
     text-align: left;
+    white-space: normal;
+    overflow: hidden;
   }
 
-  .item:hover {
-    background: var(--active-line);
+  .item:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--hover);
   }
 
-  .item.selected {
-    background: var(--selection);
+  .item.selected,
+  .item.selected:hover:not(:disabled) {
+    border-color: var(--accent);
   }
 
   .item.picked {
     background: var(--selection);
-    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .check {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+  }
+
+  .check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+
+  .text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
   }
 
   .title,
@@ -123,18 +170,21 @@
   }
 
   .title {
-    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+    font-weight: 500;
   }
 
-  .sub {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-size: 0.8em;
-  }
-
-  .sub span:last-child {
+  .date {
     flex: none;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .folder {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
   }
 
   .snippet {
@@ -143,14 +193,9 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
-    font-size: 0.8em;
+    font-size: 13px;
     line-height: 1.35;
+    color: var(--text-2);
     overflow-wrap: anywhere;
-  }
-
-  mark {
-    background: var(--highlight);
-    color: inherit;
-    border-radius: 2px;
   }
 </style>

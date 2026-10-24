@@ -12,6 +12,7 @@
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
+  import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
@@ -23,6 +24,8 @@
 
   // Auto-lock is enforced by the backend; activity is reported at most this often.
   const TOUCH_INTERVAL_MS = 15_000;
+  // How often the "Locks in" countdown is redrawn.
+  const COUNTDOWN_TICK_MS = 15_000;
 
   let view = $state<"note" | "settings" | "import" | "trash">("note");
   // The import view stays mounted once opened, so a running import keeps its progress.
@@ -38,7 +41,17 @@
   let error = $state("");
   let editor = $state<ReturnType<typeof NoteEditor>>();
   let sidebar = $state<ReturnType<typeof Sidebar>>();
-  let lastTouch = 0;
+  let trashCount = $state(0);
+  // When activity was last reported; the backend's idle timer restarts then. Unlocking counts.
+  let lastTouch = $state(Date.now());
+  let now = $state(Date.now());
+  let autoLockMinutes = $state<number | null>(null);
+
+  const locksIn = $derived(
+    autoLockMinutes === null
+      ? null
+      : Math.max(1, Math.ceil((autoLockMinutes * 60_000 - (now - lastTouch)) / 60_000)),
+  );
 
   onMount(() => {
     // The backend holds the window open briefly so pending edits can be saved.
@@ -46,13 +59,30 @@
       await editor?.flush();
       await api.exitApp();
     });
-    return () => void unlisten.then((stop) => stop());
+    const ticker = setInterval(() => (now = Date.now()), COUNTDOWN_TICK_MS);
+    void loadAutoLock();
+    void loadTrashCount();
+    return () => {
+      clearInterval(ticker);
+      void unlisten.then((stop) => stop());
+    };
   });
 
+  async function loadAutoLock() {
+    autoLockMinutes = await api.autoLockMinutes().catch(() => null);
+  }
+
+  async function loadTrashCount() {
+    trashCount = await api.trashedNotes().then(
+      (notes) => notes.length,
+      () => trashCount,
+    );
+  }
+
   function activity() {
-    const now = Date.now();
-    if (now - lastTouch < TOUCH_INTERVAL_MS) return;
-    lastTouch = now;
+    const at = Date.now();
+    if (at - lastTouch < TOUCH_INTERVAL_MS) return;
+    lastTouch = now = at;
     void api.touch();
   }
 
@@ -85,6 +115,8 @@
   async function toggleView(next: "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
+    // The auto-lock time may have been changed there.
+    if (view === "settings") void loadAutoLock();
     view = view === next ? "note" : next;
     if (next === "import") importOpened = true;
   }
@@ -216,6 +248,7 @@
     }
     error = "";
     if (open !== null) opened = summary = meta = null;
+    void loadTrashCount();
     await sidebar?.refresh(sources);
     return true;
   }
@@ -223,28 +256,63 @@
   async function deleted(id: number) {
     const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
+    void loadTrashCount();
     await sidebar?.refresh(changed);
   }
 </script>
 
 <svelte:window onkeydowncapture={onkeydown} onpointerdown={activity} onpointermove={activity} onwheel={activity} />
 
-<div class="workspace" class:no-left={!showLeft} class:no-right={!showRight}>
+<div class="workspace" class:no-left={!showLeft} class:no-right={!showRight} class:no-details={view !== "note"}>
   <header>
-    <div class="group">
-      <button onclick={() => (showLeft = !showLeft)} aria-pressed={showLeft} title="Show or hide the note list">
-        Notes
-      </button>
-      <strong title={vault.path}>{vault.name}</strong>
+    <button
+      class="ghost icon"
+      onclick={() => (showLeft = !showLeft)}
+      aria-pressed={showLeft}
+      aria-label={showLeft ? "Hide note list" : "Show note list"}
+      title={showLeft ? "Hide note list" : "Show note list"}
+    >
+      <Icon name="panelLeft" />
+    </button>
+    <div class="vault" title={vault.path}>
+      <span class="mark" aria-hidden="true">h</span>
+      <span class="names">
+        <strong>{vault.name}</strong>
+        <span class="path">{vault.path}</span>
+      </span>
     </div>
+    <div class="spacer"></div>
     <div class="group">
-      <button onclick={() => (showRight = !showRight)} aria-pressed={showRight} title="Show or hide note details">
-        Details
+      <button class="primary" onclick={() => create(sidebar?.currentFolder() ?? "")}>
+        <Icon name="plus" strokeWidth={2} />
+        New note
+        <span class="kbd">Ctrl N</span>
       </button>
-      <button onclick={() => toggleView("import")} aria-pressed={view === "import"}>Import</button>
-      <button onclick={() => toggleView("trash")} aria-pressed={view === "trash"}>Trash</button>
-      <button onclick={() => toggleView("settings")} aria-pressed={view === "settings"}>Settings</button>
-      <button onclick={lock} title="Lock (Ctrl+L)">Lock</button>
+      <button class="toggle" onclick={() => toggleView("import")} aria-pressed={view === "import"}>
+        <Icon name="import" />
+        Import
+      </button>
+      <button
+        class="icon toggle"
+        onclick={() => toggleView("settings")}
+        aria-pressed={view === "settings"}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <Icon name="sliders" />
+      </button>
+      <span class="divider" aria-hidden="true"></span>
+      {#if locksIn !== null}
+        <span class="countdown" title="Locks after {autoLockMinutes} idle minutes">
+          <Icon name="clock" size={14} />
+          Locks in {locksIn} min
+        </span>
+      {/if}
+      <button onclick={lock}>
+        <Icon name="lock" />
+        Lock
+        <span class="kbd">Ctrl L</span>
+      </button>
     </div>
   </header>
 
@@ -253,8 +321,10 @@
       <Sidebar
         bind:this={sidebar}
         selected={opened ? summary : null}
+        {trashCount}
+        trashOpen={view === "trash"}
+        ontrash={() => toggleView("trash")}
         onselect={select}
-        oncreate={create}
         onmove={moveNotes}
         ondelete={deleteNotes}
         onedit={editNotes}
@@ -263,14 +333,14 @@
   {/if}
 
   <main>
-    {#if error}<p class="error banner" role="alert">{error}</p>{/if}
+    {#if error}<p class="callout danger banner" role="alert"><Icon name="alert" />{error}</p>{/if}
     {#if importOpened}
       <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh("all")} /></div>
     {/if}
     {#if view === "settings"}
       <div class="page"><Settings /></div>
     {:else if view === "trash"}
-      <div class="page"><Trash onrestored={restored} /></div>
+      <Trash onrestored={restored} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
       {#if opened}
         {#key `${opened.note.id}:${editorRevision}`}
@@ -279,6 +349,8 @@
             {opened}
             {focusTitle}
             bind:previewOnly
+            detailsShown={showRight}
+            ontoggledetails={() => (showRight = !showRight)}
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}
@@ -287,25 +359,38 @@
       {:else}
         <div class="empty">
           <p class="muted">Select a note, or create one.</p>
-          <button class="primary" onclick={() => create(sidebar?.currentFolder() ?? "")}>New note</button>
+          <button class="primary" onclick={() => create(sidebar?.currentFolder() ?? "")}>
+            <Icon name="plus" strokeWidth={2} />
+            New note
+          </button>
         </div>
       {/if}
     {/if}
   </main>
 
-  {#if showRight}
-    <div class="right">
-      {#if opened && summary && meta && view === "note"}
-        <MetadataPanel {meta} {summary} onset={(key, values) => editor?.setField(key, values)} />
-      {/if}
-    </div>
+  {#if view === "note"}
+    {#if showRight}
+      <div class="right">
+        {#if opened && summary && meta}
+          <MetadataPanel {meta} {summary} onset={(key, values) => editor?.setField(key, values)} />
+        {/if}
+      </div>
+    {:else}
+      <div class="right rail">
+        <button class="ghost icon" onclick={() => (showRight = true)} aria-label="Show details panel" title="Show details panel">
+          <Icon name="panelRight" />
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
 <style>
   .workspace {
+    --left: 280px;
+    --right: 300px;
     display: grid;
-    grid-template-columns: 260px minmax(0, 1fr) 280px;
+    grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas:
       "header header header"
@@ -314,38 +399,115 @@
   }
 
   .workspace.no-left {
-    grid-template-columns: 0 minmax(0, 1fr) 280px;
+    --left: 0px;
   }
 
+  /* Hidden details leave a rail with the button that brings them back. */
   .workspace.no-right {
-    grid-template-columns: 260px minmax(0, 1fr) 0;
+    --right: 48px;
   }
 
-  .workspace.no-left.no-right {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
+  .workspace.no-details {
+    --right: 0px;
   }
 
   header {
     grid-area: header;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.4rem 0.75rem;
+    gap: 10px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--panel);
+  }
+
+  .vault {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .mark {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .names {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.25;
+  }
+
+  .names strong {
+    font-weight: 600;
+  }
+
+  .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .spacer {
+    flex: 1 1 0;
   }
 
   .group {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
+    gap: 8px;
+  }
+
+  .group .icon {
+    color: var(--text-2);
+  }
+
+  .toggle[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .group .icon.toggle[aria-pressed="true"] {
+    color: var(--accent);
+  }
+
+  .divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+  }
+
+  .countdown {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
   }
 
   .left {
     grid-area: left;
     min-height: 0;
     border-right: 1px solid var(--border);
+    background: var(--panel);
   }
 
   main {
@@ -366,15 +528,23 @@
     min-height: 0;
     overflow-y: auto;
     border-left: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .rail {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 10px;
   }
 
   .banner {
-    padding: 0.5rem 1.25rem;
+    border-radius: 0;
   }
 
   .page {
     overflow-y: auto;
-    padding: 1.5rem 16px;
+    padding: 32px 16px 48px;
   }
 
   .page[hidden] {
@@ -385,6 +555,10 @@
     display: grid;
     place-content: center;
     justify-items: center;
-    gap: 0.5rem;
+    gap: 12px;
+  }
+
+  .empty p {
+    margin: 0;
   }
 </style>

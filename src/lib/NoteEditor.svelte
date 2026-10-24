@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote } from "$lib/api";
+  import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
   import Preview from "$lib/Preview.svelte";
@@ -11,11 +12,23 @@
     focusTitle: boolean;
     /** The remembered "Preview only" choice, shared across notes for the session. */
     previewOnly: boolean;
+    /** Whether the details panel beside the editor is shown. */
+    detailsShown: boolean;
+    ontoggledetails: () => void;
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
   };
-  let { opened, focusTitle, previewOnly = $bindable(), onsaved, onrenamed, ondeleted }: Props = $props();
+  let {
+    opened,
+    focusTitle,
+    previewOnly = $bindable(),
+    detailsShown,
+    ontoggledetails,
+    onsaved,
+    onrenamed,
+    ondeleted,
+  }: Props = $props();
 
   const SAVE_DELAY_MS = 500;
 
@@ -110,9 +123,15 @@
     }
   }
 
-  function togglePreview() {
-    previewOnly = !showPreviewOnly;
+  function setPreviewOnly(only: boolean) {
+    previewOnly = only;
     forceSplit = false;
+  }
+
+  let menuOpen = $state(false);
+
+  function closeMenuOnLeave(e: FocusEvent & { currentTarget: HTMLElement }) {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) menuOpen = false;
   }
 
   function nameKeydown(e: KeyboardEvent & { currentTarget: HTMLInputElement }) {
@@ -126,6 +145,7 @@
 
   /** Moves the note to the trash. No confirmation: it can be restored from there. */
   async function remove() {
+    menuOpen = false;
     clearTimeout(timer);
     await saving;
     try {
@@ -138,6 +158,7 @@
 
   /** Deletes the note for good, skipping the trash. */
   async function removeForever() {
+    menuOpen = false;
     const confirmed = await ask(`Delete “${committed.title}” forever? It won't go to the trash. This cannot be undone.`, {
       title: "Delete forever",
       kind: "warning",
@@ -158,33 +179,74 @@
 
 <section class="note">
   <header>
-    <div class="names">
-      <input
-        class="folder"
-        aria-label="Folder"
-        placeholder="No folder"
-        spellcheck="false"
-        bind:value={folder}
-        onblur={commitName}
-        onkeydown={nameKeydown}
-      />
-      <input
-        class="title"
-        aria-label="Title"
-        bind:this={titleInput}
-        bind:value={title}
-        onblur={commitName}
-        onkeydown={nameKeydown}
-      />
-    </div>
-    <div class="tools">
-      <span class="muted status" class:failed={status === "failed"}>{statusText}</span>
-      <button onclick={togglePreview} aria-pressed={showPreviewOnly}>
-        {showPreviewOnly ? "Split view" : "Preview only"}
+    <div class="toolbar">
+      <label class="folder">
+        <Icon name="folder" size={14} />
+        <span class="visually-hidden">Folder</span>
+        <input
+          placeholder="No folder"
+          spellcheck="false"
+          bind:value={folder}
+          onblur={commitName}
+          onkeydown={nameKeydown}
+        />
+      </label>
+      <div class="spacer"></div>
+      <span class="status" class:failed={status === "failed"} role="status">
+        {#if status === "saved"}<Icon name="check" size={14} strokeWidth={2} />{/if}
+        {statusText}
+      </span>
+      <div class="segmented" role="group" aria-label="Editor view">
+        <button aria-pressed={!showPreviewOnly} onclick={() => setPreviewOnly(false)}>
+          <Icon name="split" size={14} />
+          Split
+        </button>
+        <button aria-pressed={showPreviewOnly} onclick={() => setPreviewOnly(true)}>
+          <Icon name="eye" size={14} />
+          Preview
+        </button>
+      </div>
+      <div class="menu" onfocusout={closeMenuOnLeave}>
+        <button
+          class="ghost icon"
+          aria-label="More actions"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}
+        >
+          <Icon name="more" strokeWidth={2.5} />
+        </button>
+        {#if menuOpen}
+          <div class="popover" role="menu" tabindex="-1" onkeydown={(e) => e.key === "Escape" && (menuOpen = false)}>
+            <button role="menuitem" class="ghost" onclick={remove}>
+              <Icon name="trash" />
+              Move to trash
+            </button>
+            <button role="menuitem" class="ghost danger" onclick={removeForever}>
+              <Icon name="close" />
+              Delete forever
+            </button>
+          </div>
+        {/if}
+      </div>
+      <button
+        class="ghost icon"
+        aria-label={detailsShown ? "Hide details panel" : "Show details panel"}
+        aria-pressed={detailsShown}
+        title={detailsShown ? "Hide details panel" : "Show details panel"}
+        onclick={ontoggledetails}
+      >
+        <Icon name="panelRight" />
       </button>
-      <button class="danger" onclick={remove} title="Move to the trash">Delete</button>
-      <button class="danger" onclick={removeForever} title="Delete for good, skipping the trash">Delete forever</button>
     </div>
+    <input
+      class="title"
+      aria-label="Title"
+      bind:this={titleInput}
+      bind:value={title}
+      onblur={commitName}
+      onkeydown={nameKeydown}
+    />
   </header>
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -194,7 +256,7 @@
       <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} />
     </div>
     <div class="rendered">
-      <Preview {body} />
+      <Preview {body} large={showPreviewOnly} />
     </div>
   </div>
 </section>
@@ -209,68 +271,110 @@
 
   header {
     display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-    padding: 0.75rem 1.25rem 0.5rem;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 24px 12px;
+    border-bottom: 1px solid var(--border);
   }
 
-  .names {
-    flex: 1;
-    min-width: 0;
-    display: grid;
-  }
-
-  .names input {
-    border-color: transparent;
-    background: transparent;
-    padding: 0.1em 0.3em;
-  }
-
-  .names input:hover {
-    border-color: var(--border);
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
   }
 
   .folder {
-    font-size: 0.85em;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--panel);
     color: var(--muted);
   }
 
-  .title {
-    font-size: 1.5em;
-    font-weight: 700;
+  .folder input {
+    width: 220px;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 12px;
   }
 
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding-top: 0.3rem;
+  .folder:focus-within {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  .spacer {
+    flex: 1;
   }
 
   .status {
-    font-size: 0.85em;
-    min-width: 5em;
-    text-align: right;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
   }
 
   .status.failed {
     color: var(--danger);
   }
 
-  .danger:hover:not(:disabled) {
-    border-color: var(--danger);
+  .menu {
+    position: relative;
+  }
+
+  .popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--raised);
+    box-shadow: var(--shadow);
+  }
+
+  .popover button {
+    justify-content: flex-start;
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .popover button.danger {
     color: var(--danger);
   }
 
+  .title {
+    min-height: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
   .error {
-    padding: 0 1.25rem 0.5rem;
+    padding: 8px 24px;
   }
 
   .panes {
     display: grid;
     grid-template-columns: 1fr 1fr;
     min-height: 0;
-    border-top: 1px solid var(--border);
   }
 
   .source,
@@ -280,6 +384,7 @@
   }
 
   .source {
+    background: var(--code);
     border-right: 1px solid var(--border);
   }
 
@@ -290,11 +395,5 @@
 
   .preview-only .source {
     display: none;
-  }
-
-  .preview-only .rendered {
-    max-width: 50rem;
-    width: 100%;
-    justify-self: center;
   }
 </style>

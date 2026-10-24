@@ -329,6 +329,7 @@
   .check {
     grid-column: 1 / -1;
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 0.4rem;
     color: inherit;

@@ -83,7 +83,8 @@
 </script>
 
 <div class="settings">
-  <form onsubmit={saveAuthor}>
+  <h1>Settings</h1>
+  <form class="card" onsubmit={saveAuthor}>
     <h2>Default author</h2>
     <label>
       Added to the frontmatter of new notes
@@ -96,7 +97,7 @@
     </div>
   </form>
 
-  <form onsubmit={saveMinutes}>
+  <form class="card" onsubmit={saveMinutes}>
     <h2>Auto-lock</h2>
     <label>
       Lock after this many idle minutes
@@ -109,7 +110,7 @@
     </div>
   </form>
 
-  <form onsubmit={saveTrashDays}>
+  <form class="card" onsubmit={saveTrashDays}>
     <h2>Trash</h2>
     <label>
       Delete notes in the trash forever after this many days (0 = never)
@@ -123,7 +124,7 @@
     </div>
   </form>
 
-  <form onsubmit={changePassphrase}>
+  <form class="card" onsubmit={changePassphrase}>
     <h2>Change passphrase</h2>
     <label>
       Current passphrase
@@ -150,30 +151,47 @@
 
 <style>
   .settings {
-    max-width: 440px;
+    max-width: 560px;
     margin: 0 auto;
-    display: grid;
-    gap: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   form {
-    display: grid;
-    gap: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
   }
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  label > input {
+    min-height: 36px;
+    border-radius: 8px;
   }
 
   p {
     margin: 0;
+    font-size: 13px;
   }
 
   .actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.75rem;
+    gap: 12px;
   }
 </style>

@@ -14,28 +14,26 @@
   let view: EditorView | undefined;
 
   const highlight = HighlightStyle.define([
-    { tag: t.heading1, fontSize: "1.4em", fontWeight: "700" },
-    { tag: t.heading2, fontSize: "1.2em", fontWeight: "700" },
-    { tag: [t.heading3, t.heading4, t.heading5, t.heading6], fontWeight: "700" },
+    // The source is monospaced, so headings stand out by weight alone.
+    { tag: [t.heading1, t.heading2, t.heading3, t.heading4, t.heading5, t.heading6], fontWeight: "600" },
     { tag: t.emphasis, fontStyle: "italic" },
-    { tag: t.strong, fontWeight: "700" },
+    { tag: t.strong, fontWeight: "600" },
     { tag: t.strikethrough, textDecoration: "line-through" },
     { tag: [t.link, t.url], color: "var(--accent)" },
-    { tag: t.monospace, fontFamily: "var(--mono)" },
-    { tag: [t.processingInstruction, t.meta, t.contentSeparator, t.quote], color: "var(--muted)" },
+    { tag: [t.processingInstruction, t.meta, t.contentSeparator, t.quote, t.list], color: "var(--muted)" },
   ]);
 
   const theme = EditorView.theme({
-    "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--surface)" },
+    "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--code)" },
     "&.cm-focused": { outline: "none" },
-    ".cm-scroller": { fontFamily: "inherit", lineHeight: "1.6" },
-    ".cm-content": { padding: "1rem 0", caretColor: "var(--text)" },
-    ".cm-line": { padding: "0 1.25rem" },
+    ".cm-scroller": { fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.75" },
+    ".cm-content": { padding: "20px 0", caretColor: "var(--text)" },
+    ".cm-line": { padding: "0 24px" },
     ".cm-cursor": { borderLeftColor: "var(--text)" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "var(--selection)",
     },
-    ".cm-activeLine": { backgroundColor: "var(--active-line)" },
+    ".cm-activeLine": { backgroundColor: "var(--hover)" },
   });
 
   onMount(() => {

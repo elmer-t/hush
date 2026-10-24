@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, type Facets } from "$lib/api";
+  import Icon from "$lib/Icon.svelte";
   import { emptyFilters, type Filters } from "$lib/search";
 
   type Props = { filters: Filters; facets: Facets };
@@ -35,59 +36,62 @@
 </script>
 
 <div class="filters">
+  <div class="head">
+    <span class="title">Filters</span>
+    <button class="link small-link" onclick={() => (filters = emptyFilters())}>Clear all</button>
+  </div>
+
   <div class="field">
-    <span class="label">Tags (all must match)</span>
-    {#if filters.tags.length > 0}
-      <ul class="chips">
-        {#each filters.tags as tag (tag)}
-          <li class="chip">
-            #{tag}
-            <button
-              aria-label="Remove tag filter {tag}"
-              onclick={() => (filters.tags = filters.tags.filter((t) => t !== tag))}>×</button
-            >
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <input list="filter-tags" placeholder="Add tag and press Enter" aria-label="Add tag filter" onkeydown={addTag} />
+    <span class="label">Tags (all of)</span>
+    <ul class="chips">
+      {#each filters.tags as tag (tag)}
+        <li class="chip">
+          {tag}
+          <button
+            aria-label="Remove tag filter {tag}"
+            onclick={() => (filters.tags = filters.tags.filter((t) => t !== tag))}
+          >
+            <Icon name="close" size={12} strokeWidth={2} />
+          </button>
+        </li>
+      {/each}
+      <li>
+        <input class="add-chip" list="filter-tags" placeholder="Add tag" aria-label="Add tag filter" onkeydown={addTag} />
+      </li>
+    </ul>
     <datalist id="filter-tags">
       {#each facets.tags as tag (tag)}<option value={tag}></option>{/each}
     </datalist>
   </div>
 
-  <label>
-    Topic
-    <select bind:value={filters.topic}>
-      <option value="">Any topic</option>
-      {#each facets.topics as topic (topic)}<option value={topic}>{topic}</option>{/each}
-    </select>
-  </label>
-
-  <label>
-    Author
-    <select bind:value={filters.author}>
-      <option value="">Any author</option>
-      {#each facets.authors as author (author)}<option value={author}>{author}</option>{/each}
-    </select>
-  </label>
-
-  <fieldset class="field">
-    <legend class="label">
-      <select bind:value={filters.dateField} aria-label="Date to filter on">
-        <option value="created">Created</option>
-        <option value="updated">Updated</option>
+  <div class="pair">
+    <label class:set={filters.topic}>
+      Topic
+      <select bind:value={filters.topic}>
+        <option value="">Any</option>
+        {#each facets.topics as topic (topic)}<option value={topic}>{topic}</option>{/each}
       </select>
-    </legend>
-    <div class="dates">
-      <input type="date" aria-label="From" max={filters.to || undefined} bind:value={filters.from} />
-      <span class="muted">–</span>
-      <input type="date" aria-label="To" min={filters.from || undefined} bind:value={filters.to} />
+    </label>
+    <label class:set={filters.author}>
+      Author
+      <select bind:value={filters.author}>
+        <option value="">Any</option>
+        {#each facets.authors as author (author)}<option value={author}>{author}</option>{/each}
+      </select>
+    </label>
+  </div>
+
+  <div class="dates">
+    <div class="segmented" role="group" aria-label="Date to filter on">
+      <button aria-pressed={filters.dateField === "created"} onclick={() => (filters.dateField = "created")}>Created</button>
+      <button aria-pressed={filters.dateField === "updated"} onclick={() => (filters.dateField = "updated")}>Updated</button>
     </div>
-  </fieldset>
+    <input type="date" aria-label="From" max={filters.to || undefined} bind:value={filters.from} />
+    <span class="muted">–</span>
+    <input type="date" aria-label="To" min={filters.from || undefined} bind:value={filters.to} />
+  </div>
 
   <div class="field">
-    <span class="label">Attributes</span>
     {#if filters.attributes.length > 0}
       <ul class="chips">
         {#each filters.attributes as [key, value] (`${key}=${value}`)}
@@ -96,105 +100,123 @@
             <button
               aria-label="Remove attribute filter {key}"
               onclick={() => (filters.attributes = filters.attributes.filter(([k, v]) => k !== key || v !== value))}
-              >×</button
             >
+              <Icon name="close" size={12} strokeWidth={2} />
+            </button>
           </li>
         {/each}
       </ul>
     {/if}
     <form class="add-attribute" onsubmit={addAttribute}>
       <select bind:value={attrKey} aria-label="Attribute name" disabled={facets.attributeKeys.length === 0}>
-        <option value="">Name</option>
+        <option value="">attribute</option>
         {#each facets.attributeKeys as key (key)}<option value={key}>{key}</option>{/each}
       </select>
-      <input list="filter-attr-values" placeholder="Value" aria-label="Attribute value" bind:value={attrValue} />
+      <span class="muted">=</span>
+      <input list="filter-attr-values" placeholder="value" aria-label="Attribute value" bind:value={attrValue} />
       <datalist id="filter-attr-values">
         {#each attrValues as value (value)}<option {value}></option>{/each}
       </datalist>
-      <button type="submit" disabled={!attrKey}>Add</button>
+      <button type="submit" class="small" disabled={!attrKey}>Add</button>
     </form>
   </div>
-
-  <button class="clear" onclick={() => (filters = emptyFilters())}>Clear filters</button>
 </div>
 
 <style>
   .filters {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0 0.75rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+  }
+
+  .small-link {
+    font-size: 12px;
   }
 
   .field {
-    display: grid;
-    gap: 0.35rem;
-    margin: 0;
-    padding: 0;
-    border: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     min-width: 0;
   }
 
   .label {
-    padding: 0;
-    font-size: 0.9em;
+    font-size: 12px;
     color: var(--muted);
   }
 
-  legend select {
-    width: auto;
-    padding: 0.1em 0.3em;
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .pair select {
+    min-height: 30px;
+  }
+
+  /* A filter that is in use. */
+  .set select {
+    border-color: var(--accent);
   }
 
   .dates {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.3rem;
+    gap: 8px;
+  }
+
+  .dates .segmented {
+    border-radius: 6px;
+  }
+
+  .dates .segmented button {
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 4px;
+    font-size: 12px;
   }
 
   .dates input {
-    padding: 0.4em;
+    flex: 1 1 110px;
+    width: auto;
     min-width: 0;
-  }
-
-  .chips {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-    padding: 0.1em 0.5em;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 0.85em;
-    overflow-wrap: anywhere;
-  }
-
-  .chip button {
-    border: none;
-    background: none;
-    padding: 0 0.2em;
-    color: var(--muted);
+    min-height: 28px;
+    padding: 0 6px;
+    font-family: var(--mono);
+    font-size: 12px;
   }
 
   .add-attribute {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto;
-    gap: 0.3rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
-  .add-attribute > * {
+  .add-attribute select,
+  .add-attribute input {
+    flex: 1;
     min-width: 0;
-  }
-
-  .clear {
-    justify-self: start;
+    min-height: 28px;
+    padding: 0 6px;
+    font-family: var(--mono);
+    font-size: 12px;
   }
 </style>

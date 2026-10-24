@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { NoteMeta, NoteSummary } from "$lib/api";
   import { longDate } from "$lib/dates";
+  import Icon from "$lib/Icon.svelte";
 
   type Props = {
     meta: NoteMeta;
@@ -10,6 +11,8 @@
   };
   let { meta, summary, onset }: Props = $props();
 
+  // Whether the form for a new attribute is shown.
+  let adding = $state(false);
   let newKey = $state("");
   let newValue = $state("");
   let attributeError = $state("");
@@ -51,153 +54,189 @@
     const existing = attributes.find(([k]) => k === key)?.[1] ?? [];
     onset(key, [...existing, value]);
     newKey = newValue = attributeError = "";
+    adding = false;
   }
 </script>
 
-<aside>
-  <h2>Details</h2>
+<aside aria-label="Details">
+  <div class="head">
+    <h2>Details</h2>
+    <span class="muted">writes frontmatter</span>
+  </div>
 
-  <label>
-    Author
-    <input value={meta.author ?? ""} onchange={(e) => setText("author", e.currentTarget.value)} />
-  </label>
-
-  <label>
-    Topic
-    <input value={meta.topic ?? ""} onchange={(e) => setText("topic", e.currentTarget.value)} />
-  </label>
+  <div class="grid">
+    <label>
+      Author
+      <input value={meta.author ?? ""} onchange={(e) => setText("author", e.currentTarget.value)} />
+    </label>
+    <label>
+      Topic
+      <input value={meta.topic ?? ""} onchange={(e) => setText("topic", e.currentTarget.value)} />
+    </label>
+    <div class="date">
+      Created
+      <span>{longDate(summary.createdAt)}</span>
+    </div>
+    <div class="date">
+      Updated
+      <span>{longDate(summary.updatedAt)}</span>
+    </div>
+  </div>
 
   <div class="field">
     <span class="label">Tags</span>
-    {#if meta.tags.length > 0}
-      <ul class="tags">
-        {#each meta.tags as tag (tag)}
-          {#if meta.frontmatterTags.includes(tag)}
-            <li class="tag">
-              #{tag}
-              <button aria-label="Remove tag {tag}" onclick={() => removeTag(tag)}>×</button>
-            </li>
-          {:else}
-            <li class="tag inline" title="Written in the text; remove it there.">#{tag}</li>
-          {/if}
-        {/each}
-      </ul>
-    {/if}
-    <input placeholder="Add tag and press Enter" aria-label="Add tag" onkeydown={addTag} />
+    <ul class="chips">
+      {#each meta.tags as tag (tag)}
+        {#if meta.frontmatterTags.includes(tag)}
+          <li class="chip">
+            {tag}
+            <button aria-label="Remove tag {tag}" onclick={() => removeTag(tag)}>
+              <Icon name="close" size={12} strokeWidth={2} />
+            </button>
+          </li>
+        {:else}
+          <li class="chip outline" title="From #{tag} in the text; remove it there.">#{tag}</li>
+        {/if}
+      {/each}
+      <li><input class="add-chip" placeholder="Add tag" aria-label="Add tag" onkeydown={addTag} /></li>
+    </ul>
   </div>
 
   <div class="field">
     <span class="label">Attributes</span>
-    {#if attributes.length > 0}
-      <dl>
-        {#each attributes as [key, values] (key)}
-          <dt>{key}</dt>
-          <dd>
-            <span>{values.join(", ")}</span>
-            <button aria-label="Remove {key}" onclick={() => onset(key, [])}>×</button>
-          </dd>
-        {/each}
-      </dl>
+    {#each attributes as [key, values] (key)}
+      <div class="attribute">
+        <span class="key">{key}</span>
+        <span class="value">{values.join(", ")}</span>
+        <button class="ghost small icon" aria-label="Remove {key}" onclick={() => onset(key, [])}>
+          <Icon name="close" size={12} strokeWidth={2} />
+        </button>
+      </div>
+    {/each}
+    {#if adding}
+      <form class="add-attribute" onsubmit={addAttribute}>
+        <input
+          class="mono"
+          placeholder="name"
+          aria-label="Attribute name"
+          bind:value={newKey}
+          onkeydown={(e) => e.key === "Escape" && (adding = false)}
+          {@attach (el) => el.focus()}
+        />
+        <input placeholder="value" aria-label="Attribute value" bind:value={newValue} />
+        <button type="submit" class="small">Add</button>
+      </form>
+      {#if attributeError}<p class="error">{attributeError}</p>{/if}
+    {:else}
+      <button class="ghost small add" onclick={() => (adding = true)}>
+        <Icon name="plus" size={14} strokeWidth={2} />
+        Add attribute
+      </button>
     {/if}
-    <form class="add-attribute" onsubmit={addAttribute}>
-      <input placeholder="Name" aria-label="Attribute name" bind:value={newKey} />
-      <input placeholder="Value" aria-label="Attribute value" bind:value={newValue} />
-      <button type="submit">Add</button>
-    </form>
-    {#if attributeError}<p class="error">{attributeError}</p>{/if}
   </div>
-
-  <dl class="dates">
-    <dt>Created</dt>
-    <dd>{longDate(summary.createdAt)}</dd>
-    <dt>Updated</dt>
-    <dd>{longDate(summary.updatedAt)}</dd>
-  </dl>
 </aside>
 
 <style>
   aside {
-    display: grid;
-    gap: 1rem;
-    align-content: start;
-    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 12px;
   }
 
   h2 {
     margin: 0;
-    font-size: 0.95rem;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .grid input {
+    min-height: 30px;
+  }
+
+  .date {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .date span {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-2);
   }
 
   .field {
-    display: grid;
-    gap: 0.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .label {
-    font-size: 0.9em;
+    font-size: 12px;
     color: var(--muted);
   }
 
-  .tags {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .attribute {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .tag {
-    display: inline-flex;
     align-items: center;
-    gap: 0.2rem;
-    padding: 0.1em 0.5em;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 0.85em;
+    gap: 6px;
+    min-height: 30px;
+    font-size: 13px;
   }
 
-  .tag.inline {
-    border-style: dashed;
-    color: var(--muted);
+  .key {
+    flex: 0 0 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-2);
   }
 
-  .tag button,
-  dd button {
-    border: none;
-    background: none;
-    padding: 0 0.2em;
-    color: var(--muted);
-  }
-
-  dl {
-    margin: 0;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.25rem 0.75rem;
-    font-size: 0.9em;
-  }
-
-  dt {
-    color: var(--muted);
-  }
-
-  dd {
-    margin: 0;
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
+  .value {
+    flex: 1;
+    min-width: 0;
     overflow-wrap: anywhere;
   }
 
   .add-attribute {
     display: grid;
-    grid-template-columns: 1fr 1fr auto;
-    gap: 0.3rem;
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+    gap: 6px;
   }
 
-  .dates {
-    border-top: 1px solid var(--border);
-    padding-top: 0.75rem;
+  .add-attribute input {
+    min-height: 30px;
+    font-size: 13px;
+  }
+
+  .add-attribute .mono {
+    font-size: 12px;
+  }
+
+  .add {
+    align-self: flex-start;
+    padding: 0 8px;
+    color: var(--accent);
+  }
+
+  .add:hover:not(:disabled) {
+    color: var(--accent);
   }
 </style>

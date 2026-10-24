@@ -17,14 +17,18 @@
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import FolderTree from "$lib/FolderTree.svelte";
+  import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
   import SearchFilters from "$lib/SearchFilters.svelte";
 
   type Props = {
     /** The open note. */
     selected: NoteSummary | null;
+    trashCount: number;
+    /** Whether the trash is the page shown. */
+    trashOpen: boolean;
+    ontrash: () => void;
     onselect: (id: number) => void;
-    oncreate: (folder: string) => void;
     /** Bulk move; `sources` are the notes' current folders. Resolves to whether it worked. */
     onmove: (ids: number[], folder: string, sources: string[]) => Promise<boolean>;
     /** Bulk delete (to the trash). Resolves to whether it worked. */
@@ -32,7 +36,7 @@
     /** Bulk metadata edit. Resolves to the report, or null when it failed. */
     onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
   };
-  let { selected, onselect, oncreate, onmove, ondelete, onedit }: Props = $props();
+  let { selected, trashCount, trashOpen, ontrash, onselect, onmove, ondelete, onedit }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
@@ -338,88 +342,50 @@
 
 <div class="sidebar">
   <div class="top">
-    <button class="primary" onclick={() => oncreate(currentFolder())} title="New note (Ctrl+N)">New note</button>
-    <div class="search">
+    <label class="search" class:active={text !== ""}>
+      <Icon name="search" />
       <input
         type="search"
-        placeholder="Search (Ctrl+K)"
+        placeholder="Search notes"
         aria-label="Search notes"
         spellcheck="false"
         bind:this={searchInput}
         bind:value={text}
       />
-      <button onclick={toggleFilters} aria-expanded={showFilters} aria-pressed={filterCount > 0} title="Filters">
-        Filters{#if filterCount > 0}&nbsp;<span class="count">{filterCount}</span>{/if}
+      {#if text}
+        <button class="ghost small icon" aria-label="Clear search" onclick={() => (text = "")}>
+          <Icon name="close" size={14} strokeWidth={2} />
+        </button>
+      {:else}
+        <span class="kbd key">Ctrl K</span>
+      {/if}
+    </label>
+    <div class="bar">
+      <div class="segmented" role="group" aria-label="Note list view">
+        <button aria-pressed={view === "tree"} onclick={() => setView("tree")}>Tree</button>
+        <button aria-pressed={view === "recent"} onclick={() => setView("recent")}>Recent</button>
+      </div>
+      <div class="spacer"></div>
+      <button
+        class="small filters"
+        onclick={toggleFilters}
+        aria-expanded={showFilters}
+        aria-pressed={filterCount > 0}
+      >
+        <Icon name="filter" size={14} />
+        Filters{#if filterCount > 0}<span class="count">{filterCount}</span>{/if}
       </button>
     </div>
-  </div>
-  {#if showFilters}
-    <div class="panel"><SearchFilters bind:filters {facets} /></div>
-  {/if}
-  <div class="views" role="group" aria-label="Note list view">
-    <button aria-pressed={view === "tree"} onclick={() => setView("tree")}>Tree</button>
-    <button aria-pressed={view === "recent"} onclick={() => setView("recent")}>Recent</button>
+    {#if showFilters}
+      <SearchFilters bind:filters {facets} />
+    {/if}
   </div>
   {#if error}<p class="error">{error}</p>{/if}
-  {#if picked.size > 0}
-    <div class="actions" role="toolbar" aria-label="Selected notes">
-      <span><strong>{picked.size}</strong> selected</span>
-      <button onclick={() => togglePanel("move")} aria-expanded={moving} disabled={busy}>Move to…</button>
-      <button onclick={() => togglePanel("edit")} aria-expanded={editing} disabled={busy}>Edit…</button>
-      <button class="danger" onclick={deleteSelection} disabled={busy} title="Move the selected notes to the trash">
-        Delete
-      </button>
-      <button onclick={clearSelection} disabled={busy}>Clear</button>
-    </div>
-    {#if moving}
-      <form class="move" onsubmit={moveSelection}>
-        <input
-          list="move-folders"
-          placeholder="Folder (empty = top level)"
-          aria-label="Move to folder"
-          spellcheck="false"
-          bind:value={moveTarget}
-          onkeydown={(e) => e.key === "Escape" && (moving = false)}
-          disabled={busy}
-          {@attach (el) => el.focus()}
-        />
-        <datalist id="move-folders">
-          {#each allFolders as f (f)}<option value={f}></option>{/each}
-        </datalist>
-        <button type="submit" class="primary" disabled={busy}>Move</button>
-      </form>
-    {/if}
-    {#if editing}
-      <form class="edit" onsubmit={editSelection}>
-        <select aria-label="Edit" bind:value={editKind} disabled={busy}>
-          {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
-        </select>
-        <input
-          list="edit-values"
-          placeholder={tagEdit ? "Tag" : "Empty = remove"}
-          aria-label={EDITS.find((e) => e.kind === editKind)?.label}
-          spellcheck="false"
-          bind:value={editValue}
-          onkeydown={(e) => e.key === "Escape" && (editing = false)}
-          disabled={busy}
-          {@attach (el) => el.focus()}
-        />
-        <datalist id="edit-values">
-          {#each editSuggestions as v (v)}<option value={v}></option>{/each}
-        </datalist>
-        <button type="submit" class="primary" disabled={busy || (tagEdit && editValue.trim() === "")}>Apply</button>
-      </form>
-    {/if}
-    {#if editNotice}
-      <div class="notice" role="status">
-        <p>{editNotice.text}</p>
-        {#if editNotice.titles.length > 0}
-          <ul>
-            {#each editNotice.titles as t, i (i)}<li>{t}</li>{/each}
-          </ul>
-        {/if}
-      </div>
-    {/if}
+  {#if searching}
+    <p class="summary">
+      {hits.length.toLocaleString()}{hasMore ? "+" : ""}
+      {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
+    </p>
   {/if}
   {#if view === "tree" && !searching}
     <div class="explorer">
@@ -464,6 +430,82 @@
       {/key}
     </div>
   {/if}
+  {#if picked.size > 0}
+    <div class="selection">
+      {#if editNotice}
+        <div class="notice" role="status">
+          <p>{editNotice.text}</p>
+          {#if editNotice.titles.length > 0}
+            <ul>
+              {#each editNotice.titles as t, i (i)}<li>{t}</li>{/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
+      {#if moving}
+        <form class="move" onsubmit={moveSelection}>
+          <input
+            list="move-folders"
+            placeholder="Folder (empty = top level)"
+            aria-label="Move to folder"
+            spellcheck="false"
+            bind:value={moveTarget}
+            onkeydown={(e) => e.key === "Escape" && (moving = false)}
+            disabled={busy}
+            {@attach (el) => el.focus()}
+          />
+          <datalist id="move-folders">
+            {#each allFolders as f (f)}<option value={f}></option>{/each}
+          </datalist>
+          <button type="submit" class="primary" disabled={busy}>Move</button>
+        </form>
+      {/if}
+      {#if editing}
+        <form class="edit" onsubmit={editSelection}>
+          <select aria-label="Edit" bind:value={editKind} disabled={busy}>
+            {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
+          </select>
+          <input
+            list="edit-values"
+            placeholder={tagEdit ? "Tag" : "Empty = remove"}
+            aria-label={EDITS.find((e) => e.kind === editKind)?.label}
+            spellcheck="false"
+            bind:value={editValue}
+            onkeydown={(e) => e.key === "Escape" && (editing = false)}
+            disabled={busy}
+            {@attach (el) => el.focus()}
+          />
+          <datalist id="edit-values">
+            {#each editSuggestions as v (v)}<option value={v}></option>{/each}
+          </datalist>
+          <button type="submit" class="primary" disabled={busy || (tagEdit && editValue.trim() === "")}>Apply</button>
+        </form>
+      {/if}
+      <div class="actions" role="toolbar" aria-label="Selected notes">
+        <span class="picked">{picked.size} selected</span>
+        <button onclick={() => togglePanel("move")} aria-expanded={moving} disabled={busy}>
+          <Icon name="folderMove" size={14} />
+          Move to…
+        </button>
+        <button onclick={() => togglePanel("edit")} aria-expanded={editing} disabled={busy}>
+          <Icon name="tag" size={14} />
+          Edit…
+        </button>
+        <button onclick={deleteSelection} disabled={busy} title="Move the selected notes to the trash">
+          <Icon name="trash" size={14} />
+          Delete
+        </button>
+        <button class="esc" onclick={clearSelection} disabled={busy} aria-label="Clear selection (Esc)">Esc</button>
+      </div>
+    </div>
+  {/if}
+  <div class="footer">
+    <button class="trash" class:open={trashOpen} aria-current={trashOpen ? "page" : undefined} onclick={ontrash}>
+      <Icon name="trash" />
+      <span>Trash</span>
+      {#if trashCount > 0}<span class="n">{trashCount.toLocaleString()}</span>{/if}
+    </button>
+  </div>
 </div>
 
 <style>
@@ -475,134 +517,105 @@
   }
 
   .top {
-    display: grid;
-    gap: 0.5rem;
-    padding: 0.75rem;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    max-height: 60%;
+    overflow-y: auto;
   }
 
   .search {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.3rem;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 0 6px 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 14px;
   }
 
-  .search button {
-    padding-inline: 0.6em;
-  }
-
-  .search button[aria-pressed="true"] {
+  .search:focus-within,
+  .search.active {
     border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+    min-height: 30px;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 14px;
+  }
+
+  .search input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .key {
+    padding: 1px 5px;
+    margin-right: 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .filters {
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .filters[aria-pressed="true"],
+  .filters[aria-expanded="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .count {
-    display: inline-block;
-    min-width: 1.4em;
+    min-width: 18px;
+    padding: 0 5px;
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-text);
-    font-size: 0.8em;
+    font-size: 11px;
+    line-height: 18px;
     text-align: center;
   }
 
-  .panel {
-    flex: none;
-    margin-bottom: 0.75rem;
-    max-height: 45vh;
-    overflow-y: auto;
-    border-bottom: 1px solid var(--border);
+  .error {
+    padding: 0 12px 8px;
+  }
+
+  .summary {
+    margin: 0;
+    padding: 4px 16px 6px;
+    font-size: 12px;
+    color: var(--muted);
   }
 
   .folders {
     flex: none;
     max-height: 30vh;
     overflow-y: auto;
-    padding: 0 0.75rem 0.75rem;
+    padding: 0 12px 12px;
     border-bottom: 1px solid var(--border);
-  }
-
-  .error {
-    padding: 0.5rem 0.75rem;
-  }
-
-  .actions {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin: 0 0.75rem 0.5rem;
-    font-size: 0.85em;
-  }
-
-  .actions span {
-    flex: 1;
-  }
-
-  .actions button {
-    padding: 0.1em 0.5em;
-  }
-
-  .danger:hover:not(:disabled) {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
-
-  .move {
-    flex: none;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.3rem;
-    margin: 0 0.75rem 0.5rem;
-  }
-
-  .edit {
-    flex: none;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 0.3rem;
-    margin: 0 0.75rem 0.5rem;
-  }
-
-  .notice {
-    flex: none;
-    max-height: 20vh;
-    overflow-y: auto;
-    margin: 0 0.75rem 0.5rem;
-    font-size: 0.85em;
-  }
-
-  .notice p,
-  .notice ul {
-    margin: 0;
-  }
-
-  .notice ul {
-    padding-left: 1.2em;
-  }
-
-  .views {
-    flex: none;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    margin: 0 0.75rem 0.5rem;
-  }
-
-  .views button {
-    padding-block: 0.15em;
-    font-size: 0.85em;
-  }
-
-  .views button:first-child {
-    border-radius: 6px 0 0 6px;
-  }
-
-  .views button:last-child {
-    border-radius: 0 6px 6px 0;
-    border-left: none;
-  }
-
-  .views button[aria-pressed="true"] {
-    background: var(--selection);
-    font-weight: 600;
   }
 
   .explorer {
@@ -615,5 +628,127 @@
     min-height: 0;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .selection {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px;
+  }
+
+  .move,
+  .edit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .edit {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .edit select {
+    width: auto;
+  }
+
+  .notice {
+    max-height: 20vh;
+    overflow-y: auto;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+
+  .notice p,
+  .notice ul {
+    margin: 0;
+  }
+
+  .notice ul {
+    padding-left: 1.2em;
+  }
+
+  /* Inverted, so it reads as a mode rather than part of the list. */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 8px 14px;
+    border-radius: 10px;
+    background: var(--text);
+    color: var(--bg);
+  }
+
+  .picked {
+    flex: 1;
+    font-weight: 500;
+  }
+
+  .actions button {
+    gap: 6px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 6px;
+    background: var(--inverse-button);
+    color: var(--bg);
+    font-size: 13px;
+  }
+
+  .actions button:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+
+  .actions .esc {
+    padding: 0 8px;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 11px;
+    opacity: 0.85;
+  }
+
+  .footer {
+    flex: none;
+    padding: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .trash {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 13.5px;
+  }
+
+  .trash:hover:not(:disabled) {
+    background: var(--hover);
+  }
+
+  .trash span:first-of-type {
+    flex: 1;
+    text-align: left;
+  }
+
+  .trash.open {
+    background: var(--selection);
+    color: var(--selection-text);
+    font-weight: 500;
+  }
+
+  .n {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .trash.open .n {
+    color: inherit;
   }
 </style>

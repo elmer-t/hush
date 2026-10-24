@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { api, errorMessage, isApiError, type LockReason, type RecentVault, type VaultInfo } from "$lib/api";
+  import Icon from "$lib/Icon.svelte";
 
   let { lockReason, onunlock }: { lockReason: LockReason | null; onunlock: (vault: VaultInfo) => void } = $props();
 
@@ -13,11 +14,25 @@
   let target = $state<Target | null>(null);
   let passphrase = $state("");
   let confirm = $state("");
+  let showPassphrase = $state(false);
+  // The create form only submits once the user has said they know there is no recovery.
+  let understood = $state(false);
   let busy = $state(false);
-  let error = $state("");
+  let error = $state<{ kind: string; message: string } | null>(null);
   let passphraseInput = $state<HTMLInputElement>();
 
-  onMount(refreshRecent);
+  const creating = $derived(target?.mode === "create");
+  // A vault picked with "Open existing…" that isn't in the recent list yet.
+  const picked = $derived(
+    target && target.mode === "open" && !recent.some((v) => v.path === target!.path) ? target : null,
+  );
+
+  onMount(async () => {
+    await refreshRecent();
+    // Ready to type the passphrase for the most recent vault.
+    const first = recent.find((v) => v.exists);
+    if (first && !target) await choose("open", first.path);
+  });
 
   async function refreshRecent() {
     recent = await api.recentVaults();
@@ -27,9 +42,15 @@
     return (path.split(/[\\/]/).pop() ?? path).replace(/\.hush$/i, "");
   }
 
+  function folderOf(path: string): string {
+    return path.slice(0, path.length - (path.split(/[\\/]/).pop() ?? "").length);
+  }
+
   async function choose(mode: Target["mode"], path: string) {
     target = { mode, path, name: fileName(path) };
-    passphrase = confirm = error = "";
+    passphrase = confirm = "";
+    understood = showPassphrase = false;
+    error = null;
     await tick();
     passphraseInput?.focus();
   }
@@ -41,37 +62,43 @@
 
   async function pickNew() {
     const path = await save({ filters: FILTERS, defaultPath: "Notes.hush" });
-    if (path) await choose("create", /\.hush$/i.test(path) ? path : `${path}.hush`);
+    if (path) await choose("create", withExtension(path));
+  }
+
+  function withExtension(path: string): string {
+    return /\.hush$/i.test(path) ? path : `${path}.hush`;
   }
 
   async function forget(path: string) {
     await api.forgetRecentVault(path);
+    if (target?.path === path) target = null;
     await refreshRecent();
   }
 
   function back() {
-    target = null;
-    passphrase = confirm = error = "";
+    const first = recent.find((v) => v.exists);
+    if (first) void choose("open", first.path);
+    else target = null;
   }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     if (!target || busy) return;
     if (target.mode === "create" && passphrase !== confirm) {
-      error = "The passphrases do not match.";
+      error = { kind: "mismatch", message: "The passphrases do not match." };
       return;
     }
     busy = true;
-    error = "";
+    error = null;
     try {
       const vault =
         target.mode === "create"
-          ? await api.createVault(target.path, passphrase)
+          ? await api.createVault(withExtension(target.path.trim()), passphrase)
           : await api.openVault(target.path, passphrase);
       passphrase = confirm = "";
       onunlock(vault);
     } catch (err) {
-      error = errorMessage(err);
+      error = { kind: isApiError(err) ? err.kind : "", message: errorMessage(err) };
       if (isApiError(err) && err.kind === "wrongPassphrase") passphrase = "";
       busy = false;
       await tick();
@@ -80,165 +107,456 @@
   }
 </script>
 
-<main>
-  <header>
-    <h1>Hush</h1>
-    <p class="muted">Private notes in an encrypted vault.</p>
-  </header>
+{#snippet passphraseField(id: string, label: string)}
+  <div class="field">
+    <label for={id}>{label}</label>
+    <div class="secret" class:invalid={error?.kind === "wrongPassphrase"}>
+      <input
+        {id}
+        type={showPassphrase ? "text" : "password"}
+        autocomplete="off"
+        spellcheck="false"
+        bind:this={passphraseInput}
+        bind:value={passphrase}
+        disabled={busy}
+        required
+      />
+      <button
+        type="button"
+        class="ghost icon"
+        aria-label={showPassphrase ? "Hide passphrase" : "Show passphrase"}
+        aria-pressed={showPassphrase}
+        onclick={() => (showPassphrase = !showPassphrase)}
+      >
+        <Icon name="eye" />
+      </button>
+    </div>
+  </div>
+{/snippet}
 
-  {#if lockReason === "idle" && !target}
-    <p class="notice">The vault was locked after a period of inactivity.</p>
+{#snippet problem()}
+  {#if error?.kind === "vaultInUse"}
+    <p class="callout" role="alert">
+      <Icon name="warning" strokeWidth={2} />
+      <span>{target?.name}.hush is already open in another Hush window. Switch to that window, or lock it there first.</span>
+    </p>
+  {:else if error}
+    <p class="error inline" role="alert">
+      <Icon name="alert" size={14} strokeWidth={2} />
+      {error.kind === "wrongPassphrase" ? `Wrong passphrase for ${target?.name}.hush.` : error.message}
+    </p>
   {/if}
+{/snippet}
 
-  {#if target}
-    <form onsubmit={submit}>
-      <div>
-        <h2>{target.mode === "create" ? "Create" : "Unlock"} {target.name}</h2>
-        <p class="path muted" title={target.path}>{target.path}</p>
+<main>
+  <div class="brand">
+    <span class="mark" aria-hidden="true">h</span>
+    <h1>Hush</h1>
+  </div>
+
+  {#if creating && target}
+    <form class="card" onsubmit={submit}>
+      <div class="intro">
+        <h2>Create a new vault</h2>
+        <p>One encrypted file holds every note in the vault.</p>
       </div>
 
-      <label>
-        Passphrase
+      <div class="field">
+        <label for="vault-path">Save as</label>
+        <div class="row">
+          <input id="vault-path" class="mono" spellcheck="false" bind:value={target.path} disabled={busy} required />
+          <button type="button" onclick={pickNew} disabled={busy}>Choose…</button>
+        </div>
+      </div>
+
+      {@render passphraseField("new-passphrase", "Passphrase")}
+
+      <div class="field">
+        <label for="repeat-passphrase">Repeat passphrase</label>
         <input
-          type="password"
+          id="repeat-passphrase"
+          class="tall"
+          type={showPassphrase ? "text" : "password"}
           autocomplete="off"
-          bind:this={passphraseInput}
-          bind:value={passphrase}
+          bind:value={confirm}
           disabled={busy}
           required
         />
-      </label>
+      </div>
 
-      {#if target.mode === "create"}
-        <label>
-          Repeat passphrase
-          <input type="password" autocomplete="off" bind:value={confirm} disabled={busy} required />
+      <div class="no-recovery">
+        <p>
+          <Icon name="warning" size={18} strokeWidth={2} />
+          <span>
+            <strong>There is no recovery.</strong> If you forget this passphrase, nobody can open this vault again, including
+            you. Hush never stores it.
+          </span>
+        </p>
+        <label class="check">
+          <input type="checkbox" bind:checked={understood} disabled={busy} />
+          I understand the passphrase cannot be recovered
         </label>
-        <p class="warning">
-          There is no way to recover a forgotten passphrase. If you lose it, the notes in this vault are gone
-          for good.
+      </div>
+
+      {@render problem()}
+
+      <button type="submit" class="primary submit" disabled={busy || !passphrase || !understood}>
+        {busy ? "Creating…" : "Create vault"}
+      </button>
+      <button type="button" class="link back" onclick={back} disabled={busy}>Open an existing vault instead</button>
+    </form>
+  {:else}
+    <form class="card" onsubmit={submit}>
+      <div class="intro">
+        <h2>Unlock a vault</h2>
+        <p>{recent.length > 0 || picked ? "Recent vaults on this computer." : "Open a vault file, or create a new one."}</p>
+      </div>
+
+      {#if lockReason === "idle"}
+        <p class="callout">
+          <Icon name="clock" strokeWidth={2} />
+          <span>The vault was locked after a period of inactivity.</span>
         </p>
       {/if}
 
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-
-      <div class="actions">
-        <button type="button" onclick={back} disabled={busy}>Back</button>
-        <button type="submit" class="primary" disabled={busy || !passphrase}>
-          {#if busy}
-            {target.mode === "create" ? "Creating…" : "Unlocking…"}
-          {:else}
-            {target.mode === "create" ? "Create vault" : "Unlock"}
+      {#if recent.length > 0 || picked}
+        <div class="vaults" role="radiogroup" aria-label="Recent vaults">
+          {#if picked}
+            {@render vaultRow(picked.path, picked.name, true, false)}
           {/if}
+          {#each recent as vault (vault.path)}
+            {@render vaultRow(vault.path, vault.name, vault.exists, true)}
+          {/each}
+        </div>
+      {/if}
+
+      {#if target}
+        {@render passphraseField("passphrase", "Passphrase")}
+        {@render problem()}
+        <button type="submit" class="primary submit" disabled={busy || !passphrase}>
+          {busy ? "Unlocking…" : "Unlock"}
+        </button>
+      {/if}
+
+      <div class="other">
+        <button type="button" onclick={pickExisting} disabled={busy}>
+          <Icon name="folder" />
+          Open existing…
+        </button>
+        <button type="button" onclick={pickNew} disabled={busy}>
+          <Icon name="plus" strokeWidth={2} />
+          Create new…
         </button>
       </div>
     </form>
-  {:else}
-    {#if recent.length > 0}
-      <section>
-        <h2>Recent vaults</h2>
-        <ul>
-          {#each recent as vault (vault.path)}
-            <li>
-              <button class="vault" disabled={!vault.exists} onclick={() => choose("open", vault.path)}>
-                <span>{vault.name}</span>
-                <span class="path muted" title={vault.path}>
-                  {vault.exists ? vault.path : `Not found: ${vault.path}`}
-                </span>
-              </button>
-              <button class="forget" title="Remove from list" aria-label="Remove {vault.name} from list" onclick={() => forget(vault.path)}>
-                ×
-              </button>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/if}
-
-    <div class="actions">
-      <button onclick={pickExisting}>Open existing…</button>
-      <button class="primary" onclick={pickNew}>Create new…</button>
-    </div>
   {/if}
+
+  <p class="footnote">Encrypted with SQLCipher. Notes never leave this computer.</p>
 </main>
+
+{#snippet vaultRow(path: string, name: string, exists: boolean, forgettable: boolean)}
+  {@const checked = target?.path === path}
+  <div class="vault-row">
+    <button
+      type="button"
+      role="radio"
+      class="vault"
+      class:checked
+      aria-checked={checked}
+      disabled={!exists || busy}
+      title={path}
+      onclick={() => choose("open", path)}
+    >
+      <Icon name="lock" size={18} />
+      <span class="vault-text">
+        <span class="vault-name">{name}.hush</span>
+        <span class="vault-path">{exists ? folderOf(path) : `Not found: ${path}`}</span>
+      </span>
+    </button>
+    {#if forgettable}
+      <button
+        type="button"
+        class="ghost small icon forget"
+        title="Remove from list"
+        aria-label="Remove {name} from list"
+        onclick={() => forget(path)}
+      >
+        <Icon name="close" size={14} strokeWidth={2} />
+      </button>
+    {/if}
+  </div>
+{/snippet}
 
 <style>
   main {
-    max-width: 440px;
-    margin: 12vh auto 0;
-    padding: 0 16px;
-    display: grid;
-    gap: 1.5rem;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 48px 16px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .mark {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 26px;
+    line-height: 1;
   }
 
   h1 {
     margin: 0;
-    font-size: 1.8rem;
+    font-family: var(--serif);
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 28px;
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+
+  .card:has(.no-recovery) {
+    max-width: 480px;
+    gap: 18px;
+  }
+
+  .intro {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   h2 {
-    margin: 0 0 0.4rem;
-    font-size: 1rem;
-  }
-
-  header p {
-    margin: 0.2rem 0 0;
-  }
-
-  form {
-    display: grid;
-    gap: 1rem;
-  }
-
-  ul {
-    list-style: none;
     margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0.4rem;
+    font-size: 20px;
+    font-weight: 600;
   }
 
-  li {
+  .intro p {
+    margin: 0;
+    color: var(--text-2);
+  }
+
+  .vaults {
     display: flex;
-    gap: 0.4rem;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .vault-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .vault {
     flex: 1;
     min-width: 0;
-    display: grid;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: transparent;
     text-align: left;
+    white-space: normal;
   }
 
-  .forget {
-    padding: 0 0.7em;
+  .vault :global(svg) {
     color: var(--muted);
   }
 
-  .path {
-    margin: 0;
-    font-size: 0.85em;
+  .vault.checked {
+    border-color: var(--accent);
+    background: var(--selection);
+  }
+
+  .vault.checked :global(svg) {
+    color: var(--accent);
+  }
+
+  .vault-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .vault-name {
+    font-weight: 500;
+  }
+
+  .vault-path {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-2);
   }
 
-  .actions {
+  .forget {
+    color: var(--muted);
+  }
+
+  .field {
     display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 6px;
   }
 
-  .notice,
-  .warning {
+  .field > label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .secret {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 40px;
+    padding: 0 4px 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  .secret:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .secret.invalid {
+    border-color: var(--danger);
+  }
+
+  .secret input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+  }
+
+  input.tall,
+  .row input {
+    min-height: 38px;
+    padding: 0 12px;
+    border-radius: 8px;
+  }
+
+  input.tall {
+    letter-spacing: 0.1em;
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .row input {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  .row button {
+    min-height: 38px;
+    padding: 0 14px;
+    background: transparent;
+  }
+
+  .inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .no-recovery {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 10px;
+    background: var(--danger-soft);
+  }
+
+  .no-recovery p {
     margin: 0;
-    padding: 0.6em 0.8em;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
   }
 
-  .warning {
-    background: var(--warning-bg);
-    border-color: var(--warning-border);
+  .no-recovery p :global(svg) {
+    margin-top: 1px;
+    color: var(--danger);
+  }
+
+  .check {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding-left: 26px;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .submit {
+    min-height: 42px;
+    font-size: 15px;
+  }
+
+  .back {
+    align-self: center;
+    font-size: 13px;
+    text-decoration: underline;
+  }
+
+  .other {
+    display: flex;
+    gap: 8px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .other button {
+    flex: 1;
+    min-height: 36px;
+    background: transparent;
+  }
+
+  .footnote {
+    margin: 0;
+    max-width: 440px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
   }
 </style>

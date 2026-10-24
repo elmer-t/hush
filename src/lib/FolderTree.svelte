@@ -1,5 +1,6 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
+  import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
 
   type Props = {
@@ -70,7 +71,14 @@
 <nav aria-label="Folders">
   <div class="heading">
     <span>Folders</span>
-    <button class="small" onclick={() => (naming = true)} title="New folder inside the selected folder">+ Folder</button>
+    <button
+      class="ghost small icon"
+      onclick={() => (naming = true)}
+      aria-label="New folder"
+      title="New folder inside the selected folder"
+    >
+      <Icon name="folderPlus" />
+    </button>
   </div>
 
   {#if naming}
@@ -100,7 +108,7 @@
 {#snippet branch(nodes: Node[], depth: number)}
   {#each nodes as node (node.path)}
     <li>
-      <div class="row" class:selected={selected?.toLowerCase() === node.path.toLowerCase()} style:padding-left="{depth * 14}px">
+      <div class="row" class:selected={selected?.toLowerCase() === node.path.toLowerCase()} style:padding-left="{depth * 16}px">
         {#if node.children.length > 0}
           <button
             class="twisty"
@@ -108,12 +116,15 @@
             aria-expanded={expanded.has(node.path)}
             onclick={() => toggle(node.path)}
           >
-            {expanded.has(node.path) ? "▾" : "▸"}
+            <Icon name={expanded.has(node.path) ? "chevronDown" : "chevronRight"} size={14} strokeWidth={2} />
           </button>
         {:else}
           <span class="twisty"></span>
         {/if}
-        <button class="name" title={node.path} onclick={() => select(node.path)}>{node.name}</button>
+        <button class="name" title={node.path} onclick={() => select(node.path)}>
+          <Icon name="folder" />
+          <span>{node.name}</span>
+        </button>
       </div>
       {#if node.children.length > 0 && expanded.has(node.path)}
         <ul>{@render branch(node.children, depth + 1)}</ul>
@@ -124,25 +135,21 @@
 
 <style>
   nav {
-    display: grid;
-    gap: 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.8em;
+    padding-left: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--muted);
-  }
-
-  .small {
-    padding: 0.1em 0.5em;
-    font-size: 0.95em;
-    text-transform: none;
-    letter-spacing: normal;
   }
 
   ul {
@@ -154,34 +161,55 @@
   .row {
     display: flex;
     align-items: center;
-    border-radius: 4px;
+    height: 30px;
+    border-radius: 6px;
+    font-size: 13.5px;
   }
 
   .row:hover {
-    background: var(--active-line);
+    background: var(--hover);
   }
 
   .row.selected {
     background: var(--selection);
+    color: var(--selection-text);
+    font-weight: 500;
   }
 
   .row button {
+    min-height: 28px;
     border: none;
     background: none;
-    padding: 0.15em 0.25em;
+    color: inherit;
+    font-weight: inherit;
   }
 
   .twisty {
-    width: 1.4em;
+    width: 24px;
     flex: none;
+    padding: 0;
     color: var(--muted);
-    text-align: center;
+  }
+
+  .row button.twisty {
+    padding: 0;
+    color: var(--muted);
   }
 
   .name {
     flex: 1;
     min-width: 0;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 8px 0 0;
     text-align: left;
+  }
+
+  .name :global(svg) {
+    color: var(--muted);
+  }
+
+  .name span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
