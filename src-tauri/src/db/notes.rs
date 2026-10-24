@@ -220,7 +220,7 @@ impl Vault {
     /// loads one folder at a time.
     pub fn folder_notes(&self, folder: &str, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
         let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.folder = ?1 ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
+            "SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
         ))?;
         let notes = stmt
             .query_map(params![markdown::normalize_folder(folder), limit, offset], NoteSummary::from_row)?
