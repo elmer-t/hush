@@ -107,7 +107,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - **Ranking:** cosine similarity, brute force over every vector of the ready model. The note itself and trashed or deleted notes are left out; notes without a vector are never candidates.
 - **In-memory index** (`src-tauri/src/embed/related.rs`): the ready model's vectors in one contiguous, unit-length `Vec<f32>` (`Zeroizing`, grown by copying so no unzeroed buffer is freed), held by the `Session` beside the vault under its own lock, so a lookup never waits for the vault. Dropped (zeroed) on lock and on unlocking another vault; a job of an old unlock can't write it back.
 - **Kept in sync by the embedding job:** at the end of every pass (so after any change) it compares the stored `content_hash`es with the index and loads only new or re-embedded vectors and drops vanished ones; it rebuilds when `embedding_model_ready` changes. The lookup still checks that each result is live, so a note trashed a moment ago never shows. When the index changes the backend emits `related-changed` and the panel refreshes; it also refreshes when another note opens, never per keystroke.
-- **Speed:** MEASURE_PLACEHOLDER
+- **Speed** (release build, shared 4-core Linux cloud container, not the dev machine; `tests/related.rs`, ignored test): 10k notes × 384 dims, `related_notes` median **4.9 ms**, worst 5.7 ms over 50 lookups; loading the whole index after unlock 0.29 s, in pages of 500.
 
 ## Extensibility
 - **No plugins or third-party code** (2026-10-24). Features that would otherwise be plugins (templates, daily notes, custom CSS, …) are built into Hush and requested as separate issues.
