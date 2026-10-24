@@ -13,6 +13,7 @@
   } from "$lib/api";
   import { clearLoaded, findNote, refreshFolders, updateNote } from "$lib/explorer.svelte";
   import { isToggle } from "$lib/selection";
+  import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
@@ -74,6 +75,8 @@
   // What the last bulk edit did.
   let editNotice = $state<{ text: string; titles: string[] } | null>(null);
   let busy = $state(false);
+  // The tree's open context menu: the note it was opened on and where.
+  let menu = $state<{ id: number; x: number; y: number } | null>(null);
 
   const allFolders = $derived([...folders, ...emptyFolders]);
   const filterCount = $derived(activeFilterCount(filters));
@@ -237,11 +240,15 @@
     for (const id of visibleIds()) picked.add(id);
   }
 
-  function pickedNotes(): NoteSummary[] {
-    return [...picked].flatMap((id) => {
+  function notesOf(ids: Iterable<number>): NoteSummary[] {
+    return [...ids].flatMap((id) => {
       const note = hits.find((h) => h.note.id === id)?.note ?? findNote(id);
       return note ? [note] : [];
     });
+  }
+
+  function pickedNotes(): NoteSummary[] {
+    return notesOf(picked);
   }
 
   async function moveSelection(e: SubmitEvent) {
@@ -257,14 +264,85 @@
     }
   }
 
-  async function deleteSelection() {
+  function deleteSelection() {
+    void trash([...picked]);
+  }
+
+  /** Moves notes to the trash; any of them that were picked are unpicked. */
+  async function trash(ids: number[]) {
     if (busy) return;
     busy = true;
-    const notes = pickedNotes();
-    const ok = await ondelete([...picked], notes.map((n) => n.folder));
+    const ok = await ondelete(ids, notesOf(ids).map((n) => n.folder));
     busy = false;
-    if (ok) clearSelection();
+    if (!ok) return;
+    for (const id of ids) picked.delete(id);
+    if (picked.size === 0) clearSelection();
   }
+
+  /** The notes an action on `id` covers: the whole selection when `id` is picked, else just `id`. */
+  function targetsOf(id: number): number[] {
+    return picked.has(id) ? [...picked] : [id];
+  }
+
+  /** Makes `id` the selection unless it is already part of it, for Move to… and Edit… on one note. */
+  function pickFor(id: number) {
+    if (picked.has(id)) return;
+    clearSelection();
+    picked.add(id);
+    anchor = id;
+  }
+
+  function openNoteMenu(id: number, x: number, y: number) {
+    menu = { id, x, y };
+  }
+
+  function closeNoteMenu(refocus: boolean) {
+    const id = menu?.id;
+    menu = null;
+    if (refocus && id !== undefined) explorer?.focusNote(id);
+  }
+
+  const menuItems = $derived.by((): MenuItem[] => {
+    if (!menu) return [];
+    const id = menu.id;
+    const n = targetsOf(id).length;
+    const items: MenuItem[] = [];
+    if (n === 1) {
+      items.push({
+        label: "Open",
+        icon: "note",
+        action: () => {
+          clearSelection();
+          anchor = id;
+          onselect(id);
+        },
+      });
+    }
+    const some = n === 1 ? "" : ` ${n} notes`;
+    items.push(
+      {
+        label: `Move${some} to…`,
+        icon: "folderMove",
+        action: () => {
+          pickFor(id);
+          moving = true;
+          editing = false;
+        },
+      },
+      {
+        label: `Edit${some}…`,
+        icon: "tag",
+        action: () => {
+          pickFor(id);
+          editing = true;
+          moving = false;
+          void loadFacets();
+        },
+      },
+      { label: `Move${some} to trash`, icon: "trash", danger: true, action: () => void trash(targetsOf(id)) },
+    );
+    return items;
+  });
 
   const EDITS: { kind: MetadataEdit["kind"]; label: string }[] = [
     { kind: "addTag", label: "Add tag" },
@@ -400,6 +478,8 @@
         onselectall={selectAll}
         onclearselection={clearSelection}
         oncreatefolder={addFolder}
+        onnotemenu={openNoteMenu}
+        ondeletenote={(id) => void trash(targetsOf(id))}
         onerror={(e) => (error = errorMessage(e))}
       />
     </div>
@@ -498,6 +578,15 @@
         <button class="esc" onclick={clearSelection} disabled={busy} aria-label="Clear selection (Esc)">Esc</button>
       </div>
     </div>
+  {/if}
+  {#if menu}
+    <ContextMenu
+      x={menu.x}
+      y={menu.y}
+      label={targetsOf(menu.id).length === 1 ? "Note actions" : "Actions for the selected notes"}
+      items={menuItems}
+      onclose={closeNoteMenu}
+    />
   {/if}
   <div class="footer">
     <button class="trash" class:open={trashOpen} aria-current={trashOpen ? "page" : undefined} onclick={ontrash}>
