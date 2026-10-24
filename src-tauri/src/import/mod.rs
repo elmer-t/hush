@@ -108,10 +108,20 @@ pub struct Scan {
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
     pub dry_run: bool,
+    /// The vault folder the notes go under (normalised); `""` for the vault root.
+    pub target: String,
+    /// Notes already in the target folder and its subfolders before this run, so the
+    /// import merges into them. Always 0 for the vault root.
+    pub existing_in_target: usize,
     pub files: usize,
     /// Notes written, or that would be written in a dry run.
     pub imported: usize,
     pub skipped: Vec<FileMessage>,
+    /// How many of `skipped` were left out because a note with that folder and title
+    /// already exists.
+    pub already_exist: usize,
+    /// Every folder notes were (or would be) written to, with how many, sorted.
+    pub folders: Vec<FolderCount>,
     pub warnings: Vec<FileMessage>,
     pub warning_count: usize,
     pub ambiguous_links: Vec<AmbiguousLink>,
@@ -126,6 +136,12 @@ pub struct ImportReport {
 pub struct FormatCount {
     /// `.doc`, `no extension`, …
     pub format: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FolderCount {
+    pub folder: String,
     pub count: usize,
 }
 
@@ -145,6 +161,8 @@ pub struct AmbiguousLink {
 #[derive(Debug, Clone, Serialize)]
 pub struct Sample {
     pub path: String,
+    /// The note's folder in the vault, target prefix included.
+    pub folder: String,
     pub before: String,
     pub after: String,
 }
@@ -318,12 +336,28 @@ fn sanitize_title(title: &str, warnings: &mut Vec<String>) -> String {
     clean
 }
 
+/// The import target suggested for a source folder: the folder's own name, so
+/// `D:\Archive\OldVault` goes under `OldVault`. `""` (the vault root) for a drive root.
+/// Splits on both separators, so it gives the same answer on every platform.
+pub fn suggest_target(source: &str) -> String {
+    let name = source.split(['/', '\\']).map(str::trim).rfind(|s| !s.is_empty()).unwrap_or("");
+    if name.ends_with(':') { String::new() } else { name.to_string() }
+}
+
+/// The vault folder of an imported file: `target` followed by its folder relative to
+/// the source. An empty target is the vault root.
+pub fn target_folder(target: &str, relative: &str) -> String {
+    markdown::normalize_folder(&format!("{target}/{relative}"))
+}
+
 /// Imports (or, with `dry_run`, previews importing) the files under `source` into the
-/// open vault, using the vault's rules. Writes happen in transactions of
-/// [`BATCH_SIZE`] notes; `cancel` is checked between batches.
+/// open vault under the folder `target` (`""` for the root), using the vault's rules.
+/// Writes happen in transactions of [`BATCH_SIZE`] notes; `cancel` is checked between
+/// batches.
 pub fn run(
     session: &Session,
     source: &Path,
+    target: &str,
     dry_run: bool,
     cancel: &AtomicBool,
     mut progress: impl FnMut(Progress),
@@ -336,7 +370,17 @@ pub fn run(
         .collect::<Result<Vec<_>, _>>()?;
     let scan = scan(source).map_err(ImportError::Source)?;
     let total = scan.files.len();
-    let mut report = ImportReport { dry_run, files: total + scan.page_assets, ..Default::default() };
+    let target = markdown::normalize_folder(target);
+    let existing_in_target =
+        if target.is_empty() { 0 } else { on_vault(session, &vault_path, |v| v.count_in_folder(&target))? };
+    let mut report = ImportReport {
+        dry_run,
+        target: target.clone(),
+        existing_in_target,
+        files: total + scan.page_assets,
+        ..Default::default()
+    };
+    let mut folders: BTreeMap<String, usize> = BTreeMap::new();
     let mut unsupported: BTreeMap<String, usize> = BTreeMap::new();
     if scan.page_assets > 0 {
         unsupported.insert(PAGE_ASSETS.into(), scan.page_assets);
@@ -355,6 +399,8 @@ pub fn run(
         for rel in chunk {
             match prepare(source, rel, &rules) {
                 Ok(mut p) => {
+                    // After `prepare`, so the default topic stays the source-relative top folder.
+                    p.folder = target_folder(&target, &p.folder);
                     give_unique_title(&mut p, &mut planned);
                     batch.push(p);
                 }
@@ -405,10 +451,12 @@ pub fn run(
             match outcome {
                 Ok(id) => {
                     report.imported += 1;
+                    *folders.entry(p.folder.clone()).or_default() += 1;
                     imported_ids.push(id);
                     if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
                         report.samples.push(Sample {
                             path: p.path.clone(),
+                            folder: p.folder.clone(),
                             before: truncate(&p.original),
                             after: truncate(&p.body),
                         });
@@ -416,7 +464,11 @@ pub fn run(
                 }
                 Err(e) => {
                     let message = match e {
-                        db::Error::TitleTaken => format!("a note titled '{}' already exists in this folder", p.title),
+                        db::Error::TitleTaken => {
+                            report.already_exist += 1;
+                            let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
+                            format!("a note titled '{}' already exists in {folder}", p.title)
+                        }
                         e => e.to_string(),
                     };
                     report.skipped.push(FileMessage { path: p.path.clone(), message });
@@ -430,6 +482,7 @@ pub fn run(
         unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
     unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
     report.unsupported = unsupported;
+    report.folders = folders.into_iter().map(|(folder, count)| FolderCount { folder, count }).collect();
 
     if !dry_run && !imported_ids.is_empty() {
         report.ambiguous_links = on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
