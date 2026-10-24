@@ -1,7 +1,17 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { api, CLOSE_EVENT, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote, type VaultInfo } from "$lib/api";
+  import {
+    api,
+    CLOSE_EVENT,
+    errorMessage,
+    type MetadataEdit,
+    type MetadataEditReport,
+    type NoteMeta,
+    type NoteSummary,
+    type OpenedNote,
+    type VaultInfo,
+  } from "$lib/api";
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
@@ -171,6 +181,31 @@
     return true;
   }
 
+  async function editNotes(ids: number[], edit: MetadataEdit, sources: string[]): Promise<MetadataEditReport | null> {
+    // Flush first, and reload after: the editor's next autosave would write the old
+    // frontmatter back otherwise.
+    const open = await flushIfIn(ids);
+    let report: MetadataEditReport;
+    try {
+      report = await api.editNotesMetadata(ids, edit);
+    } catch (e) {
+      error = errorMessage(e);
+      return null;
+    }
+    error = "";
+    if (report.changed.length === 0) return report;
+    await sidebar?.refresh(sources);
+    if (open !== null && report.changed.includes(open)) {
+      try {
+        show(await api.openNote(open), false);
+        editorRevision++;
+      } catch (e) {
+        error = errorMessage(e);
+      }
+    }
+    return report;
+  }
+
   async function deleteNotes(ids: number[], sources: string[]): Promise<boolean> {
     const open = await flushIfIn(ids);
     try {
@@ -222,6 +257,7 @@
         oncreate={create}
         onmove={moveNotes}
         ondelete={deleteNotes}
+        onedit={editNotes}
       />
     </div>
   {/if}

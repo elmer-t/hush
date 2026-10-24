@@ -31,6 +31,24 @@ export type OpenedNote = { note: Note; meta: NoteMeta };
 export type TrashedNote = { id: number; folder: string; title: string; deletedAt: number };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
+/** Mirrors `db::MetadataEdit`. An empty topic or author removes the key. */
+export type MetadataEdit =
+  | { kind: "addTag"; value: string }
+  | { kind: "removeTag"; value: string }
+  | { kind: "setTopic"; value: string }
+  | { kind: "setAuthor"; value: string };
+export type TitledNote = { id: number; folder: string; title: string };
+export type MetadataEditReport = {
+  /** Notes whose body was rewritten. */
+  changed: number[];
+  /** Notes the edit left as they were. */
+  unchanged: number;
+  /** After removing a tag: notes that still have it inline. */
+  stillInline: TitledNote[];
+  /** Skipped: their frontmatter can't be read. */
+  unreadable: TitledNote[];
+};
+
 export type DateField = "created" | "updated";
 
 /** The left pane: the explorer tree, or the folder tree with a flat list by updated. */
@@ -153,6 +171,9 @@ export const api = {
   trashNotes: (ids: number[]) => invoke<void>("trash_notes", { ids }),
   /** Moves notes into `folder`, all or nothing; fails with kind `moveClash` on a name clash. */
   moveNotes: (ids: number[], folder: string) => invoke<void>("move_notes", { ids, folder }),
+  /** Adds or removes a tag, or sets the topic or author, on several notes, all or nothing. */
+  editNotesMetadata: (ids: number[], edit: MetadataEdit) =>
+    invoke<MetadataEditReport>("edit_notes_metadata", { ids, edit }),
   /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
   trashedNotes: () => invoke<TrashedNote[]>("trashed_notes"),
