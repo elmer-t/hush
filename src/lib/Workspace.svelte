@@ -104,7 +104,7 @@
     await editor?.flush();
     try {
       const note = await api.createNote(folder);
-      await sidebar?.refresh();
+      await sidebar?.refresh([note.note.folder]);
       show(note, true);
     } catch (e) {
       error = errorMessage(e);
@@ -120,16 +120,20 @@
   }
 
   async function renamed(fresh: OpenedNote) {
+    // A move changes both the old and the new folder.
+    const changed = [fresh.note.folder];
     if (summary?.id === fresh.note.id) {
+      changed.push(summary.folder);
       summary = fresh.note;
       meta = fresh.meta;
     }
-    await sidebar?.refresh();
+    await sidebar?.refresh(changed);
   }
 
   async function deleted(id: number) {
+    const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
-    await sidebar?.refresh();
+    await sidebar?.refresh(changed);
   }
 </script>
 
@@ -155,14 +159,14 @@
 
   {#if showLeft}
     <div class="left">
-      <Sidebar bind:this={sidebar} selectedId={opened?.note.id ?? null} onselect={select} oncreate={create} />
+      <Sidebar bind:this={sidebar} selected={opened ? summary : null} onselect={select} oncreate={create} />
     </div>
   {/if}
 
   <main>
     {#if error}<p class="error banner" role="alert">{error}</p>{/if}
     {#if importOpened}
-      <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh()} /></div>
+      <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh("all")} /></div>
     {/if}
     {#if view === "settings"}
       <div class="page"><Settings /></div>

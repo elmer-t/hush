@@ -71,3 +71,24 @@ fn delete() {
     assert!(matches!(vault.delete_note(target), Err(Error::NoteNotFound)));
     assert_eq!(vault.outgoing_links(source).unwrap()[0].resolution, Resolution::Missing);
 }
+
+#[test]
+fn folder_notes_are_the_folders_own_notes_only() {
+    let (_dir, mut vault) = common::vault();
+    let a2 = vault.create_note("a", "beta", "").unwrap();
+    let a1 = vault.create_note("a", "Alpha", "").unwrap();
+    vault.create_note("a/b", "Nested", "").unwrap();
+    vault.create_note("ab", "Sibling", "").unwrap();
+    let root = vault.create_note("", "Root", "").unwrap();
+
+    let ids = |folder: &str| -> Vec<i64> { vault.folder_notes(folder, 0, 500).unwrap().iter().map(|n| n.id).collect() };
+    assert_eq!(ids("a"), [a1, a2], "not a/b or ab; sorted by title ignoring case");
+    assert_eq!(ids("A/"), [a1, a2], "the folder is normalised and case-insensitive");
+    assert_eq!(ids(""), [root], "only root notes");
+    assert!(ids("missing").is_empty());
+
+    let page = |offset| -> Vec<i64> { vault.folder_notes("a", offset, 1).unwrap().iter().map(|n| n.id).collect() };
+    assert_eq!(page(0), [a1]);
+    assert_eq!(page(1), [a2]);
+    assert!(page(2).is_empty());
+}

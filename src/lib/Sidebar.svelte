@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage, type Facets, type NoteSummary, type SearchHit } from "$lib/api";
+  import { api, errorMessage, type Facets, type NoteSummary, type SearchHit, type SidebarView } from "$lib/api";
+  import { clearLoaded, refreshFolders, updateNote } from "$lib/explorer.svelte";
+  import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import FolderTree from "$lib/FolderTree.svelte";
@@ -8,15 +10,19 @@
   import SearchFilters from "$lib/SearchFilters.svelte";
 
   type Props = {
-    selectedId: number | null;
+    /** The open note. */
+    selected: NoteSummary | null;
     onselect: (id: number) => void;
     oncreate: (folder: string) => void;
   };
-  let { selectedId, onselect, oncreate }: Props = $props();
+  let { selected, onselect, oncreate }: Props = $props();
+  const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
   const SEARCH_DEBOUNCE_MS = 150;
 
+  // Tree until the vault's stored choice has loaded.
+  let view = $state<SidebarView>("tree");
   let folders = $state<string[]>([]);
   // Folders made in the tree that have no notes yet; they exist only until the vault locks.
   let emptyFolders = $state<string[]>([]);
@@ -38,7 +44,15 @@
   const filterCount = $derived(activeFilterCount(filters));
   const searching = $derived(text.trim() !== "" || filterCount > 0);
 
-  onMount(() => void Promise.all([loadFolders(), loadFacets()]));
+  onMount(() => {
+    void Promise.all([loadFolders(), loadFacets()]);
+    api.sidebarView().then((v) => (view = v), () => {});
+  });
+
+  function setView(next: SidebarView) {
+    view = next;
+    api.setSidebarView(next).catch((e) => (error = errorMessage(e)));
+  }
 
   // Search as you type: any change to the text, filters or folder reruns the query.
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -57,8 +71,16 @@
     return () => clearTimeout(timer);
   });
 
-  export async function refresh() {
-    await Promise.all([loadFolders(), loadFacets(), loadNotes(true)]);
+  /** Reloads the folder list, filters and the flat list. The tree's notes are only
+   * reloaded for `changedFolders` (both folders of a move), or all with `"all"`. */
+  export async function refresh(changedFolders: string[] | "all" = []) {
+    if (changedFolders === "all") clearLoaded();
+    await Promise.all([
+      loadFolders(),
+      loadFacets(),
+      loadNotes(true),
+      changedFolders === "all" ? Promise.resolve() : refreshFolders(changedFolders).catch((e) => (error = errorMessage(e))),
+    ]);
   }
 
   /** The folder new notes go into. */
@@ -73,6 +95,7 @@
 
   /** Keeps the list in step with a just-saved note. */
   export function noteSaved(summary: NoteSummary) {
+    updateNote(summary);
     if (searching) {
       // Keep the ranking stable while typing; the next search re-checks the match.
       hits = hits.map((h) => (h.note.id === summary.id ? { ...h, note: summary } : h));
@@ -155,27 +178,47 @@
   {#if showFilters}
     <div class="panel"><SearchFilters bind:filters {facets} /></div>
   {/if}
-  <div class="folders">
-    <FolderTree
-      folders={allFolders}
-      selected={selectedFolder}
-      onselect={(f) => (selectedFolder = f)}
-      oncreate={addFolder}
-    />
+  <div class="views" role="group" aria-label="Note list view">
+    <button aria-pressed={view === "tree"} onclick={() => setView("tree")}>Tree</button>
+    <button aria-pressed={view === "recent"} onclick={() => setView("recent")}>Recent</button>
   </div>
   {#if error}<p class="error">{error}</p>{/if}
-  <div class="results">
-    {#key queryVersion}
-      <NoteList
-        {hits}
-        {selectedId}
-        {hasMore}
-        {onselect}
-        onmore={() => void loadNotes(false)}
-        emptyText={searching ? "No matching notes." : "No notes here yet."}
+  {#if view === "tree" && !searching}
+    <div class="explorer">
+      <ExplorerTree
+        folders={allFolders}
+        {selectedFolder}
+        selectedNote={selected}
+        onselectfolder={(f) => (selectedFolder = f)}
+        onopen={(id) => onselect(id)}
+        oncreatefolder={addFolder}
+        onerror={(e) => (error = errorMessage(e))}
       />
-    {/key}
-  </div>
+    </div>
+  {:else}
+    {#if view === "recent"}
+      <div class="folders">
+        <FolderTree
+          folders={allFolders}
+          selected={selectedFolder}
+          onselect={(f) => (selectedFolder = f)}
+          oncreate={addFolder}
+        />
+      </div>
+    {/if}
+    <div class="results">
+      {#key queryVersion}
+        <NoteList
+          {hits}
+          {selectedId}
+          {hasMore}
+          {onselect}
+          onmore={() => void loadNotes(false)}
+          emptyText={searching ? "No matching notes." : "No notes here yet."}
+        />
+      {/key}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -234,6 +277,37 @@
 
   .error {
     padding: 0.5rem 0.75rem;
+  }
+
+  .views {
+    flex: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 0 0.75rem 0.5rem;
+  }
+
+  .views button {
+    padding-block: 0.15em;
+    font-size: 0.85em;
+  }
+
+  .views button:first-child {
+    border-radius: 6px 0 0 6px;
+  }
+
+  .views button:last-child {
+    border-radius: 0 6px 6px 0;
+    border-left: none;
+  }
+
+  .views button[aria-pressed="true"] {
+    background: var(--selection);
+    font-weight: 600;
+  }
+
+  .explorer {
+    flex: 1;
+    min-height: 0;
   }
 
   .results {
