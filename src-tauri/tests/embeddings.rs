@@ -228,6 +228,30 @@ fn the_job_does_not_count_as_activity() {
     });
 }
 
+/// The model runs without the vault lock, so the UI's commands never wait for it.
+#[test]
+fn the_vault_stays_available_while_the_model_runs() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::slow(4, Duration::from_millis(50));
+    let source = Fakes(vec![fake.clone()]);
+    let id = session
+        .with_vault(|v| (0..40).map(|i| v.create_note("", &format!("N{i}"), "some words")).last().unwrap())
+        .unwrap();
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
+        wait_for(|| fake.calls() >= 1);
+        let mut slowest = Duration::ZERO;
+        while fake.calls() < 20 {
+            let start = Instant::now();
+            session.with_vault(|v| v.note(id)).unwrap();
+            slowest = slowest.max(start.elapsed());
+            std::thread::sleep(Duration::from_millis(3));
+        }
+        assert!(slowest < Duration::from_millis(40), "a vault call waited {slowest:?}");
+        session.lock();
+    });
+}
+
 #[test]
 fn the_job_stops_promptly_on_lock() {
     let (_dir, _path, session, g) = session("fake-4");
