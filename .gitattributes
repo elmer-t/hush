@@ -2,3 +2,5 @@
 *.png binary
 *.ico binary
 *.icns binary
+# Import fixtures must keep their exact bytes (CRLF, Latin-1, BOM).
+src-tauri/tests/fixtures/** -text

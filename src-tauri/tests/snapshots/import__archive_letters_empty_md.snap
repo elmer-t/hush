@@ -1,0 +1,12 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/letters
+title: empty
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: archive
+---

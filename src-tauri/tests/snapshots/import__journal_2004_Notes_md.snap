@@ -1,0 +1,16 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: journal/2004
+title: Notes
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: journal
+---
+Loose notes from 2004.
+
+- the bridge
+- the herons

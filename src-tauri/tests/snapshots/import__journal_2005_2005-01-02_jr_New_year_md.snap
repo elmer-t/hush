@@ -1,0 +1,23 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: journal/2005
+title: 2005-01-02 New year
+created: 2005-01-02 00:00 UTC (Rule)
+updated: 2010-01-01 00:00 UTC
+warning: dropped HTML markup: <div>
+-----
+---
+author_email: jan@example.org
+topic: journal
+tags: [journal]
+created: 2005-01-02
+---
+## New year
+
+Quiet start of the year. Resolutions:
+
+1. walk every morning
+2. write every evening
+3. call mother on Sundays

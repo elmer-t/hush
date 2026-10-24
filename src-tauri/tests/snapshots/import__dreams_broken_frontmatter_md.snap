@@ -1,0 +1,16 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: dreams
+title: broken frontmatter
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+warning: frontmatter is not valid YAML; it was kept but not read
+-----
+---
+author: [Ada
+tags: dr
+topic: dreams
+---
+The frontmatter above is not valid YAML, so it is kept as it is but not read.

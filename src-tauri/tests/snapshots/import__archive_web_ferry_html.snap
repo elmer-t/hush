@@ -1,0 +1,23 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/web
+title: ferry
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+warning: dropped HTML markup: <div>, <link>, <meta>, <script>, <title>
+-----
+---
+topic: archive
+---
+[Home](/) | [News](/news)
+
+# Ferry timetable
+
+The ferry runs every hour from **08:00** until **20:00**. Tickets are sold on board — cash only.
+
+- Adults: €3
+- Children: €1,50
+
+![Ferry logo](ferry_files/logo.gif) Questions? Mail [info@example.org](mailto:info@example.org).

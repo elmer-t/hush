@@ -1,0 +1,20 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/forum
+title: thread-0001
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+warning: dropped HTML markup: <!-- comment -->, <script>, <style>, <table>, <td>, <title>, <tr>, <u>
+-----
+---
+topic: archive
+---
+**Posted by:** Henk
+
+3 May 2003
+
+Does anyone know when the ferry starts running again? I heard it was cancelled for the whole spring, but the website says otherwise.
+
+Thanks, [Henk](http://example.com/~henk/)

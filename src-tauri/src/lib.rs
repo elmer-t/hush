@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod import;
 pub mod markdown;
 pub mod session;
 
@@ -8,6 +9,7 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use crate::commands::import::ImportJob;
 use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
 use crate::config::Config;
 use crate::session::Session;
@@ -22,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Session::default())
+        .manage(ImportJob::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             app.manage(Config::load(config_path));
@@ -79,6 +82,12 @@ pub fn run() {
             commands::search::search_notes,
             commands::search::search_facets,
             commands::search::attribute_values,
+            commands::import::start_import,
+            commands::import::cancel_import,
+            commands::import::import_rules,
+            commands::import::set_import_rules,
+            commands::import::default_import_rules,
+            commands::import::test_import_rules,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,0 +1,25 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: journal/2004
+title: 2004-03-14 Flying
+created: 2004-03-14 00:00 UTC (FileName)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+author: Jan de Vries
+author_email: jan@example.org
+topic: journal
+tags: [dream]
+---
+I was flying over the city again, low enough to read the street names but too high to land. Everyone below was walking in the same direction, towards the old harbour, and nobody looked up. When I tried to call out, no sound came.
+
+The poem I woke up with:
+
+Over the roofs,
+over the rain,
+nobody calls
+my name again.
+
+It felt important at the time.

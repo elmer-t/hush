@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { api, CLOSE_EVENT, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote, type VaultInfo } from "$lib/api";
+  import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
   import Settings from "$lib/Settings.svelte";
@@ -12,7 +13,9 @@
   // Auto-lock is enforced by the backend; activity is reported at most this often.
   const TOUCH_INTERVAL_MS = 15_000;
 
-  let showSettings = $state(false);
+  let view = $state<"note" | "settings" | "import">("note");
+  // The import view stays mounted once opened, so a running import keeps its progress.
+  let importOpened = $state(false);
   let showLeft = $state(true);
   let showRight = $state(true);
   let opened = $state<OpenedNote | null>(null);
@@ -66,6 +69,13 @@
     sidebar?.focusSearch();
   }
 
+  async function toggleView(next: "settings" | "import") {
+    // Leaving the note unmounts the editor, which would drop an unsaved edit.
+    await editor?.flush();
+    view = view === next ? "note" : next;
+    if (next === "import") importOpened = true;
+  }
+
   async function lock() {
     await editor?.flush();
     await api.lockVault();
@@ -76,12 +86,12 @@
     summary = note.note;
     meta = note.meta;
     focusTitle = isNew;
-    showSettings = false;
+    view = "note";
     error = "";
   }
 
   async function select(id: number) {
-    if (opened?.note.id === id && !showSettings) return;
+    if (opened?.note.id === id && view === "note") return;
     await editor?.flush();
     try {
       show(await api.openNote(id), false);
@@ -137,7 +147,8 @@
       <button onclick={() => (showRight = !showRight)} aria-pressed={showRight} title="Show or hide note details">
         Details
       </button>
-      <button onclick={() => (showSettings = !showSettings)} aria-pressed={showSettings}>Settings</button>
+      <button onclick={() => toggleView("import")} aria-pressed={view === "import"}>Import</button>
+      <button onclick={() => toggleView("settings")} aria-pressed={view === "settings"}>Settings</button>
       <button onclick={lock} title="Lock (Ctrl+L)">Lock</button>
     </div>
   </header>
@@ -150,30 +161,35 @@
 
   <main>
     {#if error}<p class="error banner" role="alert">{error}</p>{/if}
-    {#if showSettings}
-      <div class="settings"><Settings /></div>
-    {:else if opened}
-      {#key opened.note.id}
-        <NoteEditor
-          bind:this={editor}
-          {opened}
-          {focusTitle}
-          onsaved={saved}
-          onrenamed={renamed}
-          ondeleted={deleted}
-        />
-      {/key}
-    {:else}
-      <div class="empty">
-        <p class="muted">Select a note, or create one.</p>
-        <button class="primary" onclick={() => create(sidebar?.currentFolder() ?? "")}>New note</button>
-      </div>
+    {#if importOpened}
+      <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh()} /></div>
+    {/if}
+    {#if view === "settings"}
+      <div class="page"><Settings /></div>
+    {:else if view === "note"}
+      {#if opened}
+        {#key opened.note.id}
+          <NoteEditor
+            bind:this={editor}
+            {opened}
+            {focusTitle}
+            onsaved={saved}
+            onrenamed={renamed}
+            ondeleted={deleted}
+          />
+        {/key}
+      {:else}
+        <div class="empty">
+          <p class="muted">Select a note, or create one.</p>
+          <button class="primary" onclick={() => create(sidebar?.currentFolder() ?? "")}>New note</button>
+        </div>
+      {/if}
     {/if}
   </main>
 
   {#if showRight}
     <div class="right">
-      {#if opened && summary && meta && !showSettings}
+      {#if opened && summary && meta && view === "note"}
         <MetadataPanel {meta} {summary} onset={(key, values) => editor?.setField(key, values)} />
       {/if}
     </div>
@@ -250,9 +266,13 @@
     padding: 0.5rem 1.25rem;
   }
 
-  .settings {
+  .page {
     overflow-y: auto;
     padding: 1.5rem 16px;
+  }
+
+  .page[hidden] {
+    display: none;
   }
 
   .empty {

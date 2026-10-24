@@ -3,6 +3,7 @@
 
 mod links;
 mod notes;
+mod rules;
 mod schema;
 mod search;
 
@@ -12,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use links::{Backlink, OutgoingLink, Resolution};
-pub use notes::{Note, NoteSummary};
+pub use notes::{NewNote, Note, NoteSummary};
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -35,6 +36,8 @@ pub enum Error {
     TitleTaken,
     #[error("note not found")]
     NoteNotFound,
+    #[error("{0}")]
+    InvalidRule(String),
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }

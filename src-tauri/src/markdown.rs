@@ -130,6 +130,14 @@ pub fn split_frontmatter(body: &str) -> Option<(&str, usize)> {
     None
 }
 
+/// Whether frontmatter YAML can be read: empty, or a mapping.
+pub fn frontmatter_is_valid(yaml: &str) -> bool {
+    match YamlLoader::load_from_str(yaml) {
+        Ok(docs) => matches!(docs.first(), None | Some(Yaml::Hash(_))),
+        Err(_) => false,
+    }
+}
+
 /// Sets the top-level frontmatter `key` to `values`, or removes it when `values` is empty.
 /// Creates the frontmatter block when needed and drops it once it is empty; every other
 /// line is left exactly as written.

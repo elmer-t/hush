@@ -1,0 +1,27 @@
+---
+source: tests/import.rs
+expression: render(&report)
+---
+files: 31
+imported: 25
+warnings: 10
+cancelled: false
+not imported web page assets: 2
+not imported .doc: 1
+not imported .pdf: 1
+not imported .png: 1
+not imported .txt: 1
+warning archive/forum/thread-0001.md: dropped HTML markup: <!-- comment -->, <script>, <style>, <table>, <td>, <title>, <tr>, <u>
+warning archive/forum/thread-0002.md: dropped HTML markup: <center>, <div>, <span>
+warning archive/letters/Brief [concept] #2.md: title changed to 'Brief (concept) 2': titles can't contain [ ] # | / \
+warning archive/letters/letter to Jan.txt: not valid UTF-8; read as Windows-1252
+warning archive/letters/letter to Jan.txt: renamed to 'letter to Jan (txt)': another file in this folder has the same name
+warning archive/web/ferry.html: dropped HTML markup: <div>, <link>, <meta>, <script>, <title>
+warning archive/web/old page.htm: not valid UTF-8; read as Windows-1252
+warning dreams/broken frontmatter.md: frontmatter is not valid YAML; it was kept but not read
+warning journal/2004/2004-04-01 jr Rain.md: dropped HTML markup: <font>
+warning journal/2005/2005-01-02 jr New year.md: dropped HTML markup: <div>
+ambiguous link in README: [[Notes]]
+ambiguous link in dreams/Dream of the sea: [[Notes]]
+ambiguous link in journal/2004/2004-03-12 Morning walk: [[Notes]]
+ambiguous link in work/mixed: [[Notes]]

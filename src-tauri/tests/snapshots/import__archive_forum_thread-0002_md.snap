@@ -1,0 +1,23 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/forum
+title: thread-0002
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+warning: dropped HTML markup: <center>, <div>, <span>
+-----
+---
+topic: archive
+---
+Reply from Marieke:
+
+I took the ferry last week, it runs every hour. Bring a coat, it gets cold on the water.
+
+** IMPORTANT **
+
+Old timetable below
+
+08:00 - 09:00  
+10:00 - 11:00

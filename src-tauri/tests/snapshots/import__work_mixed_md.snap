@@ -1,0 +1,17 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: work
+title: mixed
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: work
+---
+Some **bold** markdown and *html italic* on the same line, with a [[Notes]] link and a #tag that should all survive the HTML cleanup without any escaping at all.
+
+- first item with **bold html**
+- second item with *markdown emphasis*
+  - nested item & entity

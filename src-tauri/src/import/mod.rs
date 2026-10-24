@@ -1,0 +1,485 @@
+//! Importing a folder of notes (an Obsidian vault, or an old archive).
+//!
+//! Best effort: every file that turns out to be text is imported. Markdown and plain
+//! text are cleaned (HTML, hard wraps), HTML and RTF documents are converted first,
+//! and data or code files are kept verbatim in a code block. Each note then goes
+//! through the label rules and gets frontmatter for what they found. Binary formats
+//! (Word, PDF, images, …) are counted in the report for a later version.
+//!
+//! A dry run does all of that and reports
+//! what would happen; a real run also writes the notes in batches. The source folder
+//! is only ever read.
+
+pub mod clean;
+mod dates;
+pub mod formats;
+mod rtf;
+pub mod rules;
+
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::UNIX_EPOCH;
+
+use serde::Serialize;
+
+use crate::db::{self, NewNote};
+use crate::markdown;
+use crate::session::{Session, SessionError};
+use formats::Format;
+use rules::{AUTHOR_EMAIL_KEY, CompiledRule, RuleInput};
+
+pub use dates::parse_loose_date;
+
+pub const BATCH_SIZE: usize = 500;
+/// Bigger "text" files are almost certainly not notes (logs, data dumps).
+pub const MAX_TEXT_BYTES: u64 = 10 * 1024 * 1024;
+/// The report's name for the `<page>_files` folders browsers save next to a web page.
+const PAGE_ASSETS: &str = "web page assets";
+/// The report lists this many warnings at most; `warning_count` has the total.
+const MAX_REPORTED_WARNINGS: usize = 2000;
+const SAMPLE_COUNT: usize = 20;
+const SAMPLE_MAX_BYTES: usize = 6000;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ImportError {
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    #[error("could not read the source folder: {0}")]
+    Source(std::io::Error),
+}
+
+impl From<db::Error> for ImportError {
+    fn from(e: db::Error) -> Self {
+        Self::Session(e.into())
+    }
+}
+
+/// A file ready to be written as a note.
+#[derive(Debug, Clone)]
+pub struct Prepared {
+    /// Relative to the source folder, with `/` separators.
+    pub path: String,
+    pub folder: String,
+    pub title: String,
+    pub body: String,
+    pub created_at: i64,
+    pub created_from: CreatedFrom,
+    pub updated_at: i64,
+    pub warnings: Vec<String>,
+    /// The decoded text before any change, for dry-run samples.
+    pub original: String,
+    /// The file's lowercased extension, `""` if none.
+    pub extension: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PrepareError {
+    #[error("could not read the file: {0}")]
+    Io(#[from] std::io::Error),
+    /// Not text, or a format that can't be read yet.
+    #[error("format not supported yet")]
+    Unsupported,
+    #[error("too large to import as text ({:.1} MB)", *.0 as f64 / 1_048_576.0)]
+    TooLarge(u64),
+}
+
+/// Where a note's creation date came from, in order of precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreatedFrom {
+    Rule,
+    Frontmatter,
+    FileName,
+    Modified,
+}
+
+#[derive(Debug)]
+pub struct Scan {
+    /// Every candidate file, relative to the source folder, sorted. Hidden files and
+    /// folders are left out.
+    pub files: Vec<PathBuf>,
+    /// Files in `<page>_files` folders next to a saved web page: styles, scripts and
+    /// images that belong to the page rather than being notes.
+    pub page_assets: usize,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub dry_run: bool,
+    pub files: usize,
+    /// Notes written, or that would be written in a dry run.
+    pub imported: usize,
+    pub skipped: Vec<FileMessage>,
+    pub warnings: Vec<FileMessage>,
+    pub warning_count: usize,
+    pub ambiguous_links: Vec<AmbiguousLink>,
+    /// Before/after pairs of changed files (dry run only).
+    pub samples: Vec<Sample>,
+    /// Files left out because their format can't be read yet, by format, most common first.
+    pub unsupported: Vec<FormatCount>,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FormatCount {
+    /// `.doc`, `no extension`, …
+    pub format: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FileMessage {
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AmbiguousLink {
+    /// The linking note, as `folder/title`.
+    pub note: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Sample {
+    pub path: String,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+}
+
+/// Finds the files to import, skipping hidden files and folders (such as `.obsidian`).
+pub fn scan(root: &Path) -> std::io::Result<Scan> {
+    fn walk(root: &Path, dir: &Path, scan: &mut Scan, assets: bool) -> std::io::Result<()> {
+        let mut entries = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|e| e.file_name());
+        let names: HashSet<String> = entries.iter().map(|e| e.file_name().to_string_lossy().to_lowercase()).collect();
+        for entry in &entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                walk(root, &path, scan, assets || is_page_assets(&name, &names))?;
+            } else if assets {
+                scan.page_assets += 1;
+            } else {
+                scan.files.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+            }
+        }
+        Ok(())
+    }
+    let mut scan = Scan { files: Vec::new(), page_assets: 0 };
+    walk(root, root, &mut scan, false)?;
+    Ok(scan)
+}
+
+/// `page_files` next to `page.html` (or `.htm`), as browsers save a complete page.
+fn is_page_assets(dir: &str, siblings: &HashSet<String>) -> bool {
+    let Some(page) = dir.strip_suffix("_files") else { return false };
+    let page = page.to_lowercase();
+    ["html", "htm", "xhtml", "shtml"].iter().any(|ext| siblings.contains(&format!("{page}.{ext}")))
+}
+
+/// Reads and converts one file. Pure apart from reading the file.
+pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepared, PrepareError> {
+    let full = root.join(rel);
+    let format = formats::detect(&full)?.ok_or(PrepareError::Unsupported)?;
+    let meta = fs::metadata(&full)?;
+    if meta.len() > MAX_TEXT_BYTES {
+        return Err(PrepareError::TooLarge(meta.len()));
+    }
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or_else(db::now_ms, |d| d.as_millis() as i64);
+    let (original, encoding_warning) = formats::decode(fs::read(&full)?);
+    let mut warnings: Vec<String> = encoding_warning.into_iter().collect();
+    let text = match format {
+        Format::Markdown | Format::Text | Format::Code(_) => original.clone(),
+        Format::Html => {
+            let (md, w) = clean::html_document(&original);
+            warnings.extend(w);
+            md
+        }
+        Format::Rtf => rtf::to_text(&original).unwrap_or_else(|| {
+            warnings.push("not a valid RTF document; imported as text".into());
+            original.clone()
+        }),
+    };
+    let has_frontmatter = matches!(format, Format::Markdown | Format::Text);
+
+    let path = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+    let folder = markdown::normalize_folder(&rel.parent().map(|p| p.to_string_lossy()).unwrap_or_default());
+    let stem = rel.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+
+    let (yaml, content_start) = match markdown::split_frontmatter(&text).filter(|_| has_frontmatter) {
+        Some((yaml, end)) => {
+            if !markdown::frontmatter_is_valid(yaml) {
+                warnings.push("frontmatter is not valid YAML; it was kept but not read".into());
+            }
+            (yaml, end)
+        }
+        None => ("", 0),
+    };
+    let found = rules::apply(rules, &RuleInput { file_name: &stem, frontmatter: yaml, content: &text[content_start..] });
+    warnings.extend(found.warnings.iter().cloned());
+
+    let title = sanitize_title(if found.file_name.is_empty() { &stem } else { &found.file_name }, &mut warnings);
+    let content = match format {
+        Format::Code(lang) => formats::fenced(&found.content, lang),
+        _ => {
+            let (content, clean_warnings) = clean::clean(&found.content);
+            warnings.extend(clean_warnings);
+            content
+        }
+    };
+
+    let mut body = format!("{}{content}", &text[..content_start]);
+    let parsed = markdown::parse(&body);
+    let mut set = |key: &str, values: &[String]| body = markdown::set_frontmatter_field(&body, key, values);
+    if let Some(author) = &found.author {
+        set("author", std::slice::from_ref(author));
+    }
+    if let Some(email) = &found.author_email {
+        set(AUTHOR_EMAIL_KEY, std::slice::from_ref(email));
+    }
+    let topic = found.topic.clone().or_else(|| match &parsed.topic {
+        Some(_) => None,
+        None => folder.split('/').next().filter(|f| !f.is_empty()).map(str::to_string),
+    });
+    if let Some(topic) = topic {
+        set("topic", &[topic]);
+    }
+    if !found.tags.is_empty() {
+        let mut tags = parsed.frontmatter_tags.clone();
+        for tag in &found.tags {
+            if !tags.iter().any(|t| t.eq_ignore_ascii_case(tag)) {
+                tags.push(tag.clone());
+            }
+        }
+        set("tags", &tags);
+    }
+    for (key, values) in &found.attributes {
+        set(key, values);
+    }
+    let (created_at, created_from) = if let Some(ms) = found.created_at {
+        set("created", &[dates::format_date(ms)]);
+        (ms, CreatedFrom::Rule)
+    } else if let Some(ms) = parsed.created_at {
+        (ms, CreatedFrom::Frontmatter)
+    } else if let Some(ms) = dates::date_in_name(&stem) {
+        (ms, CreatedFrom::FileName)
+    } else {
+        (modified, CreatedFrom::Modified)
+    };
+
+    Ok(Prepared {
+        path,
+        folder,
+        title,
+        body,
+        created_at,
+        created_from,
+        updated_at: modified,
+        warnings,
+        original,
+        extension: formats::extension(rel),
+    })
+}
+
+/// Replaces characters titles can't hold (they would break links or paths).
+fn sanitize_title(title: &str, warnings: &mut Vec<String>) -> String {
+    let clean: String = title
+        .chars()
+        .map(|c| match c {
+            '[' => '(',
+            ']' => ')',
+            '/' | '\\' | '|' => '-',
+            '#' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    let clean = if clean.is_empty() { "Untitled".to_string() } else { clean };
+    if clean != title {
+        warnings.push(format!("title changed to '{clean}': titles can't contain [ ] # | / \\"));
+    }
+    clean
+}
+
+/// Imports (or, with `dry_run`, previews importing) the files under `source` into the
+/// open vault, using the vault's rules. Writes happen in transactions of
+/// [`BATCH_SIZE`] notes; `cancel` is checked between batches.
+pub fn run(
+    session: &Session,
+    source: &Path,
+    dry_run: bool,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(Progress),
+) -> Result<ImportReport, ImportError> {
+    let vault_path = session.path().ok_or(SessionError::Locked)?;
+    let rules = on_vault(session, &vault_path, |v| v.import_rules())?;
+    let rules = rules
+        .iter()
+        .map(|r| r.compile().map_err(db::Error::InvalidRule))
+        .collect::<Result<Vec<_>, _>>()?;
+    let scan = scan(source).map_err(ImportError::Source)?;
+    let total = scan.files.len();
+    let mut report = ImportReport { dry_run, files: total + scan.page_assets, ..Default::default() };
+    let mut unsupported: BTreeMap<String, usize> = BTreeMap::new();
+    if scan.page_assets > 0 {
+        unsupported.insert(PAGE_ASSETS.into(), scan.page_assets);
+    }
+    let mut imported_ids = Vec::new();
+    // (folder, title) of every note this import creates, lowercased, to keep them apart.
+    let mut planned: HashSet<(String, String)> = HashSet::new();
+    progress(Progress { done: 0, total });
+
+    for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            report.cancelled = true;
+            break;
+        }
+        let mut batch = Vec::with_capacity(chunk.len());
+        for rel in chunk {
+            match prepare(source, rel, &rules) {
+                Ok(mut p) => {
+                    give_unique_title(&mut p, &mut planned);
+                    batch.push(p);
+                }
+                Err(PrepareError::Unsupported) => {
+                    let ext = formats::extension(rel);
+                    let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
+                    *unsupported.entry(format).or_default() += 1;
+                }
+                Err(e) => report.skipped.push(FileMessage {
+                    path: rel.to_string_lossy().replace('\\', "/"),
+                    message: e.to_string(),
+                }),
+            }
+        }
+        for p in &batch {
+            for w in &p.warnings {
+                report.warning_count += 1;
+                if report.warnings.len() < MAX_REPORTED_WARNINGS {
+                    report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
+                }
+            }
+        }
+
+        let outcomes: Vec<db::Result<i64>> = if dry_run {
+            on_vault(session, &vault_path, |v| {
+                let mut outcomes = Vec::with_capacity(batch.len());
+                for p in &batch {
+                    let taken = v.note_exists(&p.folder, &p.title)?;
+                    outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
+                }
+                Ok(outcomes)
+            })?
+        } else {
+            let notes: Vec<NewNote> = batch
+                .iter()
+                .map(|p| NewNote {
+                    folder: &p.folder,
+                    title: &p.title,
+                    body: &p.body,
+                    created_at: p.created_at,
+                    updated_at: p.updated_at,
+                })
+                .collect();
+            on_vault(session, &vault_path, |v| v.import_notes(&notes))?
+        };
+
+        for (p, outcome) in batch.iter().zip(outcomes) {
+            match outcome {
+                Ok(id) => {
+                    report.imported += 1;
+                    imported_ids.push(id);
+                    if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
+                        report.samples.push(Sample {
+                            path: p.path.clone(),
+                            before: truncate(&p.original),
+                            after: truncate(&p.body),
+                        });
+                    }
+                }
+                Err(e) => {
+                    let message = match e {
+                        db::Error::TitleTaken => format!("a note titled '{}' already exists in this folder", p.title),
+                        e => e.to_string(),
+                    };
+                    report.skipped.push(FileMessage { path: p.path.clone(), message });
+                }
+            }
+        }
+        progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
+    }
+
+    let mut unsupported: Vec<FormatCount> =
+        unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
+    unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
+    report.unsupported = unsupported;
+
+    if !dry_run && !imported_ids.is_empty() {
+        report.ambiguous_links = on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
+            .into_iter()
+            .map(|(note, target)| AmbiguousLink { note, target })
+            .collect();
+    }
+    Ok(report)
+}
+
+/// Files with the same name in one folder (`letter.txt`, `letter.rtf`) would get the
+/// same title; later ones get their extension added (`letter (rtf)`). Clashes with
+/// notes already in the vault are left alone: those files are skipped, so importing
+/// a folder again only adds what is new.
+fn give_unique_title(p: &mut Prepared, planned: &mut HashSet<(String, String)>) {
+    let folder = p.folder.to_lowercase();
+    if planned.insert((folder.clone(), p.title.to_lowercase())) {
+        return;
+    }
+    let base = if p.extension.is_empty() { p.title.clone() } else { format!("{} ({})", p.title, p.extension) };
+    let mut title = base.clone();
+    let mut n = 2;
+    while !planned.insert((folder.clone(), title.to_lowercase())) {
+        title = format!("{base} {n}");
+        n += 1;
+    }
+    p.warnings.push(format!("renamed to '{title}': another file in this folder has the same name"));
+    p.title = title;
+}
+
+/// Runs `f` on the open vault if it is still the one the import started in, so a vault
+/// unlocked after a lock mid-import is never written to.
+fn on_vault<T>(
+    session: &Session,
+    vault_path: &Path,
+    f: impl FnOnce(&mut db::Vault) -> db::Result<T>,
+) -> Result<T, SessionError> {
+    if session.path().as_deref() != Some(vault_path) {
+        return Err(SessionError::Locked);
+    }
+    session.with_vault(f)
+}
+
+fn truncate(s: &str) -> String {
+    if s.len() <= SAMPLE_MAX_BYTES {
+        return s.to_string();
+    }
+    let mut end = SAMPLE_MAX_BYTES;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n…", &s[..end])
+}

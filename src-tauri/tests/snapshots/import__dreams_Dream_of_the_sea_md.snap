@@ -1,0 +1,20 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: dreams
+title: Dream of the sea
+created: 2019-06-01 00:00 UTC (Frontmatter)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+title: Dream of the sea
+author: Ada
+tags: [dr, sea]
+created: 2019-06-01
+mood: calm
+topic: dreams
+---
+# Dream of the sea
+
+A lighthouse in the fog. Compare [[Notes]], [[journal/2004/Notes]] and [[Missing note]]. #recurring

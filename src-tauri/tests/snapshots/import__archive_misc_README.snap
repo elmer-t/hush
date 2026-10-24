@@ -1,0 +1,14 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/misc
+title: README
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: archive
+---
+Addresses, copied from the old address book.
+These lines are short and stay as they are.

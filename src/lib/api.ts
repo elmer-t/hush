@@ -53,6 +53,58 @@ export const HIGHLIGHT_END = "\u0003";
 
 export type Facets = { tags: string[]; topics: string[]; authors: string[]; attributeKeys: string[] };
 
+export type RuleSource = "fileName" | "frontmatter" | "firstLines" | "body";
+
+/** `tag`, `author`, `author_email`, `topic`, `created_at` or `attribute:<key>`. */
+export type RuleTarget = string;
+
+/** Mirrors `import::rules::Rule`. */
+export type Rule = {
+  name: string;
+  enabled: boolean;
+  source: RuleSource;
+  lines: number;
+  pattern: string;
+  target: RuleTarget;
+  map: [string, string][];
+  strip: boolean;
+};
+
+export type RuleOutput = {
+  tags: string[];
+  author: string | null;
+  authorEmail: string | null;
+  topic: string | null;
+  createdAt: number | null;
+  attributes: [string, string[]][];
+  fileName: string;
+  content: string;
+  warnings: string[];
+};
+
+export type FileMessage = { path: string; message: string };
+
+export type ImportReport = {
+  dryRun: boolean;
+  files: number;
+  imported: number;
+  skipped: FileMessage[];
+  warnings: FileMessage[];
+  warningCount: number;
+  ambiguousLinks: { note: string; target: string }[];
+  samples: { path: string; before: string; after: string }[];
+  /** Files whose format can't be read yet, most common first. */
+  unsupported: { format: string; count: number }[];
+  cancelled: boolean;
+};
+
+export type ImportProgress = { done: number; total: number };
+
+export type ImportFinished = { status: "done"; report: ImportReport } | { status: "failed"; error: ApiError };
+
+export const IMPORT_PROGRESS_EVENT = "import-progress";
+export const IMPORT_FINISHED_EVENT = "import-finished";
+
 /** The shape of every command error (see `CommandError` in commands/mod.rs). */
 export type ApiError = { kind: string; message: string };
 
@@ -86,6 +138,15 @@ export const api = {
   searchNotes: (query: SearchQuery) => invoke<SearchHit[]>("search_notes", { query }),
   searchFacets: () => invoke<Facets>("search_facets"),
   attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
+
+  /** Returns at once; progress and the report arrive as events. */
+  startImport: (source: string, dryRun: boolean) => invoke<void>("start_import", { source, dryRun }),
+  cancelImport: () => invoke<void>("cancel_import"),
+  importRules: () => invoke<Rule[]>("import_rules"),
+  setImportRules: (rules: Rule[]) => invoke<void>("set_import_rules", { rules }),
+  defaultImportRules: () => invoke<Rule[]>("default_import_rules"),
+  testImportRules: (rules: Rule[], fileName: string, sample: string) =>
+    invoke<RuleOutput>("test_import_rules", { rules, fileName, sample }),
 };
 
 export function isApiError(e: unknown): e is ApiError {

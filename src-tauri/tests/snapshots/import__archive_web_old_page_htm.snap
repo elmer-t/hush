@@ -1,0 +1,14 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/web
+title: old page
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+warning: not valid UTF-8; read as Windows-1252
+-----
+---
+topic: archive
+---
+Opa’s birthday was a “surprise” – nobody knew. Café de Hoek.

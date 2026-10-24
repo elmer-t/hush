@@ -47,6 +47,16 @@ impl Note {
     }
 }
 
+/// A note to import, with its own dates.
+#[derive(Debug, Clone)]
+pub struct NewNote<'a> {
+    pub folder: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
 pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at";
 
@@ -162,6 +172,38 @@ impl Vault {
         })?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Inserts imported notes in one transaction, returning each note's id or why it
+    /// was not inserted. Unlike [`Vault::create_note`], links in other notes are not
+    /// rewritten: an import reports ambiguous links instead.
+    pub fn import_notes(&mut self, notes: &[NewNote]) -> Result<Vec<Result<i64>>> {
+        let tx = self.conn.transaction()?;
+        let mut outcomes = Vec::with_capacity(notes.len());
+        for note in notes {
+            let outcome = (|| {
+                let title = validate_title(note.title)?;
+                tx.prepare_cached(
+                    "INSERT INTO notes(folder, title, body, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?
+                .execute(params![markdown::normalize_folder(note.folder), title, note.body, note.created_at, note.updated_at])
+                .map_err(title_taken)?;
+                let id = tx.last_insert_rowid();
+                derive(&tx, id, note.body)?;
+                Ok(id)
+            })();
+            match outcome {
+                Err(Error::Sql(e)) => return Err(Error::Sql(e)),
+                outcome => outcomes.push(outcome),
+            }
+        }
+        tx.commit()?;
+        Ok(outcomes)
+    }
+
+    pub fn note_exists(&self, folder: &str, title: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare_cached("SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2")?;
+        Ok(stmt.exists(params![markdown::normalize_folder(folder), title.trim()])?)
     }
 
     pub fn delete_note(&mut self, id: i64) -> Result<()> {

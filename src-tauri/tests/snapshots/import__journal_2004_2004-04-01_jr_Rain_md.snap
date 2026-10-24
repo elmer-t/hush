@@ -1,0 +1,20 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: journal/2004
+title: 2004-04-01 Rain
+created: 2004-04-01 00:00 UTC (Rule)
+updated: 2010-01-01 00:00 UTC
+warning: dropped HTML markup: <font>
+-----
+---
+author: Jan de Vries
+author_email: jan@example.org
+topic: journal
+tags: [journal]
+created: 2004-04-01
+---
+*It rained all day. I stayed in and sorted the old letters from grandma & grandpa — there are more than I thought.*
+
+Found the one from 1962 about the flood. I want to keep that one apart.

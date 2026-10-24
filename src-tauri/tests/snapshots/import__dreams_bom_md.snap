@@ -1,0 +1,13 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: dreams
+title: bom
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: Dreams
+---
+This file starts with a byte order mark.

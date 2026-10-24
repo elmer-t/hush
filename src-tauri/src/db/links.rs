@@ -87,6 +87,29 @@ impl Vault {
             .collect()
     }
 
+    /// Links from the given notes that match more than one note, as
+    /// (`folder/title` of the linking note, link target), sorted.
+    pub fn ambiguous_links(&self, from: &[i64]) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT n.folder, n.title, l.target_path, l.target_title
+             FROM links l JOIN notes n ON n.id = l.from_note_id WHERE l.from_note_id = ?1",
+        )?;
+        let mut out = Vec::new();
+        for id in from {
+            let rows: Vec<(String, String, String, String)> = stmt
+                .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (folder, title, path, target) in rows {
+                if let Resolution::Ambiguous(_) = resolve(&self.conn, &path, &target)? {
+                    out.push((join(&folder, &title), join(&path, &target)));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
     /// The shortest link text that resolves uniquely to the note.
     pub fn link_text(&self, id: i64) -> Result<String> {
         shortest_link(&self.conn, id)

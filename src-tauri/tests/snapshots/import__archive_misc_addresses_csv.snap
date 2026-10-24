@@ -1,0 +1,17 @@
+---
+source: tests/import.rs
+expression: out
+---
+folder: archive/misc
+title: addresses
+created: 2010-01-01 00:00 UTC (Modified)
+updated: 2010-01-01 00:00 UTC
+-----
+---
+topic: archive
+---
+```csv
+name,street,city
+Ada Lovelace,"Main Street 1, upstairs",London
+Jan de Vries,Dijkweg 12,Hoorn
+```

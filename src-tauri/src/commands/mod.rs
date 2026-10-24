@@ -1,5 +1,6 @@
 //! Tauri commands. Every error reaches the frontend as `{ kind, message }`.
 
+pub mod import;
 pub mod notes;
 pub mod search;
 pub mod vault;
@@ -22,6 +23,20 @@ pub enum CommandError {
     Session(#[from] SessionError),
     #[error("could not save app config: {0}")]
     Config(#[from] std::io::Error),
+    #[error("could not read the folder to import: {0}")]
+    ImportSource(std::io::Error),
+    #[error("an import is already running")]
+    ImportRunning,
+}
+
+impl From<crate::import::ImportError> for CommandError {
+    fn from(e: crate::import::ImportError) -> Self {
+        use crate::import::ImportError as I;
+        match e {
+            I::Session(e) => Self::Session(e),
+            I::Source(e) => Self::ImportSource(e),
+        }
+    }
 }
 
 impl From<db::Error> for CommandError {
@@ -45,9 +60,12 @@ impl CommandError {
                 D::InvalidTitle(_) => "invalidTitle",
                 D::TitleTaken => "titleTaken",
                 D::NoteNotFound => "noteNotFound",
+                D::InvalidRule(_) => "invalidRule",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",
+            Self::ImportSource(_) => "importSource",
+            Self::ImportRunning => "importRunning",
         }
     }
 }
