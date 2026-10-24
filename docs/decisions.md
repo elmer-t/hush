@@ -93,6 +93,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 
 ## UI
 Three panes: left = search, filters, note list / folder tree (sorted by updated); centre = title + editor; right = metadata panel, backlinks, outgoing links. Side panes collapsible.
+- Left pane has a **Tree | Recent** toggle (2026-10-24), stored in vault `settings` (`sidebar_view`, default Tree). *Tree*: one explorer tree of folders and the notes directly in them (subfolders first, then notes, both by name), root notes at the top level, notes loaded per folder on first expand in pages of 500 ("Show more"). Opening a note any way expands and scrolls to it. Expanded folders survive view switches but not lock. Keyboard: Up/Down, Left/Right, Enter, Home/End. *Recent*: the folder tree plus the flat list by updated. While a search or filter is active, both views show the flat result list.
 
 ## Tests
 - Rust integration tests on encrypted temp DBs: create, rename + link rewrite, search with filters, backlinks, lock/unlock, wrong passphrase, rekey.

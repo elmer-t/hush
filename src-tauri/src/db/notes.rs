@@ -215,6 +215,19 @@ impl Vault {
         Ok(())
     }
 
+    /// Notes whose folder is exactly `folder` (`""` for the root), not those of its
+    /// subfolders, sorted by title case-insensitively. For the explorer tree, which
+    /// loads one folder at a time.
+    pub fn folder_notes(&self, folder: &str, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.folder = ?1 ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
+        ))?;
+        let notes = stmt
+            .query_map(params![markdown::normalize_folder(folder), limit, offset], NoteSummary::from_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(notes)
+    }
+
     /// Every folder that contains at least one note, sorted.
     pub fn folders(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL ORDER BY folder")?;

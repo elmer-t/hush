@@ -57,6 +57,30 @@ pub fn folders(session: State<'_, Session>) -> Result<Vec<String>> {
     Ok(session.with_vault(|v| v.folders())?)
 }
 
+/// The explorer tree's sidebar view: `"tree"` or `"recent"`, stored in the vault.
+pub const SIDEBAR_VIEW_SETTING: &str = "sidebar_view";
+
+/// Notes directly in `folder` (not its subfolders), sorted by title, one page at a time.
+#[tauri::command]
+pub fn folder_notes(session: State<'_, Session>, folder: String, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
+    Ok(session.with_vault(|v| v.folder_notes(&folder, offset, limit))?)
+}
+
+#[tauri::command]
+pub fn sidebar_view(session: State<'_, Session>) -> Result<String> {
+    let view = session.with_vault(|v| v.setting(SIDEBAR_VIEW_SETTING))?;
+    Ok(match view.as_deref() {
+        Some("recent") => "recent".into(),
+        _ => "tree".into(),
+    })
+}
+
+#[tauri::command]
+pub fn set_sidebar_view(session: State<'_, Session>, view: String) -> Result<()> {
+    let view = if view == "recent" { "recent" } else { "tree" };
+    Ok(session.with_vault(|v| v.set_setting(SIDEBAR_VIEW_SETTING, view))?)
+}
+
 /// Creates an untitled note in `folder`, with the vault's default author in its frontmatter.
 #[tauri::command]
 pub fn create_note(session: State<'_, Session>, folder: String) -> Result<OpenedNote> {

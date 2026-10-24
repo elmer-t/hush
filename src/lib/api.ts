@@ -33,6 +33,9 @@ export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
 export type DateField = "created" | "updated";
 
+/** The left pane: the explorer tree, or the folder tree with a flat list by updated. */
+export type SidebarView = "tree" | "recent";
+
 /** Mirrors `db::SearchQuery`. Dates are Unix millis; `from` is inclusive, `to` exclusive. */
 export type SearchQuery = {
   text: string;
@@ -135,6 +138,11 @@ export const api = {
   changePassphrase: (current: string, next: string) => invoke<void>("change_passphrase", { current, new: next }),
 
   folders: () => invoke<string[]>("folders"),
+  /** Notes directly in `folder` ("" for the root), sorted by title. */
+  folderNotes: (folder: string, offset: number, limit: number) =>
+    invoke<NoteSummary[]>("folder_notes", { folder, offset, limit }),
+  sidebarView: () => invoke<SidebarView>("sidebar_view"),
+  setSidebarView: (view: SidebarView) => invoke<void>("set_sidebar_view", { view }),
   createNote: (folder: string) => invoke<OpenedNote>("create_note", { folder }),
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
   saveNote: (id: number, body: string) => invoke<SavedNote>("save_note", { id, body }),
