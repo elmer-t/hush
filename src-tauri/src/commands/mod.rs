@@ -56,6 +56,8 @@ impl CommandError {
                 D::EmptyPassphrase => "emptyPassphrase",
                 D::VaultNotFound => "vaultNotFound",
                 D::VaultExists => "vaultExists",
+                D::VaultInUse => "vaultInUse",
+                D::Lock(_) => "vaultLock",
                 D::UnsupportedVersion => "unsupportedVersion",
                 D::InvalidTitle(_) => "invalidTitle",
                 D::TitleTaken => "titleTaken",

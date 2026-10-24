@@ -2,6 +2,7 @@
 //! through [`Vault`].
 
 mod links;
+mod lock;
 mod notes;
 mod rules;
 mod schema;
@@ -13,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use links::{Backlink, OutgoingLink, Resolution};
+pub use lock::lock_path;
 pub use notes::{NewNote, Note, NoteSummary};
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
 
@@ -28,6 +30,10 @@ pub enum Error {
     VaultNotFound,
     #[error("a file already exists at that location")]
     VaultExists,
+    #[error("this vault is already open in another Hush window")]
+    VaultInUse,
+    #[error("could not lock the vault file: {0}")]
+    Lock(std::io::Error),
     #[error("vault was created by a newer version of Hush")]
     UnsupportedVersion,
     #[error("invalid title: {0}")]
@@ -44,6 +50,9 @@ pub enum Error {
 
 pub struct Vault {
     conn: Connection,
+    /// Held as long as the vault is open, so no other process opens it too. Released
+    /// when dropped, and by the OS if the process exits or crashes.
+    lock: lock::VaultLock,
 }
 
 impl Vault {
@@ -51,21 +60,24 @@ impl Vault {
         if path.exists() {
             return Err(Error::VaultExists);
         }
+        let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
-        Self::init(conn)
+        Self::init(conn, lock)
     }
 
     pub fn open(path: &Path, passphrase: &str) -> Result<Self> {
         if !path.is_file() {
             return Err(Error::VaultNotFound);
         }
+        // Before the key is derived, so a vault open elsewhere fails fast.
+        let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::empty())?;
-        Self::init(conn)
+        Self::init(conn, lock)
     }
 
-    fn init(mut conn: Connection) -> Result<Self> {
+    fn init(mut conn: Connection, lock: lock::VaultLock) -> Result<Self> {
         schema::migrate(&mut conn)?;
-        Ok(Self { conn })
+        Ok(Self { conn, lock })
     }
 
     /// Checks `passphrase` against the vault file on a separate, read-only connection.
@@ -88,7 +100,11 @@ impl Vault {
 
     /// Closes the connection; SQLCipher wipes its key material on close.
     pub fn close(self) -> Result<()> {
-        self.conn.close().map_err(|(_, e)| e.into())
+        let Self { conn, lock } = self;
+        let closed = conn.close().map_err(|(_, e)| e.into());
+        // Only after the connection is closed, so the next owner never sees it open.
+        drop(lock);
+        closed
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {

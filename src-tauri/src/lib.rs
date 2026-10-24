@@ -27,7 +27,7 @@ pub fn run() {
         .manage(ImportJob::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
-            app.manage(Config::load(config_path));
+            app.manage(Config::new(config_path));
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
             // while the window is hidden.
