@@ -22,6 +22,8 @@
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
   let focusTitle = $state(false);
+  // Kept for the unlocked session only: lock reloads the page, which resets it.
+  let previewOnly = $state(false);
   let error = $state("");
   let editor = $state<ReturnType<typeof NoteEditor>>();
   let sidebar = $state<ReturnType<typeof Sidebar>>();
@@ -173,6 +175,7 @@
             bind:this={editor}
             {opened}
             {focusTitle}
+            bind:previewOnly
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}
