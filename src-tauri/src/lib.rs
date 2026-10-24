@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod embed;
 pub mod import;
 pub mod markdown;
 pub mod session;
@@ -9,6 +10,7 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use crate::commands::embeddings::Indexer;
 use crate::commands::import::ImportJob;
 use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
 use crate::config::Config;
@@ -28,6 +30,7 @@ pub fn run() {
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             app.manage(Config::new(config_path));
+            app.manage(Indexer::new(app.path().resource_dir()?.join("models")));
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
             // while the window is hidden.
@@ -102,6 +105,7 @@ pub fn run() {
             commands::import::set_import_rules,
             commands::import::default_import_rules,
             commands::import::test_import_rules,
+            commands::embeddings::index_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

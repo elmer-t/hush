@@ -113,6 +113,18 @@ DROP TABLE tags;
 ALTER TABLE tags_new RENAME TO tags;
 ALTER TABLE note_tags_new RENAME TO note_tags;
 CREATE INDEX note_tags_tag ON note_tags(tag_id, note_id);
+"#, r#"
+-- Embeddings: one vector per note and model, so two models' vectors can coexist while
+-- the active model changes. `vector` is little-endian f32s; `content_hash` is the
+-- SHA-256 of the embedded text, so a save that doesn't change it doesn't re-embed.
+CREATE TABLE note_embeddings (
+    note_id      INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    model        TEXT NOT NULL,
+    content_hash BLOB NOT NULL,
+    vector       BLOB NOT NULL,
+    PRIMARY KEY (note_id, model)
+);
+CREATE INDEX note_embeddings_model ON note_embeddings(model);
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -187,5 +199,41 @@ mod tests {
         conn.execute("DELETE FROM notes", []).unwrap();
         let left: i64 = conn.query_row("SELECT count(*) FROM note_tags", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0, "note_tags still cascades from notes");
+    }
+
+    /// A vault from before embeddings (version 4) keeps its notes, tags and settings and
+    /// gains an empty `note_embeddings` table that cascades from notes.
+    #[test]
+    fn embeddings_migration_keeps_notes_tags_and_settings() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..4] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES (1, 'T', 'body #jr', 1, 1);
+             INSERT INTO tags(id, name) VALUES (7, 'jr');
+             INSERT INTO note_tags VALUES (1, 7);
+             INSERT INTO settings VALUES ('trash_days', '12');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(body, "body #jr");
+        let tag: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(tag, 7);
+        let days: String = conn.query_row("SELECT value FROM settings WHERE key = 'trash_days'", [], |r| r.get(0)).unwrap();
+        assert_eq!(days, "12");
+        let rows: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0);
+
+        conn.execute("INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f')", []).unwrap();
+        conn.execute("DELETE FROM notes", []).unwrap();
+        let rows: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0, "note_embeddings cascades from notes");
     }
 }

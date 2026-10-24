@@ -28,9 +28,13 @@ npm run tauri build    # release build + installer
 
 The first build compiles OpenSSL and takes several minutes.
 
+Both commands first run `npm run fetch-model`, which downloads the bundled embedding model (about 34 MB) from Hugging Face into `src-tauri/models/` and checks it against the SHA-256s in `src-tauri/models/manifest.json`. A release build fails without it; `tauri dev` carries on and Hush shows "Indexing stopped" until the files are there. The build also downloads ONNX Runtime once (`ort`'s `download-binaries`). Hush itself never goes online.
+
 ## Tests & checks
 
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run check
 ```
+
+The test that runs the real embedding model is skipped (it prints `SKIPPED`) unless `npm run fetch-model` has been run.

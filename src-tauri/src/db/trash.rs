@@ -1,5 +1,5 @@
 //! The trash: deleting a note moves it here, from where it can be restored. Trashed
-//! notes keep their row but lose their tag, attribute and link rows, and every other
+//! notes keep their row but lose their tag, attribute, link and embedding rows, and every other
 //! query skips them, so they vanish from lists, search, filters and links. Deleting
 //! from the trash is a real delete (`secure_delete` is on).
 
@@ -44,7 +44,7 @@ impl Vault {
             {
                 return Err(Error::NoteNotFound);
             }
-            for table in ["note_tags", "note_attributes"] {
+            for table in ["note_tags", "note_attributes", "note_embeddings"] {
                 tx.execute(&format!("DELETE FROM {table} WHERE note_id = ?1"), [id])?;
             }
             tx.execute("DELETE FROM links WHERE from_note_id = ?1", [id])?;

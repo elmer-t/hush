@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroizing;
 
-use super::{LOCKED_EVENT, Result};
+use super::{LOCKED_EVENT, Result, embeddings};
 use crate::config::Config;
 use crate::db::Vault;
 use crate::session::{self, Session};
@@ -50,6 +50,7 @@ pub fn forget_recent_vault(config: State<'_, Config>, path: PathBuf) -> Result<(
 
 #[tauri::command]
 pub async fn create_vault(
+    app: AppHandle,
     session: State<'_, Session>,
     config: State<'_, Config>,
     path: PathBuf,
@@ -57,11 +58,12 @@ pub async fn create_vault(
 ) -> Result<VaultInfo> {
     let passphrase = Zeroizing::new(passphrase);
     let vault = Vault::create(&path, &passphrase)?;
-    unlock(&session, &config, vault, path)
+    unlock(&app, &session, &config, vault, path)
 }
 
 #[tauri::command]
 pub async fn open_vault(
+    app: AppHandle,
     session: State<'_, Session>,
     config: State<'_, Config>,
     path: PathBuf,
@@ -69,11 +71,12 @@ pub async fn open_vault(
 ) -> Result<VaultInfo> {
     let passphrase = Zeroizing::new(passphrase);
     let vault = Vault::open(&path, &passphrase)?;
-    unlock(&session, &config, vault, path)
+    unlock(&app, &session, &config, vault, path)
 }
 
-fn unlock(session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
-    session.unlock(vault, path.clone())?;
+fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
+    let generation = session.unlock(vault, path.clone())?;
+    embeddings::start(app, generation);
     // A config write failure must not keep the user out of an unlocked vault.
     let _ = config.update(|c| c.remember(&path));
     Ok(VaultInfo::new(path))

@@ -1,5 +1,6 @@
 //! Tauri commands. Every error reaches the frontend as `{ kind, message }`.
 
+pub mod embeddings;
 pub mod import;
 pub mod notes;
 pub mod search;
