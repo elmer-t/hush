@@ -13,6 +13,9 @@
   let passphraseStatus = $state("");
   let passphraseError = $state("");
 
+  let confirmTrash = $state(true);
+  let confirmError = $state("");
+
   let trashDays = $state(30);
   let trashStatus = $state("");
   let trashError = $state("");
@@ -22,12 +25,24 @@
   let authorError = $state("");
 
   onMount(async () => {
-    [minutes, author, trashDays] = await Promise.all([
+    [minutes, author, trashDays, confirmTrash] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
       api.trashDays(),
+      api.confirmTrash(),
     ]);
   });
+
+  // Saved on change: a checkbox has no Save button.
+  async function saveConfirmTrash() {
+    confirmError = "";
+    try {
+      await api.setConfirmTrash(confirmTrash);
+    } catch (err) {
+      confirmError = errorMessage(err);
+      confirmTrash = !confirmTrash;
+    }
+  }
 
   async function saveTrashDays(e: SubmitEvent) {
     e.preventDefault();
@@ -117,6 +132,11 @@
       <input type="number" min="0" max="3650" step="1" bind:value={trashDays} required />
     </label>
     <p class="muted">Checked each time the vault is unlocked.</p>
+    <label class="check">
+      <input type="checkbox" bind:checked={confirmTrash} onchange={saveConfirmTrash} />
+      Confirm before moving notes to the trash
+    </label>
+    {#if confirmError}<p class="error" role="alert">{confirmError}</p>{/if}
     {#if trashError}<p class="error" role="alert">{trashError}</p>{/if}
     <div class="actions">
       {#if trashStatus}<span class="muted">{trashStatus}</span>{/if}
@@ -181,6 +201,14 @@
   label > input {
     min-height: 36px;
     border-radius: 8px;
+  }
+
+  .check {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text);
   }
 
   p {
