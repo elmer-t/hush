@@ -232,6 +232,90 @@ impl Vault {
         Ok(())
     }
 
+    /// Moves folder `from`, with every note in it and its subfolders, into folder `to`
+    /// (`""` for the top level), keeping the structure below it: `a/b` into `c` puts
+    /// `a/b/x` notes in `c/b/x`. Returns the folder's new path. One transaction with one
+    /// link-preserving pass, like [`Vault::move_notes`], and all or nothing: if any note
+    /// would clash with a note already at its new path, nothing moves and
+    /// [`Error::MoveClash`] lists the titles. Moving a folder into itself or one of its
+    /// subfolders is [`Error::InvalidFolderMove`]; into its current parent, a no-op.
+    pub fn move_folder(&mut self, from: &str, to: &str) -> Result<String> {
+        let from = markdown::normalize_folder(from);
+        let to = markdown::normalize_folder(to);
+        let Some(name) = from.rsplit('/').next().filter(|s| !s.is_empty()) else {
+            return Err(Error::InvalidFolderMove("the top level can't be moved".into()));
+        };
+        // Folder paths compare case-insensitively, like the `folder` column.
+        let (from_key, to_key) = (from.to_lowercase(), to.to_lowercase());
+        if to_key == from_key || to_key.starts_with(&format!("{from_key}/")) {
+            return Err(Error::InvalidFolderMove("a folder can't be moved into itself".into()));
+        }
+        let parent = from.rsplit_once('/').map_or("", |(p, _)| p);
+        if parent.eq_ignore_ascii_case(&to) {
+            return Ok(from);
+        }
+        let dest = if to.is_empty() { name.to_string() } else { format!("{to}/{name}") };
+
+        let tx = self.conn.transaction()?;
+        // Every live note in the folder or below it, with its new folder: `dest` plus the
+        // rest of its path below `from`, in the case it is stored with.
+        let len = from.chars().count() as i64;
+        let mut moving: Vec<(i64, String, String)> = Vec::new();
+        {
+            let mut stmt = tx.prepare_cached(
+                "SELECT id, folder, title FROM notes
+                 WHERE deleted_at IS NULL AND (folder = ?1 OR substr(folder, 1, ?2) = ?3 COLLATE NOCASE)",
+            )?;
+            let rows = stmt.query_map(params![from, len + 1, format!("{from}/")], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?;
+            for row in rows {
+                let (id, folder, title) = row?;
+                let rest: String = folder.chars().skip(len as usize).collect();
+                moving.push((id, format!("{dest}{rest}"), title));
+            }
+        }
+
+        // Moved notes keep their paths below the folder, so they can't clash with each
+        // other, only with a note that stays put. (Moving `b/b` to the top level makes it
+        // `b`: a moved note may take the old path of another moved note.)
+        let mut clashes: Vec<String> = Vec::new();
+        {
+            let mut taken = tx.prepare_cached(
+                "SELECT id FROM notes WHERE folder = ?1 AND title = ?2 AND deleted_at IS NULL",
+            )?;
+            for (_, folder, title) in &moving {
+                let there: Option<i64> = taken.query_row(params![folder, title], |r| r.get(0)).optional()?;
+                if there.is_some_and(|id| !moving.iter().any(|(m, _, _)| *m == id))
+                    && !clashes.iter().any(|c| c.to_lowercase() == title.to_lowercase())
+                {
+                    clashes.push(title.clone());
+                }
+            }
+        }
+        if !clashes.is_empty() {
+            return Err(Error::MoveClash(clashes));
+        }
+        if moving.is_empty() {
+            return Ok(dest);
+        }
+
+        // Shallowest first, so a note taking another moved note's old path moves in only
+        // after that note has moved out, and the unique index holds throughout.
+        moving.sort_by_key(|(_, folder, _)| folder.matches('/').count());
+        let titles: Vec<&str> = moving.iter().map(|(_, _, t)| t.as_str()).collect();
+        links::preserving_links(&tx, &titles, |conn| {
+            let now = now_ms();
+            let mut stmt = conn.prepare_cached("UPDATE notes SET folder = ?2, updated_at = ?3 WHERE id = ?1")?;
+            for (id, folder, _) in &moving {
+                stmt.execute(params![id, folder, now]).map_err(title_taken)?;
+            }
+            Ok(())
+        })?;
+        tx.commit()?;
+        Ok(dest)
+    }
+
     /// Inserts imported notes in one transaction, returning each note's id or why it
     /// was not inserted. Unlike [`Vault::create_note`], links in other notes are not
     /// rewritten: an import reports ambiguous links instead.

@@ -144,6 +144,13 @@ pub fn move_notes(session: State<'_, Session>, ids: Vec<i64>, folder: String) ->
     Ok(session.with_vault(|v| v.move_notes(&ids, &folder))?)
 }
 
+/// Moves folder `from` and everything in it into folder `to`, all or nothing. Returns
+/// the folder's new path.
+#[tauri::command]
+pub fn move_folder(session: State<'_, Session>, from: String, to: String) -> Result<String> {
+    Ok(session.with_vault(|v| v.move_folder(&from, &to))?)
+}
+
 /// Bulk delete: moves notes to the trash, all or nothing.
 #[tauri::command]
 pub fn trash_notes(session: State<'_, Session>, ids: Vec<i64>) -> Result<()> {

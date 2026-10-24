@@ -141,6 +141,64 @@ fn move_notes_unknown_id_moves_nothing() {
 }
 
 #[test]
+fn move_folder_moves_everything_below_it_and_keeps_the_structure() {
+    let (_dir, mut vault) = common::vault();
+    let own = vault.create_note("a/b", "Own", "").unwrap();
+    let deep = vault.create_note("A/b/x/y", "Deep", "").unwrap();
+    let parent = vault.create_note("a", "Parent", "").unwrap();
+    let sibling = vault.create_note("a/bc", "Sibling", "").unwrap();
+    let trashed = vault.create_note("a/b", "Trashed", "").unwrap();
+    vault.trash_note(trashed).unwrap();
+
+    assert_eq!(vault.move_folder("/A/B/", "c").unwrap(), "c/B", "named as passed");
+    assert_eq!(folders_of(&vault, &[own, deep, parent, sibling]), ["c/B", "c/B/x/y", "a", "a/bc"]);
+    assert_eq!(vault.folders().unwrap(), ["a", "a/bc", "c/B", "c/B/x/y"]);
+
+    assert_eq!(vault.move_folder("c/b", "").unwrap(), "b", "to the top level");
+    assert_eq!(folders_of(&vault, &[own, deep]), ["b", "b/x/y"]);
+    assert_eq!(vault.move_folder("missing", "c").unwrap(), "c/missing", "a folder without notes moves nothing");
+}
+
+#[test]
+fn move_folder_into_itself_or_its_parent_is_refused_or_a_no_op() {
+    let (_dir, mut vault) = common::vault();
+    let n = vault.create_note("a/b", "N", "").unwrap();
+    let before = vault.note(n).unwrap().updated_at;
+    for (from, to) in [("a/b", "a/b"), ("a/b", "A/B/c"), ("", "x")] {
+        assert!(matches!(vault.move_folder(from, to), Err(Error::InvalidFolderMove(_))), "{from:?} -> {to:?}");
+    }
+    assert_eq!(vault.move_folder("a/b", "A").unwrap(), "a/b");
+    assert_eq!(folders_of(&vault, &[n]), ["a/b"]);
+    assert_eq!(vault.note(n).unwrap().updated_at, before, "not touched");
+}
+
+#[test]
+fn move_folder_clash_moves_nothing() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("a/b", "Ideas", "").unwrap();
+    let b = vault.create_note("a/b/x", "Plans", "").unwrap();
+    let kept = vault.create_note("c/b/x", "plans", "").unwrap();
+    let err = vault.move_folder("a/b", "c").unwrap_err();
+    assert!(matches!(&err, Error::MoveClash(t) if t == &["Plans"]), "{err}");
+    assert_eq!(folders_of(&vault, &[a, b, kept]), ["a/b", "a/b/x", "c/b/x"]);
+}
+
+#[test]
+fn move_folder_merges_into_an_existing_folder_and_may_reuse_its_own_paths() {
+    let (_dir, mut vault) = common::vault();
+    let there = vault.create_note("c/b", "There", "").unwrap();
+    let here = vault.create_note("a/b", "Here", "").unwrap();
+    vault.move_folder("a/b", "c").unwrap();
+    assert_eq!(folders_of(&vault, &[there, here]), ["c/b", "c/b"]);
+
+    // `b/b` to the top level is `b`: `b/b/b/N` takes `b/b/N`'s old path as that note leaves it.
+    let outer = vault.create_note("b/b", "N", "").unwrap();
+    let inner = vault.create_note("b/b/b", "N", "").unwrap();
+    assert_eq!(vault.move_folder("b/b", "").unwrap(), "b");
+    assert_eq!(folders_of(&vault, &[outer, inner]), ["b", "b/b"]);
+}
+
+#[test]
 fn bulk_delete_moves_all_to_the_trash_or_nothing() {
     let (_dir, mut vault) = common::vault();
     let a = vault.create_note("", "A", "").unwrap();

@@ -82,6 +82,36 @@ export function updateNote(summary: NoteSummary) {
   loaded.set(k, { ...current, notes });
 }
 
+/**
+ * `path` with its `from` prefix swapped for `to`, if it is `from` or below it; else null.
+ * Case-insensitive, like folder paths.
+ */
+export function rebase(path: string, from: string, to: string): string | null {
+  if (key(path) === key(from)) return to;
+  return key(path).startsWith(`${key(from)}/`) ? to + path.slice(from.length) : null;
+}
+
+/**
+ * After folder `from` moved to `to`: the folder and its subfolders stay expanded at
+ * their new paths, and every loaded or expanded folder there is reloaded (`to` may have
+ * existed already and been merged into). The folder it was dropped in is expanded, so
+ * it shows.
+ */
+export async function folderMoved(from: string, to: string): Promise<void> {
+  // All removed before any is added: `b/b` moved to the top level becomes `b`, and
+  // `b/b/b` becomes `b/b`.
+  const moved = [...expanded].flatMap((k) => {
+    const path = rebase(k, from, to);
+    return path === null ? [] : [{ k, path }];
+  });
+  for (const { k } of moved) expanded.delete(k);
+  for (const { path } of moved) expanded.add(key(path));
+  for (const k of [...loaded.keys()]) if (rebase(k, from, to) !== null) loaded.delete(k);
+  const stale = new Set([...expanded, ...loaded.keys()].filter((k) => rebase(k, to, to) !== null));
+  await Promise.all([...stale].map(loadFolder));
+  await expandTo(to.split("/").slice(0, -1).join("/"));
+}
+
 /** Expands every ancestor of `folder` and the folder itself, loading them as needed. */
 export async function expandTo(folder: string): Promise<void> {
   const parts = folder.split("/").filter(Boolean);

@@ -127,6 +127,22 @@ fn move_notes_keeps_links_pointing_at_the_same_notes() {
 }
 
 #[test]
+fn move_folder_keeps_links_pointing_at_the_same_notes() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("work/inbox", "Alpha", "").unwrap();
+    let b = vault.create_note("work/inbox/old", "Beta", "").unwrap();
+    let other = vault.create_note("home/inbox", "Alpha", "").unwrap();
+    let src = vault.create_note("", "Src", "[[work/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]").unwrap();
+
+    assert_eq!(vault.move_folder("work/inbox", "archive").unwrap(), "archive/inbox");
+    assert_eq!(vault.note(b).unwrap().folder, "archive/inbox/old");
+    // `inbox/old/Beta` still matches by suffix and `Beta` by title; the full path changed.
+    assert_eq!(vault.note(src).unwrap().body, "[[archive/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]");
+    assert_eq!(vault.resolve_link("archive/inbox/Alpha").unwrap(), Resolution::Unique(a));
+    assert_eq!(vault.resolve_link("home/inbox/Alpha").unwrap(), Resolution::Unique(other));
+}
+
+#[test]
 fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
     let (_dir, mut vault) = common::vault();
     // Bystanders reached through a folder suffix: `[[T/N]]` → q/T/N, `[[T/M]]` → q/T/M.
