@@ -27,6 +27,8 @@ export type NoteMeta = {
 };
 
 export type OpenedNote = { note: Note; meta: NoteMeta };
+/** A note in the trash; `folder` is where it was deleted from. */
+export type TrashedNote = { id: number; folder: string; title: string; deletedAt: number };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
 export type DateField = "created" | "updated";
@@ -137,7 +139,15 @@ export const api = {
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
   saveNote: (id: number, body: string) => invoke<SavedNote>("save_note", { id, body }),
   renameNote: (id: number, folder: string, title: string) => invoke<OpenedNote>("rename_note", { id, folder, title }),
+  /** The default delete: moves the note to the trash. */
+  trashNote: (id: number) => invoke<void>("trash_note", { id }),
+  /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
+  trashedNotes: () => invoke<TrashedNote[]>("trashed_notes"),
+  restoreNote: (id: number) => invoke<OpenedNote>("restore_note", { id }),
+  emptyTrash: () => invoke<number>("empty_trash"),
+  trashDays: () => invoke<number>("trash_days"),
+  setTrashDays: (days: number) => invoke<void>("set_trash_days", { days }),
   editFrontmatter: (body: string, key: string, values: string[]) =>
     invoke<string>("edit_frontmatter", { body, key, values }),
   defaultAuthor: () => invoke<string | null>("default_author"),

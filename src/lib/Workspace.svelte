@@ -7,13 +7,14 @@
   import NoteEditor from "$lib/NoteEditor.svelte";
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
+  import Trash from "$lib/Trash.svelte";
 
   let { vault }: { vault: VaultInfo } = $props();
 
   // Auto-lock is enforced by the backend; activity is reported at most this often.
   const TOUCH_INTERVAL_MS = 15_000;
 
-  let view = $state<"note" | "settings" | "import">("note");
+  let view = $state<"note" | "settings" | "import" | "trash">("note");
   // The import view stays mounted once opened, so a running import keeps its progress.
   let importOpened = $state(false);
   let showLeft = $state(true);
@@ -71,7 +72,7 @@
     sidebar?.focusSearch();
   }
 
-  async function toggleView(next: "settings" | "import") {
+  async function toggleView(next: "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
     view = view === next ? "note" : next;
@@ -129,6 +130,11 @@
     await sidebar?.refresh();
   }
 
+  async function restored(note: OpenedNote) {
+    await sidebar?.refresh();
+    show(note, false);
+  }
+
   async function deleted(id: number) {
     if (opened?.note.id === id) opened = summary = meta = null;
     await sidebar?.refresh();
@@ -150,6 +156,7 @@
         Details
       </button>
       <button onclick={() => toggleView("import")} aria-pressed={view === "import"}>Import</button>
+      <button onclick={() => toggleView("trash")} aria-pressed={view === "trash"}>Trash</button>
       <button onclick={() => toggleView("settings")} aria-pressed={view === "settings"}>Settings</button>
       <button onclick={lock} title="Lock (Ctrl+L)">Lock</button>
     </div>
@@ -168,6 +175,8 @@
     {/if}
     {#if view === "settings"}
       <div class="page"><Settings /></div>
+    {:else if view === "trash"}
+      <div class="page"><Trash onrestored={restored} /></div>
     {:else if view === "note"}
       {#if opened}
         {#key opened.note.id}

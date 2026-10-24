@@ -3,7 +3,7 @@
 //! A link target is `path/title`, where `path` may be empty. Candidates are the notes
 //! with that title (case-insensitive). A note whose folder equals the path wins
 //! outright; otherwise every note whose folder ends with the path matches, and more
-//! than one match makes the link ambiguous.
+//! than one match makes the link ambiguous. Trashed notes never match.
 
 use std::collections::BTreeMap;
 
@@ -117,7 +117,7 @@ impl Vault {
 }
 
 pub(super) fn resolve(conn: &Connection, path: &str, title: &str) -> Result<Resolution> {
-    let mut stmt = conn.prepare_cached("SELECT id, folder FROM notes WHERE title = ?1 ORDER BY id")?;
+    let mut stmt = conn.prepare_cached("SELECT id, folder FROM notes WHERE title = ?1 AND deleted_at IS NULL ORDER BY id")?;
     let candidates: Vec<(i64, String)> =
         stmt.query_map([title], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
     let path = path.to_lowercase();

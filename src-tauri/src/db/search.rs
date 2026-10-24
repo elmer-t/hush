@@ -63,7 +63,7 @@ impl Vault {
     /// With text: ranked by relevance (title matches weigh more). Without: newest first.
     pub fn search(&self, q: &SearchQuery) -> Result<Vec<SearchHit>> {
         let mut args: Vec<Value> = Vec::new();
-        let mut filters: Vec<String> = Vec::new();
+        let mut filters: Vec<String> = vec!["n.deleted_at IS NULL".into()];
 
         for tag in &q.tags {
             filters.push(
@@ -168,8 +168,8 @@ impl Vault {
                  WHERE EXISTS (SELECT 1 FROM note_tags nt WHERE nt.tag_id = t.id) ORDER BY t.name",
                 [],
             )?,
-            topics: self.strings("SELECT DISTINCT topic FROM notes WHERE topic IS NOT NULL ORDER BY topic", [])?,
-            authors: self.strings("SELECT DISTINCT author FROM notes WHERE author IS NOT NULL ORDER BY author", [])?,
+            topics: self.strings("SELECT DISTINCT topic FROM notes WHERE topic IS NOT NULL AND deleted_at IS NULL ORDER BY topic", [])?,
+            authors: self.strings("SELECT DISTINCT author FROM notes WHERE author IS NOT NULL AND deleted_at IS NULL ORDER BY author", [])?,
             attribute_keys: self.strings("SELECT DISTINCT key FROM note_attributes ORDER BY key", [])?,
         })
     }
