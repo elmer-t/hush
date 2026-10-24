@@ -27,7 +27,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - **Frontmatter in the body is the single source of truth.** Author, topic, tags and attributes are derived from it on every save. The metadata panel edits the frontmatter.
 - Tags = inline `#tags` ∪ frontmatter `tags`.
 - Author: free text, defaults to a vault-level "default author" setting.
-- Topic: free field, defaults to the top-level folder on import; rules can override.
+- Topic: free field, defaults on import to the top-level folder relative to the import source (not the target folder); rules can override.
 - Folders exist implicitly through their notes. Move a note by editing its folder; empty folders can be created from the tree (they are not stored, so one without notes disappears on lock).
 - New notes are titled "Untitled", "Untitled 2", … in the selected folder, with the default author in their frontmatter. Shortcuts: Ctrl+N new note, Ctrl+K search, Ctrl+L lock. Folder rename deferred to v2.
 
@@ -64,7 +64,8 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
   - Data and code (`.csv`, `.json`, `.xml`, `.log`, `.ini`, scripts, …) are kept verbatim in a fenced code block, since joining "wrapped" lines would corrupt them.
   - Encodings: UTF-8, UTF-16 with a byte order mark (Notepad "Unicode"), otherwise Windows-1252 (a superset of Latin-1), with a warning. Line endings become `\n`.
   - Binary files (known extensions, file signatures, NUL bytes) are not imported yet and are counted per format in the report; **Word, PDF and other formats come later**. Text files over 10 MB are skipped and listed. `<page>_files` folders saved next to a web page are counted as page assets, not imported.
-- Hidden files and folders (`.obsidian`, `.trash`) are skipped. Folder = path relative to the source; title = file name (characters titles can't hold are replaced, with a warning). Files with the same name in one folder (`letter.rtf`, `letter.txt`) are kept apart: later ones get their extension added (`letter (txt)`). A note whose `(folder, title)` already exists in the vault is skipped, so re-importing a folder adds only what is new.
+- **Target folder** (2026-10-24): after picking a source folder, an editable target folder is pre-filled with the source folder's name (`D:\Archive\OldVault` → `OldVault`); clearing it imports into the vault root. Note folder = target + the path relative to the source, normalised. If the target already holds notes the UI warns that the import merges into it, and the dry run shows how many notes would be skipped because their `(folder, title)` exists, plus every final folder path. Changing the source or the target requires a new full preview before Import is enabled.
+- Hidden files and folders (`.obsidian`, `.trash`) are skipped. Folder = target folder + path relative to the source; title = file name (characters titles can't hold are replaced, with a warning). Files with the same name in one folder (`letter.rtf`, `letter.txt`) are kept apart: later ones get their extension added (`letter (txt)`). A note whose `(folder, title)` already exists in the vault is skipped, so re-importing a folder adds only what is new.
 - **HTML cleanup per block**: split on blank lines; only blocks containing tags go through a tolerant HTML5 parser (`html5ever` via `htmd`); unclosed tags are closed at block end; unconvertible markup is dropped and reported. Blocks with block-level tags are converted whole; blocks with inline markup only keep their line structure (paragraphs via a line-break placeholder, lists line by line), so Markdown lists, `[[links]]` and `#tags` mixed with HTML survive. Code blocks are never touched.
 - **Unwrap hard wraps** inside paragraphs; leave headings, list items, quotes, code blocks, tables and blank-line breaks alone; never join a line ending in two spaces (or `\`). A line is only joined to one of at least 50 characters, so short lines written on purpose (greetings, poems) stay as they are.
 - **Label/attribute rules** (user-configurable, stored inside the vault, run at import only):
@@ -76,7 +77,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
   - `strip`: on the file-name source it removes the match from the title instead.
   - Single-valued targets take the first match of the first matching rule; tags and attributes collect every match.
   - Test button previews matches against a pasted sample. Frontmatter is read natively, so the defaults are the archive's mail-style headers (`From:` → author and `author_email`, `Date:` → created, `Subject:` → `subject` attribute, all stripped) and one label rule (`jr`/`dr` in the file name → `journal`/`dream` tags, stripped from the title).
-  - Rule results are written into the note's frontmatter, as is the default topic (top-level folder) when there is none.
+  - Rule results are written into the note's frontmatter, as is the default topic when there is none: the top-level folder relative to the import source, ignoring the target prefix. Files directly in the source root get no default topic.
 - `created_at` precedence: rule match → frontmatter `created`/`date` → date in filename → file mtime. `updated_at` = file mtime.
 - Import report lists warnings and ambiguous links.
 

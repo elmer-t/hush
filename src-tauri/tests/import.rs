@@ -44,7 +44,7 @@ fn unlocked() -> (tempfile::TempDir, Session) {
 }
 
 fn run(session: &Session, source: &Path, dry_run: bool) -> ImportReport {
-    import::run(session, source, dry_run, &AtomicBool::new(false), |_| {}).unwrap()
+    import::run(session, source, "", dry_run, &AtomicBool::new(false), |_| {}).unwrap()
 }
 
 fn date(ms: i64) -> String {
@@ -186,7 +186,7 @@ fn reimport_skips_existing_notes() {
 fn cancel_stops_before_the_next_batch() {
     let source = fixture();
     let (_dir, session) = unlocked();
-    let report = import::run(&session, source.path(), false, &AtomicBool::new(true), |_| {}).unwrap();
+    let report = import::run(&session, source.path(), "", false, &AtomicBool::new(true), |_| {}).unwrap();
     assert!(report.cancelled);
     assert_eq!(report.imported, 0);
 }
@@ -196,7 +196,7 @@ fn progress_is_reported() {
     let source = fixture();
     let (_dir, session) = unlocked();
     let mut seen = Vec::new();
-    import::run(&session, source.path(), false, &AtomicBool::new(false), |p| seen.push((p.done, p.total))).unwrap();
+    import::run(&session, source.path(), "", false, &AtomicBool::new(false), |p| seen.push((p.done, p.total))).unwrap();
     assert_eq!(seen.first(), Some(&(0, 29)));
     assert_eq!(seen.last(), Some(&(29, 29)));
 }
@@ -206,7 +206,7 @@ fn locked_vault_stops_the_import() {
     let source = fixture();
     let (_dir, session) = unlocked();
     session.lock();
-    let err = import::run(&session, source.path(), false, &AtomicBool::new(false), |_| {}).unwrap_err();
+    let err = import::run(&session, source.path(), "", false, &AtomicBool::new(false), |_| {}).unwrap_err();
     assert!(matches!(err, import::ImportError::Session(SessionError::Locked)), "{err}");
 }
 
@@ -238,7 +238,7 @@ fn source_folder_is_not_modified() {
 fn missing_source_folder_is_an_error() {
     let (_dir, session) = unlocked();
     let missing = Path::new(FIXTURE).join("does-not-exist");
-    assert!(import::run(&session, &missing, true, &AtomicBool::new(false), |_| {}).is_err());
+    assert!(import::run(&session, &missing, "", true, &AtomicBool::new(false), |_| {}).is_err());
 }
 
 #[test]
@@ -275,11 +275,81 @@ fn import_stops_if_another_vault_is_unlocked() {
     let (dir, session) = unlocked();
     let other = dir.path().join("other.hush");
     Vault::create(&other, common::PASS).unwrap().close().unwrap();
-    let result = import::run(&session, source.path(), false, &AtomicBool::new(false), |p| {
+    let result = import::run(&session, source.path(), "", false, &AtomicBool::new(false), |p| {
         if p.done == 0 {
             session.unlock(Vault::open(&other, common::PASS).unwrap(), other.clone()).unwrap();
         }
     });
     assert!(matches!(result, Err(import::ImportError::Session(SessionError::Locked))));
     assert!(session.with_vault(|v| v.search(&SearchQuery::default())).unwrap().is_empty());
+}
+
+fn run_into(session: &Session, source: &Path, target: &str, dry_run: bool) -> ImportReport {
+    import::run(session, source, target, dry_run, &AtomicBool::new(false), |_| {}).unwrap()
+}
+
+#[test]
+fn target_folder_is_suggested_from_the_source_name() {
+    assert_eq!(import::suggest_target(r"D:\Archive\OldVault"), "OldVault");
+    assert_eq!(import::suggest_target(r"D:\Archive\OldVault\"), "OldVault");
+    assert_eq!(import::suggest_target("/home/me/Old Vault/"), "Old Vault");
+    assert_eq!(import::suggest_target(r"D:\"), "", "a drive root suggests the vault root");
+    assert_eq!(import::suggest_target(""), "");
+}
+
+#[test]
+fn import_under_a_target_folder() {
+    let source = fixture();
+    let (_dir, session) = unlocked();
+    let dry = run_into(&session, source.path(), " OldVault/ ", true);
+    assert_eq!(dry.target, "OldVault");
+    assert_eq!(dry.existing_in_target, 0);
+    assert!(dry.folders.iter().all(|f| f.folder == "OldVault" || f.folder.starts_with("OldVault/")));
+    assert!(dry.samples.iter().all(|s| s.folder.starts_with("OldVault")));
+    let real = run_into(&session, source.path(), "OldVault", false);
+    assert_eq!(dry.folders, real.folders, "the preview shows the final folders");
+
+    // Folders are prefixed; topics stay the top-level folder relative to the source,
+    // and a file in the source root gets none.
+    let notes = session.with_vault(|v| v.search(&SearchQuery { limit: Some(1000), ..Default::default() })).unwrap();
+    let mut out: Vec<String> = notes
+        .iter()
+        .map(|h| format!("{}/{} topic={}", h.note.folder, h.note.title, h.note.topic.as_deref().unwrap_or("-")))
+        .collect();
+    out.sort();
+    let mut folders = String::new();
+    for f in &real.folders {
+        folders += &format!("{} ({})\n", f.folder, f.count);
+    }
+    insta::assert_snapshot!(format!("{folders}-----\n{}", out.join("\n")));
+    assert!(out.contains(&"OldVault/README topic=-".to_string()));
+}
+
+#[test]
+fn import_into_an_existing_target_reports_the_merge() {
+    let source = fixture();
+    let (_dir, session) = unlocked();
+    let first = run_into(&session, source.path(), "OldVault", false);
+    assert_eq!(first.already_exist, 0);
+
+    let dry = run_into(&session, source.path(), "OldVault", true);
+    assert_eq!(dry.existing_in_target, first.imported);
+    assert_eq!(dry.imported, 0);
+    assert_eq!(dry.already_exist, first.imported, "every note would be skipped as already there");
+
+    let elsewhere = run_into(&session, source.path(), "Other", true);
+    assert_eq!(elsewhere.existing_in_target, 0);
+    assert_eq!(elsewhere.already_exist, 0);
+    assert_eq!(elsewhere.imported, first.imported);
+
+    let root = run_into(&session, source.path(), "", true);
+    assert_eq!(root.existing_in_target, 0, "the vault root is not a merge target");
+    session
+        .with_vault(|v| {
+            assert_eq!(v.count_in_folder("OldVault")?, first.imported);
+            assert_eq!(v.count_in_folder("OldVault/journal")?, 6);
+            assert_eq!(v.count_in_folder("OldVaul")?, 0, "a prefix of a folder name is another folder");
+            Ok(())
+        })
+        .unwrap();
 }

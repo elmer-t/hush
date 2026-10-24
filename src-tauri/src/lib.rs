@@ -84,6 +84,8 @@ pub fn run() {
             commands::search::attribute_values,
             commands::import::start_import,
             commands::import::cancel_import,
+            commands::import::suggest_import_target,
+            commands::import::import_target_notes,
             commands::import::import_rules,
             commands::import::set_import_rules,
             commands::import::default_import_rules,

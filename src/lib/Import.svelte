@@ -11,6 +11,7 @@
     type ImportProgress,
     type ImportReport,
   } from "$lib/api";
+  import { normalizeFolder } from "$lib/markdown";
   import RulesEditor from "$lib/RulesEditor.svelte";
 
   type Props = {
@@ -21,7 +22,13 @@
 
   let tab = $state<"import" | "rules">("import");
   let source = $state("");
-  // An import is only offered for the folder that was last previewed in full.
+  // The vault folder to import into; "" is the vault root.
+  let target = $state("");
+  // Once edited by hand, the target no longer follows the source folder's name.
+  let targetEdited = $state(false);
+  // Notes already under the target, so the import would merge into them.
+  let existingInTarget = $state(0);
+  // An import is only offered for the source and target that were last previewed in full.
   let previewed = $state<string | null>(null);
   let running = $state<"preview" | "import" | null>(null);
   let cancelling = $state(false);
@@ -31,7 +38,24 @@
   let error = $state("");
 
   const sample = $derived(report?.samples[sampleIndex] ?? null);
-  const canImport = $derived(!running && source.trim() !== "" && previewed === source);
+  const normalizedTarget = $derived(normalizeFolder(target));
+  const previewKey = $derived(`${source}\n${normalizedTarget}`);
+  const canImport = $derived(!running && source.trim() !== "" && previewed === previewKey);
+
+  // Counted whenever the target changes; a stale answer is dropped.
+  $effect(() => {
+    const folder = normalizedTarget;
+    if (!folder) {
+      existingInTarget = 0;
+      return;
+    }
+    let current = true;
+    api.importTargetNotes(folder).then(
+      (n) => current && (existingInTarget = n),
+      () => current && (existingInTarget = 0),
+    );
+    return () => (current = false);
+  });
 
   onMount(() => {
     const stops = [
@@ -45,10 +69,24 @@
     const dir = await open({ directory: true, multiple: false, title: "Folder to import" });
     if (typeof dir !== "string") return;
     source = dir;
-    sourceChanged();
+    targetEdited = false;
+    await sourceChanged();
   }
 
-  function sourceChanged() {
+  async function sourceChanged() {
+    invalidate();
+    if (targetEdited) return;
+    const from = source;
+    const suggested = from.trim() ? await api.suggestImportTarget(from) : "";
+    if (source === from && !targetEdited) target = suggested;
+  }
+
+  function targetChanged() {
+    targetEdited = true;
+    invalidate();
+  }
+
+  function invalidate() {
     previewed = null;
     report = null;
     error = "";
@@ -62,7 +100,7 @@
     // Set first: a small import can finish before the call returns.
     running = dryRun ? "preview" : "import";
     try {
-      await api.startImport(source, dryRun);
+      await api.startImport(source, normalizedTarget, dryRun);
     } catch (e) {
       running = null;
       error = errorMessage(e);
@@ -84,7 +122,7 @@
     report = result.report;
     sampleIndex = 0;
     if (result.report.dryRun) {
-      previewed = result.report.cancelled ? null : source;
+      previewed = result.report.cancelled ? null : `${source}\n${result.report.target}`;
     } else {
       previewed = null;
       if (wasImport && result.report.imported > 0) onimported();
@@ -108,7 +146,7 @@
     <section class="source">
       <p class="muted">
         Imports every readable file in a folder, such as an Obsidian vault or an old archive: Markdown, text, HTML and
-        RTF, in any common encoding. Notes keep their folders. HTML is converted, hard-wrapped lines are joined, data
+        RTF, in any common encoding. Notes keep their folders, under the target folder below. HTML is converted, hard-wrapped lines are joined, data
         files are kept as they are, and the <button class="link" onclick={() => (tab = "rules")}
           >label rules</button
         > fill in tags, author and dates. The folder itself is never changed.
@@ -125,6 +163,24 @@
         />
         <button onclick={chooseSource} disabled={!!running}>Choose folder…</button>
       </div>
+      <label class="target">
+        <span>Import into folder</span>
+        <input
+          class="path"
+          bind:value={target}
+          oninput={targetChanged}
+          placeholder="Vault root"
+          aria-label="Folder in the vault to import into"
+          spellcheck="false"
+          disabled={!!running}
+        />
+      </label>
+      {#if existingInTarget > 0}
+        <p class="warning" role="status">
+          “{normalizedTarget}” already holds {plural(existingInTarget, "note")}. The import merges into it; notes whose
+          folder and title already exist are skipped.
+        </p>
+      {/if}
       <div class="row">
         <button onclick={() => start(true)} disabled={!source.trim() || !!running}>Preview</button>
         <button
@@ -154,16 +210,31 @@
         <p>
           {plural(report.files, "file")} found.
           {report.dryRun ? "Would import" : "Imported"}
-          {plural(report.imported, "note")}{#if report.skipped.length}, skipping {report.skipped.length}{/if}.
+          {plural(report.imported, "note")}{#if report.skipped.length}, skipping {report.skipped.length}{/if}
+          {report.target ? `into “${report.target}”` : "into the vault root"}.
+          {#if report.alreadyExist > 0}{plural(report.alreadyExist, "note")}
+            {report.alreadyExist === 1 ? "is" : "are"} skipped because {report.alreadyExist === 1 ? "it exists" : "they exist"}
+            already.{/if}
           {#if report.cancelled}<strong>Cancelled</strong> before all files were done.{/if}
         </p>
+
+        {#if report.folders.length > 0}
+          <details class="folders">
+            <summary>Folders ({report.folders.length.toLocaleString()})</summary>
+            <ul class="messages">
+              {#each report.folders as f (f.folder)}
+                <li><span class="file">{f.folder || "(vault root)"}</span> {plural(f.count, "note")}</li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
 
         {#if report.samples.length > 0}
           <div class="samples">
             <label>
               Sample ({report.samples.length} changed files)
               <select bind:value={sampleIndex}>
-                {#each report.samples as s, i (s.path)}<option value={i}>{s.path}</option>{/each}
+                {#each report.samples as s, i (s.path)}<option value={i}>{s.path} → {s.folder || "(vault root)"}</option>{/each}
               </select>
             </label>
             {#if sample}
@@ -274,6 +345,30 @@
     min-width: 0;
     font-family: var(--mono);
     font-size: 0.85em;
+  }
+
+  .target {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .warning {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--warning-border);
+    border-radius: 6px;
+    background: var(--warning-bg);
+  }
+
+  .folders summary {
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .folders .messages {
+    margin-top: 0.5rem;
   }
 
   .progress {

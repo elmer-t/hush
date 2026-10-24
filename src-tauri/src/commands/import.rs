@@ -34,7 +34,14 @@ pub enum ImportFinished {
 /// Starts a dry run or an import of `source` into the open vault and returns at once;
 /// progress and the result arrive as events.
 #[tauri::command]
-pub fn start_import(app: AppHandle, session: State<'_, Session>, job: State<'_, ImportJob>, source: PathBuf, dry_run: bool) -> Result<()> {
+pub fn start_import(
+    app: AppHandle,
+    session: State<'_, Session>,
+    job: State<'_, ImportJob>,
+    source: PathBuf,
+    target: String,
+    dry_run: bool,
+) -> Result<()> {
     if session.path().is_none() {
         return Err(SessionError::Locked.into());
     }
@@ -45,7 +52,7 @@ pub fn start_import(app: AppHandle, session: State<'_, Session>, job: State<'_, 
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let job = app.state::<ImportJob>();
-        let result = import::run(&session, &source, dry_run, &job.cancel, |p| {
+        let result = import::run(&session, &source, &target, dry_run, &job.cancel, |p| {
             let _ = app.emit(IMPORT_PROGRESS_EVENT, p);
         });
         job.running.store(false, Ordering::SeqCst);
@@ -59,6 +66,23 @@ pub fn start_import(app: AppHandle, session: State<'_, Session>, job: State<'_, 
         }
     });
     Ok(())
+}
+
+/// The target folder suggested for importing `source`: the source folder's name.
+#[tauri::command]
+pub fn suggest_import_target(source: String) -> String {
+    import::suggest_target(&source)
+}
+
+/// How many notes are already in `target` and its subfolders, to warn that an import
+/// would merge into them.
+#[tauri::command]
+pub fn import_target_notes(session: State<'_, Session>, target: String) -> Result<usize> {
+    let target = markdown::normalize_folder(&target);
+    if target.is_empty() {
+        return Ok(0);
+    }
+    Ok(session.with_vault(|v| v.count_in_folder(&target))?)
 }
 
 /// Stops the running import after its current batch.

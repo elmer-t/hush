@@ -86,13 +86,21 @@ export type FileMessage = { path: string; message: string };
 
 export type ImportReport = {
   dryRun: boolean;
+  /** The vault folder notes go under, normalised; "" for the root. */
+  target: string;
+  /** Notes already under the target before the run (0 for the root). */
+  existingInTarget: number;
   files: number;
   imported: number;
   skipped: FileMessage[];
+  /** How many of `skipped` already exist in the vault with that folder and title. */
+  alreadyExist: number;
+  /** Folders notes go to, with how many, sorted. */
+  folders: { folder: string; count: number }[];
   warnings: FileMessage[];
   warningCount: number;
   ambiguousLinks: { note: string; target: string }[];
-  samples: { path: string; before: string; after: string }[];
+  samples: { path: string; folder: string; before: string; after: string }[];
   /** Files whose format can't be read yet, most common first. */
   unsupported: { format: string; count: number }[];
   cancelled: boolean;
@@ -140,7 +148,10 @@ export const api = {
   attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
 
   /** Returns at once; progress and the report arrive as events. */
-  startImport: (source: string, dryRun: boolean) => invoke<void>("start_import", { source, dryRun }),
+  startImport: (source: string, target: string, dryRun: boolean) =>
+    invoke<void>("start_import", { source, target, dryRun }),
+  suggestImportTarget: (source: string) => invoke<string>("suggest_import_target", { source }),
+  importTargetNotes: (target: string) => invoke<number>("import_target_notes", { target }),
   cancelImport: () => invoke<void>("cancel_import"),
   importRules: () => invoke<Rule[]>("import_rules"),
   setImportRules: (rules: Rule[]) => invoke<void>("set_import_rules", { rules }),

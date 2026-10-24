@@ -146,6 +146,21 @@ impl Vault {
         Ok(hits)
     }
 
+    /// The number of notes in `folder` and its subfolders; every note for the root.
+    pub fn count_in_folder(&self, folder: &str) -> Result<usize> {
+        let folder = markdown::normalize_folder(folder);
+        let count: i64 = if folder.is_empty() {
+            self.conn.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))?
+        } else {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM notes WHERE folder = ?1 OR folder LIKE ?2 ESCAPE '\\'",
+                rusqlite::params![folder, format!("{}/%", escape_like(&folder))],
+                |r| r.get(0),
+            )?
+        };
+        Ok(count as usize)
+    }
+
     pub fn facets(&self) -> Result<Facets> {
         Ok(Facets {
             tags: self.strings(
