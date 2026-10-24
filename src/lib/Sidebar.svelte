@@ -251,6 +251,17 @@
     return notesOf(picked);
   }
 
+  /** Notes dragged onto a folder in the tree; moved notes that were picked are unpicked. */
+  async function dropNotes(ids: number[], folder: string) {
+    if (busy) return;
+    busy = true;
+    const ok = await onmove(ids, folder, notesOf(ids).map((n) => n.folder));
+    busy = false;
+    if (!ok) return;
+    for (const id of ids) picked.delete(id);
+    if (picked.size === 0) clearSelection();
+  }
+
   async function moveSelection(e: SubmitEvent) {
     e.preventDefault();
     if (busy) return;
@@ -481,6 +492,7 @@
         onnotemenu={openNoteMenu}
         ondeletenote={(id) => void trash(targetsOf(id))}
         onerror={(e) => (error = errorMessage(e))}
+        ondropnotes={(ids, folder) => void dropNotes(ids, folder)}
       />
     </div>
   {:else}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { NoteSummary } from "$lib/api";
-  import { ensureNote, expanded, expandTo, key, loaded, loadFolder, loadMore } from "$lib/explorer.svelte";
+  import { ensureNote, expanded, expandTo, findNote, key, loaded, loadFolder, loadMore } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import { selectionKeys } from "$lib/selection";
@@ -25,6 +25,8 @@
     /** Delete on a focused note. */
     ondeletenote: (id: number) => void;
     onerror: (e: unknown) => void;
+    /** Notes dropped onto a folder (`""` is the top level). */
+    ondropnotes: (ids: number[], folder: string) => void;
   };
   let {
     folders,
@@ -39,6 +41,7 @@
     onnotemenu,
     ondeletenote,
     onerror,
+    ondropnotes,
   }: Props = $props();
 
   /** The visible note rows in display order; notes in collapsed folders are left out. */
@@ -253,6 +256,86 @@
     el.focus();
   }
 
+  // Drag and drop moves notes; folders aren't draggable. The dragged notes are kept
+  // here, since a DataTransfer can't be read during dragover.
+  const DRAG_TYPE = "application/x-hush-notes";
+  const HOVER_EXPAND_MS = 700;
+  let dragged: { ids: number[]; folders: string[] } | null = null;
+  // The folder a drop would go to, by key ("" is the top level); null when none.
+  let dropKey = $state<string | null>(null);
+  let hoverKey: string | null = null;
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function dragStart(note: NoteSummary, e: DragEvent) {
+    // A picked note drags the whole selection, any other note just itself.
+    const ids = picked.has(note.id) ? [...picked] : [note.id];
+    dragged = { ids, folders: ids.map((id) => (id === note.id ? note : findNote(id))?.folder ?? "") };
+    if (!e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(DRAG_TYPE, ids.join(","));
+  }
+
+  function dragEnd() {
+    dragged = null;
+    dropKey = null;
+    hoverFolder(null);
+  }
+
+  /** The folder a drop on `row` goes to: a folder row's own, else the folder the row is in. */
+  function dropFolder(row: Row | undefined): string {
+    if (!row) return "";
+    if (row.kind === "folder") return row.path;
+    if (row.kind === "note") return row.note.folder;
+    return row.folder;
+  }
+
+  function rowAt(e: DragEvent): Row | undefined {
+    const el = (e.target as Element | null)?.closest<HTMLElement>("[data-key]");
+    return el ? rows.find((r) => r.key === el.dataset.key) : undefined;
+  }
+
+  // Expands a collapsed folder once it has been hovered for a moment during a drag.
+  function hoverFolder(path: string | null) {
+    const k = path === null ? null : key(path);
+    if (k === hoverKey) return;
+    clearTimeout(hoverTimer);
+    hoverKey = k;
+    if (path === null || k === null || expanded.has(k)) return;
+    hoverTimer = setTimeout(() => {
+      if (hoverKey === k && !expanded.has(k)) void toggle(path);
+    }, HOVER_EXPAND_MS);
+  }
+
+  function dragOver(e: DragEvent) {
+    if (!dragged) return;
+    const row = rowAt(e);
+    const folder = dropFolder(row);
+    hoverFolder(row?.kind === "folder" ? row.path : null);
+    // Dropping where all the notes already are does nothing, so it isn't offered.
+    if (dragged.folders.every((f) => key(f) === key(folder))) {
+      dropKey = null;
+      return;
+    }
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dropKey = key(folder);
+  }
+
+  function dragLeave(e: DragEvent) {
+    if (tree?.contains(e.relatedTarget as Node | null)) return;
+    dropKey = null;
+    hoverFolder(null);
+  }
+
+  function drop(e: DragEvent) {
+    if (!dragged) return;
+    e.preventDefault();
+    const folder = dropFolder(rowAt(e));
+    const { ids, folders } = dragged;
+    dragEnd();
+    if (folders.some((f) => key(f) !== key(folder))) ondropnotes(ids, folder);
+  }
+
   const indent = (level: number) => 8 + (level - 1) * 16;
 
   const isSelectedFolder = (path: string) => selectedFolder !== null && key(selectedFolder) === key(path);
@@ -296,12 +379,16 @@
 
   <div
     class="rows"
+    class:drop-target={dropKey === ""}
     role="tree"
     tabindex="-1"
     aria-label="Folders and notes"
     aria-multiselectable="true"
     bind:this={tree}
     {onkeydown}
+    ondragover={dragOver}
+    ondragleave={dragLeave}
+    ondrop={drop}
     {@attach selectionKeys(onselectall, onclearselection)}
   >
     {#if rows.length === 0}
@@ -312,6 +399,7 @@
         <div
           class="row folder"
           class:selected={isSelectedFolder(row.path)}
+          class:drop-target={dropKey === key(row.path)}
           role="treeitem"
           aria-level={row.level}
           aria-expanded={row.open}
@@ -341,6 +429,9 @@
           data-key={row.key}
           title={row.note.folder ? `${row.note.folder}/${row.note.title}` : row.note.title}
           style:padding-left="{indent(row.level)}px"
+          draggable="true"
+          ondragstart={(e) => dragStart(row.note, e)}
+          ondragend={dragEnd}
           onclick={(e) => activate(row, e)}
           oncontextmenu={(e) => openMenu(row, e)}
           onkeydown={() => {}}
@@ -454,6 +545,12 @@
     background: var(--selection);
     color: var(--selection-text);
     box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .row.drop-target,
+  .rows.drop-target {
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   .row:focus-visible {
