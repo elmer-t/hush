@@ -115,11 +115,24 @@
     }
   }
 
+  /** Moves the note to the trash. No confirmation: it can be restored from there. */
   async function remove() {
-    const confirmed = await ask(`Delete “${committed.title}”? This cannot be undone.`, {
-      title: "Delete note",
+    clearTimeout(timer);
+    await saving;
+    try {
+      await api.trashNote(id);
+      ondeleted(id);
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
+  /** Deletes the note for good, skipping the trash. */
+  async function removeForever() {
+    const confirmed = await ask(`Delete “${committed.title}” forever? It won't go to the trash. This cannot be undone.`, {
+      title: "Delete forever",
       kind: "warning",
-      okLabel: "Delete",
+      okLabel: "Delete forever",
       cancelLabel: "Cancel",
     });
     if (!confirmed) return;
@@ -160,7 +173,8 @@
       <button onclick={() => (previewOnly = !previewOnly)} aria-pressed={previewOnly}>
         {previewOnly ? "Split view" : "Preview only"}
       </button>
-      <button class="danger" onclick={remove}>Delete</button>
+      <button class="danger" onclick={remove} title="Move to the trash">Delete</button>
+      <button class="danger" onclick={removeForever} title="Delete for good, skipping the trash">Delete forever</button>
     </div>
   </header>
 

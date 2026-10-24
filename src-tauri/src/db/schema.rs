@@ -86,6 +86,13 @@ CREATE TABLE import_rules (
     map      TEXT NOT NULL,   -- JSON array of [from, to] pairs
     strip    INTEGER NOT NULL
 );
+"#, r#"
+-- Trash: a trashed note keeps its row (and FTS row) but has no tag, attribute or link
+-- rows, and every query skips it. (folder, title) is only unique among live notes.
+ALTER TABLE notes ADD COLUMN deleted_at INTEGER;
+DROP INDEX notes_folder_title;
+CREATE UNIQUE INDEX notes_folder_title ON notes(folder, title) WHERE deleted_at IS NULL;
+CREATE INDEX notes_deleted ON notes(deleted_at) WHERE deleted_at IS NOT NULL;
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -107,4 +114,32 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A vault from before the trash (version 2) gets `deleted_at` and the partial index.
+    #[test]
+    fn trash_migration_keeps_existing_notes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for sql in &MIGRATIONS[..2] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute("INSERT INTO notes(folder, title, body, created_at, updated_at) VALUES ('a', 'T', 'x', 1, 1)", [])
+            .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let deleted: Option<i64> = conn.query_row("SELECT deleted_at FROM notes", [], |r| r.get(0)).unwrap();
+        assert_eq!(deleted, None);
+
+        let insert = "INSERT INTO notes(folder, title, body, created_at, updated_at) VALUES ('a', 't', '', 2, 2)";
+        assert!(conn.execute(insert, []).is_err(), "still unique among live notes");
+        conn.execute("UPDATE notes SET deleted_at = 5", []).unwrap();
+        conn.execute(insert, []).unwrap();
+    }
 }

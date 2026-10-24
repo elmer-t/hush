@@ -15,7 +15,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Auto-lock after N minutes idle (default 10, 1–1440, stored inside the vault) and on demand (Lock button, Ctrl+L). Enforced by a backend timer; the frontend only reports activity. Idle time uses both the monotonic and wall clock so a machine waking from sleep locks immediately. OS sleep / screen-lock hooks deferred to v2.
 - On lock: close the connection, zeroize the key in Rust, wipe frontend state.
 - Preview: Markdown rendered with raw HTML **disabled**, output sanitised with DOMPurify. Strict CSP blocking all remote loads (images, scripts, fonts). External links open in the system browser, on click only.
-- Delete is a hard delete with confirmation; `PRAGMA secure_delete=ON`.
+- ~~Delete is a hard delete with confirmation.~~ Replaced by a **trash** (2026-10-24, see Notes). `PRAGMA secure_delete=ON` stays for every real delete. Trade-off accepted: deleted text stays in the (encrypted) vault file until purged, so anyone who later gets the passphrase can read notes deleted within the retention window; that person can already read every live note, and the trash protects against accidental permanent loss.
 - No export in the MVP.
 - No note content in logs; devtools disabled in release builds.
 
@@ -23,6 +23,10 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Identity: **`(folder, title)` is unique**, not the title alone. `folder` is the full path (e.g. `archive/2019/march`), indexed.
 - Title is a separate field (from the filename on import). Renaming happens in the title field.
 - Autosave 500 ms after typing stops; no save button.
+- **Trash** (2026-10-24): Delete moves a note to the trash, with no confirmation since it can be undone. Trashed notes are hidden everywhere: note list, folder tree, search, filters, facets, link resolution, backlinks and outgoing links (links to them show as unresolved). They keep their row but lose their tag, attribute and link rows, which are derived again on restore.
+  - *Delete forever* on a note skips the trash (with confirmation). The Trash view lists trashed notes with their original folder and deletion date: Restore, Delete forever, Empty trash (both with confirmation, real deletes).
+  - Restore goes back to the original folder; if `(folder, title)` is taken by then, the note becomes `Title (restored)` (then `(restored 2)`, …). It runs the same link-preserving rewrite as create.
+  - Auto-purge on unlock: trashed notes older than N days are deleted for good. Default 30, 0 = never, stored in vault `settings` (`trash_days`) and editable in Settings.
 - Editor: split view (source | preview) with a preview-only toggle. Live preview deferred to v2.
 - **Frontmatter in the body is the single source of truth.** Author, topic, tags and attributes are derived from it on every save. The metadata panel edits the frontmatter.
 - Tags = inline `#tags` ∪ frontmatter `tags`.
@@ -41,12 +45,12 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - Backlinks and outgoing-links panels.
 
 ## Data model
-- `notes` (id, folder, title, body, author, topic, created_at, updated_at), unique `(folder, title)`
+- `notes` (id, folder, title, body, author, topic, created_at, updated_at, deleted_at), `(folder, title)` unique among live notes (partial index `WHERE deleted_at IS NULL`); `deleted_at` set = in the trash
 - `tags` (id, name), `note_tags` (note_id, tag_id)
 - `note_attributes` (note_id, key, value), indexed on `(key, value)`
 - `links` (from_note_id, target_text)
 - `notes_fts` (FTS5 over title and body)
-- `settings` (key, value) — auto-lock minutes, default author, …
+- `settings` (key, value) — auto-lock minutes, default author, trash retention days, …
 - `import_rules` (see Import)
 - WAL mode. Indexes on folder, topic, author, updated_at, created_at, note_tags.
 

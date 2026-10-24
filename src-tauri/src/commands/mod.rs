@@ -61,6 +61,7 @@ impl CommandError {
                 D::TitleTaken => "titleTaken",
                 D::NoteNotFound => "noteNotFound",
                 D::InvalidRule(_) => "invalidRule",
+                D::InvalidTrashDays => "invalidTrashDays",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",

@@ -110,7 +110,7 @@ impl Vault {
         let mut note = self
             .conn
             .query_row(
-                "SELECT id, folder, title, body, author, topic, created_at, updated_at FROM notes WHERE id = ?1",
+                "SELECT id, folder, title, body, author, topic, created_at, updated_at FROM notes WHERE id = ?1 AND deleted_at IS NULL",
                 [id],
                 |r| {
                     Ok(Note {
@@ -140,7 +140,7 @@ impl Vault {
     pub fn update_body(&mut self, id: i64, body: &str) -> Result<()> {
         let tx = self.conn.transaction()?;
         let n = tx.execute(
-            "UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1",
+            "UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
             params![id, body, now_ms()],
         )?;
         if n == 0 {
@@ -159,7 +159,7 @@ impl Vault {
         let title = validate_title(title)?;
         let tx = self.conn.transaction()?;
         let old_title: String = tx
-            .query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .query_row("SELECT title FROM notes WHERE id = ?1 AND deleted_at IS NULL", [id], |r| r.get(0))
             .optional()?
             .ok_or(Error::NoteNotFound)?;
         links::preserving_links(&tx, &[&old_title, title], |conn| {
@@ -202,10 +202,12 @@ impl Vault {
     }
 
     pub fn note_exists(&self, folder: &str, title: &str) -> Result<bool> {
-        let mut stmt = self.conn.prepare_cached("SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2")?;
+        let mut stmt = self.conn.prepare_cached("SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2 AND deleted_at IS NULL")?;
         Ok(stmt.exists(params![markdown::normalize_folder(folder), title.trim()])?)
     }
 
+    /// Deletes a note for good, live or trashed (`secure_delete` overwrites its text).
+    /// The default delete is [`Vault::trash_note`].
     pub fn delete_note(&mut self, id: i64) -> Result<()> {
         if self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
             return Err(Error::NoteNotFound);
@@ -215,7 +217,7 @@ impl Vault {
 
     /// Every folder that contains at least one note, sorted.
     pub fn folders(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes ORDER BY folder")?;
+        let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL ORDER BY folder")?;
         let folders = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(folders)
     }
@@ -265,7 +267,7 @@ fn validate_title(title: &str) -> Result<&str> {
     Ok(title)
 }
 
-fn title_taken(e: rusqlite::Error) -> Error {
+pub(super) fn title_taken(e: rusqlite::Error) -> Error {
     if e.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
         Error::TitleTaken
     } else {

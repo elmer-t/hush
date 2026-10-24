@@ -13,13 +13,32 @@
   let passphraseStatus = $state("");
   let passphraseError = $state("");
 
+  let trashDays = $state(30);
+  let trashStatus = $state("");
+  let trashError = $state("");
+
   let author = $state("");
   let authorStatus = $state("");
   let authorError = $state("");
 
   onMount(async () => {
-    [minutes, author] = await Promise.all([api.autoLockMinutes(), api.defaultAuthor().then((a) => a ?? "")]);
+    [minutes, author, trashDays] = await Promise.all([
+      api.autoLockMinutes(),
+      api.defaultAuthor().then((a) => a ?? ""),
+      api.trashDays(),
+    ]);
   });
+
+  async function saveTrashDays(e: SubmitEvent) {
+    e.preventDefault();
+    trashStatus = trashError = "";
+    try {
+      await api.setTrashDays(trashDays);
+      trashStatus = "Saved.";
+    } catch (err) {
+      trashError = errorMessage(err);
+    }
+  }
 
   async function saveAuthor(e: SubmitEvent) {
     e.preventDefault();
@@ -86,6 +105,20 @@
     {#if minutesError}<p class="error" role="alert">{minutesError}</p>{/if}
     <div class="actions">
       {#if minutesStatus}<span class="muted">{minutesStatus}</span>{/if}
+      <button type="submit">Save</button>
+    </div>
+  </form>
+
+  <form onsubmit={saveTrashDays}>
+    <h2>Trash</h2>
+    <label>
+      Delete notes in the trash forever after this many days (0 = never)
+      <input type="number" min="0" max="3650" step="1" bind:value={trashDays} required />
+    </label>
+    <p class="muted">Checked each time the vault is unlocked.</p>
+    {#if trashError}<p class="error" role="alert">{trashError}</p>{/if}
+    <div class="actions">
+      {#if trashStatus}<span class="muted">{trashStatus}</span>{/if}
       <button type="submit">Save</button>
     </div>
   </form>

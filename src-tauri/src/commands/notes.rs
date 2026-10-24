@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{Note, NoteSummary, Vault};
+use crate::db::{Note, NoteSummary, TrashedNote, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -93,9 +93,45 @@ pub fn rename_note(session: State<'_, Session>, id: i64, folder: String, title: 
     })?)
 }
 
+/// The default delete: moves the note to the trash.
+#[tauri::command]
+pub fn trash_note(session: State<'_, Session>, id: i64) -> Result<()> {
+    Ok(session.with_vault(|v| v.trash_note(id))?)
+}
+
+/// Deletes a note for good, whether live or in the trash.
 #[tauri::command]
 pub fn delete_note(session: State<'_, Session>, id: i64) -> Result<()> {
     Ok(session.with_vault(|v| v.delete_note(id))?)
+}
+
+#[tauri::command]
+pub fn trashed_notes(session: State<'_, Session>) -> Result<Vec<TrashedNote>> {
+    Ok(session.with_vault(|v| v.trashed_notes())?)
+}
+
+/// Restores a trashed note and returns it opened (its title may have changed).
+#[tauri::command]
+pub fn restore_note(session: State<'_, Session>, id: i64) -> Result<OpenedNote> {
+    Ok(session.with_vault(|v| {
+        v.restore_note(id)?;
+        opened(v, id)
+    })?)
+}
+
+#[tauri::command]
+pub fn empty_trash(session: State<'_, Session>) -> Result<usize> {
+    Ok(session.with_vault(|v| v.empty_trash())?)
+}
+
+#[tauri::command]
+pub fn trash_days(session: State<'_, Session>) -> Result<u32> {
+    Ok(session.with_vault(|v| v.trash_days())?)
+}
+
+#[tauri::command]
+pub fn set_trash_days(session: State<'_, Session>, days: u32) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_trash_days(days))?)
 }
 
 #[tauri::command]

@@ -6,6 +6,7 @@ mod notes;
 mod rules;
 mod schema;
 mod search;
+mod trash;
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +16,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 pub use links::{Backlink, OutgoingLink, Resolution};
 pub use notes::{NewNote, Note, NoteSummary};
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+pub use trash::{DEFAULT_TRASH_DAYS, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashedNote};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -38,6 +40,8 @@ pub enum Error {
     NoteNotFound,
     #[error("{0}")]
     InvalidRule(String),
+    #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
+    InvalidTrashDays,
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }

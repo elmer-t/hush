@@ -53,8 +53,10 @@ impl Activity {
 }
 
 impl Session {
-    /// Makes `vault` the open vault, locking any vault that was open before.
-    pub fn unlock(&self, vault: Vault, path: PathBuf) -> Result<(), SessionError> {
+    /// Makes `vault` the open vault, locking any vault that was open before. Notes past
+    /// the trash retention period are deleted first.
+    pub fn unlock(&self, mut vault: Vault, path: PathBuf) -> Result<(), SessionError> {
+        vault.purge_trash()?;
         let minutes = match vault.setting(AUTO_LOCK_SETTING)? {
             Some(v) => v.parse().ok().filter(|m| valid_minutes(*m)).unwrap_or(DEFAULT_AUTO_LOCK_MINUTES),
             None => DEFAULT_AUTO_LOCK_MINUTES,
@@ -202,5 +204,31 @@ mod tests {
         session.unlock(Vault::open(&path, PASS).unwrap(), path).unwrap();
         assert_eq!(session.auto_lock_minutes().unwrap(), 3);
         assert!(session.lock_if_idle_at(later(3)));
+    }
+
+    #[test]
+    fn unlock_purges_expired_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.hush");
+        let mut vault = Vault::create(&path, PASS).unwrap();
+        let old = vault.create_note("", "Old", "").unwrap();
+        let recent = vault.create_note("", "Recent", "").unwrap();
+        vault.trash_note(old).unwrap();
+        vault.trash_note(recent).unwrap();
+        vault.backdate_trash(old, i64::from(db::DEFAULT_TRASH_DAYS)).unwrap();
+        vault.backdate_trash(recent, i64::from(db::DEFAULT_TRASH_DAYS) - 1).unwrap();
+
+        let session = Session::default();
+        session.unlock(vault, path.clone()).unwrap();
+        let left: Vec<i64> = session.with_vault(|v| v.trashed_notes()).unwrap().iter().map(|n| n.id).collect();
+        assert_eq!(left, [recent]);
+
+        // 0 = never: nothing is purged however old.
+        session.with_vault(|v| v.set_trash_days(0)).unwrap();
+        session.lock();
+        let vault = Vault::open(&path, PASS).unwrap();
+        vault.backdate_trash(recent, 10_000).unwrap();
+        session.unlock(vault, path).unwrap();
+        assert_eq!(session.with_vault(|v| v.trashed_notes()).unwrap().len(), 1);
     }
 }
