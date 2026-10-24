@@ -174,6 +174,11 @@ export const api = {
   trashNotes: (ids: number[]) => invoke<void>("trash_notes", { ids }),
   /** Moves notes into `folder`, all or nothing; fails with kind `moveClash` on a name clash. */
   moveNotes: (ids: number[], folder: string) => invoke<void>("move_notes", { ids, folder }),
+  /**
+   * Moves folder `from`, with everything in it, into folder `to` (`""` is the top level),
+   * all or nothing; resolves to its new path. Fails with kind `moveClash` on a name clash.
+   */
+  moveFolder: (from: string, to: string) => invoke<string>("move_folder", { from, to }),
   /** Adds or removes a tag, or sets the topic or author, on several notes, all or nothing. */
   editNotesMetadata: (ids: number[], edit: MetadataEdit) =>
     invoke<MetadataEditReport>("edit_notes_metadata", { ids, edit }),

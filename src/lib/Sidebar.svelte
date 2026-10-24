@@ -11,7 +11,14 @@
     type SearchHit,
     type SidebarView,
   } from "$lib/api";
-  import { clearLoaded, findNote, refreshFolders, updateNote } from "$lib/explorer.svelte";
+  import {
+    clearLoaded,
+    findNote,
+    folderMoved as treeFolderMoved,
+    rebase,
+    refreshFolders,
+    updateNote,
+  } from "$lib/explorer.svelte";
   import { isToggle } from "$lib/selection";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
@@ -32,12 +39,14 @@
     onselect: (id: number) => void;
     /** Bulk move; `sources` are the notes' current folders. Resolves to whether it worked. */
     onmove: (ids: number[], folder: string, sources: string[]) => Promise<boolean>;
+    /** Moves folder `from` into folder `to`. Resolves to whether it worked. */
+    onmovefolder: (from: string, to: string) => Promise<boolean>;
     /** Bulk delete (to the trash). Resolves to whether it worked. */
     ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
     /** Bulk metadata edit. Resolves to the report, or null when it failed. */
     onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
   };
-  let { selected, trashCount, trashOpen, ontrash, onselect, onmove, ondelete, onedit }: Props = $props();
+  let { selected, trashCount, trashOpen, ontrash, onselect, onmove, onmovefolder, ondelete, onedit }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
@@ -127,6 +136,17 @@
       loadNotes(true),
       changedFolders === "all" ? Promise.resolve() : refreshFolders(changedFolders).catch((e) => (error = errorMessage(e))),
     ]);
+  }
+
+  /** After folder `from` moved to `to`: tree-only folders below it and the selected
+   * folder follow it, the tree's expanded state too, and the lists reload. */
+  export async function folderMoved(from: string, to: string) {
+    const follow = (f: string) => rebase(f, from, to) ?? f;
+    emptyFolders = emptyFolders
+      .map(follow)
+      .filter((f, i, all) => all.findIndex((g) => g.toLowerCase() === f.toLowerCase()) === i);
+    if (selectedFolder !== null) selectedFolder = follow(selectedFolder);
+    await Promise.all([treeFolderMoved(from, to).catch((e) => (error = errorMessage(e))), refresh()]);
   }
 
   /** The folder new notes go into. */
@@ -260,6 +280,14 @@
     if (!ok) return;
     for (const id of ids) picked.delete(id);
     if (picked.size === 0) clearSelection();
+  }
+
+  /** A folder dragged onto another folder in the tree. */
+  async function dropFolder(from: string, to: string) {
+    if (busy) return;
+    busy = true;
+    await onmovefolder(from, to);
+    busy = false;
   }
 
   async function moveSelection(e: SubmitEvent) {
@@ -493,6 +521,7 @@
         ondeletenote={(id) => void trash(targetsOf(id))}
         onerror={(e) => (error = errorMessage(e))}
         ondropnotes={(ids, folder) => void dropNotes(ids, folder)}
+        ondropfolder={(from, to) => void dropFolder(from, to)}
       />
     </div>
   {:else}

@@ -48,6 +48,8 @@ pub enum Error {
     NoteNotFound,
     #[error("nothing was moved: the target folder would get more than one note named {}", quote_list(.0))]
     MoveClash(Vec<String>),
+    #[error("{0}")]
+    InvalidFolderMove(String),
     #[error("invalid tag: {0}")]
     InvalidTag(String),
     #[error("{0}")]

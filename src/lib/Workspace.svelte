@@ -13,7 +13,7 @@
     type VaultInfo,
   } from "$lib/api";
   import { confirmTrash } from "$lib/confirmTrash";
-  import { findNote } from "$lib/explorer.svelte";
+  import { findNote, rebase } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
@@ -215,6 +215,30 @@
     return true;
   }
 
+  async function moveFolder(from: string, to: string): Promise<boolean> {
+    // The open note is flushed and reopened if it is in the folder or below it.
+    const inside = summary && rebase(summary.folder, from, from) !== null ? summary.id : null;
+    const open = inside === null ? null : await flushIfIn([inside]);
+    let moved: string;
+    try {
+      moved = await api.moveFolder(from, to);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    await sidebar?.folderMoved(from, moved);
+    if (open !== null) {
+      try {
+        show(await api.openNote(open), false);
+        editorRevision++;
+      } catch (e) {
+        error = errorMessage(e);
+      }
+    }
+    return true;
+  }
+
   async function editNotes(ids: number[], edit: MetadataEdit, sources: string[]): Promise<MetadataEditReport | null> {
     // Flush first, and reload after: the editor's next autosave would write the old
     // frontmatter back otherwise.
@@ -335,6 +359,7 @@
         ontrash={() => toggleView("trash")}
         onselect={select}
         onmove={moveNotes}
+        onmovefolder={moveFolder}
         ondelete={deleteNotes}
         onedit={editNotes}
       />

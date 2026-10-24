@@ -84,6 +84,7 @@ pub fn run() {
             commands::notes::trash_note,
             commands::notes::trash_notes,
             commands::notes::move_notes,
+            commands::notes::move_folder,
             commands::notes::edit_notes_metadata,
             commands::notes::trashed_notes,
             commands::notes::restore_note,

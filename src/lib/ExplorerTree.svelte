@@ -27,6 +27,8 @@
     onerror: (e: unknown) => void;
     /** Notes dropped onto a folder (`""` is the top level). */
     ondropnotes: (ids: number[], folder: string) => void;
+    /** Folder `from` dropped onto folder `to` (`""` is the top level). */
+    ondropfolder: (from: string, to: string) => void;
   };
   let {
     folders,
@@ -42,6 +44,7 @@
     ondeletenote,
     onerror,
     ondropnotes,
+    ondropfolder,
   }: Props = $props();
 
   /** The visible note rows in display order; notes in collapsed folders are left out. */
@@ -256,11 +259,12 @@
     el.focus();
   }
 
-  // Drag and drop moves notes; folders aren't draggable. The dragged notes are kept
-  // here, since a DataTransfer can't be read during dragover.
+  // Drag and drop moves notes, or one folder with everything in it. What is dragged is
+  // kept here, since a DataTransfer can't be read during dragover.
   const DRAG_TYPE = "application/x-hush-notes";
+  const FOLDER_DRAG_TYPE = "application/x-hush-folder";
   const HOVER_EXPAND_MS = 700;
-  let dragged: { ids: number[]; folders: string[] } | null = null;
+  let dragged: { kind: "notes"; ids: number[]; folders: string[] } | { kind: "folder"; path: string } | null = null;
   // The folder a drop would go to, by key ("" is the top level); null when none.
   let dropKey = $state<string | null>(null);
   let hoverKey: string | null = null;
@@ -269,10 +273,27 @@
   function dragStart(note: NoteSummary, e: DragEvent) {
     // A picked note drags the whole selection, any other note just itself.
     const ids = picked.has(note.id) ? [...picked] : [note.id];
-    dragged = { ids, folders: ids.map((id) => (id === note.id ? note : findNote(id))?.folder ?? "") };
+    dragged = { kind: "notes", ids, folders: ids.map((id) => (id === note.id ? note : findNote(id))?.folder ?? "") };
     if (!e.dataTransfer) return;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData(DRAG_TYPE, ids.join(","));
+  }
+
+  function dragFolderStart(path: string, e: DragEvent) {
+    dragged = { kind: "folder", path };
+    if (!e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(FOLDER_DRAG_TYPE, path);
+  }
+
+  /** Whether dropping what is dragged onto `folder` would move anything. A folder can't
+   * go into itself, one of its subfolders or the parent it is already in. */
+  function canDrop(folder: string): boolean {
+    if (!dragged) return false;
+    if (dragged.kind === "notes") return dragged.folders.some((f) => key(f) !== key(folder));
+    const from = key(dragged.path);
+    const to = key(folder);
+    return to !== from && !to.startsWith(`${from}/`) && to !== from.split("/").slice(0, -1).join("/");
   }
 
   function dragEnd() {
@@ -311,8 +332,8 @@
     const row = rowAt(e);
     const folder = dropFolder(row);
     hoverFolder(row?.kind === "folder" ? row.path : null);
-    // Dropping where all the notes already are does nothing, so it isn't offered.
-    if (dragged.folders.every((f) => key(f) === key(folder))) {
+    // Dropping where it would do nothing, or can't be done, isn't offered.
+    if (!canDrop(folder)) {
       dropKey = null;
       return;
     }
@@ -331,9 +352,12 @@
     if (!dragged) return;
     e.preventDefault();
     const folder = dropFolder(rowAt(e));
-    const { ids, folders } = dragged;
+    const what = dragged;
+    const ok = canDrop(folder);
     dragEnd();
-    if (folders.some((f) => key(f) !== key(folder))) ondropnotes(ids, folder);
+    if (!ok) return;
+    if (what.kind === "notes") ondropnotes(what.ids, folder);
+    else ondropfolder(what.path, folder);
   }
 
   const indent = (level: number) => 8 + (level - 1) * 16;
@@ -408,6 +432,9 @@
           data-key={row.key}
           title={row.path}
           style:padding-left="{indent(row.level)}px"
+          draggable="true"
+          ondragstart={(e) => dragFolderStart(row.path, e)}
+          ondragend={dragEnd}
           onclick={() => clickFolder(row)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
