@@ -77,3 +77,80 @@ fn change_passphrase() {
     let vault = Vault::open(&path, "new passphrase").unwrap();
     assert_eq!(vault.note(id).unwrap().body, "still here");
 }
+
+#[test]
+fn vault_open_twice_fails_until_the_first_closes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.hush");
+    let first = Vault::create(&path, PASS).unwrap();
+    assert!(hush_lib::db::lock_path(&path).is_file(), "the lock file sits next to the vault");
+    assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
+    assert!(matches!(Vault::open(&path, "wrong"), Err(Error::VaultInUse)), "checked before the passphrase");
+    first.close().unwrap();
+
+    let second = Vault::open(&path, PASS).unwrap();
+    assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
+    drop(second);
+    Vault::open(&path, PASS).unwrap();
+}
+
+#[test]
+fn locking_the_session_releases_the_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.hush");
+    let session = hush_lib::session::Session::default();
+    session.unlock(Vault::create(&path, PASS).unwrap(), path.clone()).unwrap();
+    assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
+    assert!(session.lock());
+    Vault::open(&path, PASS).unwrap();
+}
+
+#[test]
+fn other_vaults_are_not_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let _a = Vault::create(&dir.path().join("a.hush"), PASS).unwrap();
+    Vault::create(&dir.path().join("b.hush"), PASS).unwrap();
+}
+
+/// Env var naming the vault [`child_holds_vault`] opens.
+const CHILD_VAULT: &str = "HUSH_TEST_CHILD_VAULT";
+
+/// Run by [`vault_held_by_another_process`] in a child process: opens the vault, says
+/// so, and keeps it open until killed.
+#[test]
+#[ignore = "helper process for vault_held_by_another_process"]
+fn child_holds_vault() {
+    let Ok(path) = std::env::var(CHILD_VAULT) else { return };
+    let _vault = Vault::open(std::path::Path::new(&path), PASS).unwrap();
+    println!("holding");
+    std::thread::sleep(std::time::Duration::from_secs(60));
+}
+
+#[test]
+fn vault_held_by_another_process() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.hush");
+    Vault::create(&path, PASS).unwrap().close().unwrap();
+
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "child_holds_vault", "--ignored", "--nocapture", "--test-threads=1"])
+        .env(CHILD_VAULT, &path)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("holding") {
+        line.clear();
+        assert!(out.read_line(&mut line).unwrap() > 0, "child exited before opening the vault");
+    }
+    assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
+
+    // A crash: the OS releases the lock when the process dies.
+    child.kill().unwrap();
+    child.wait().unwrap();
+    Vault::open(&path, PASS).unwrap();
+}

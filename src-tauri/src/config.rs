@@ -1,9 +1,9 @@
 //! App config kept outside any vault. It holds vault paths only, never content or key material.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -55,27 +55,48 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The config and the file it lives in, as Tauri state.
+/// The config file, as Tauri state. Several Hush processes can run at once (each on its
+/// own vault) and share this file, so it is read fresh every time instead of cached,
+/// and every change is a locked read-modify-write.
 pub struct Config {
     path: PathBuf,
-    data: Mutex<AppConfig>,
+    /// Serialises updates within this process; the file lock does so across processes.
+    writing: Mutex<()>,
 }
 
 impl Config {
-    pub fn load(path: PathBuf) -> Self {
-        let data = Mutex::new(AppConfig::load(&path));
-        Self { path, data }
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, writing: Mutex::new(()) }
     }
 
-    pub fn get(&self) -> MutexGuard<'_, AppConfig> {
-        self.data.lock().unwrap_or_else(|e| e.into_inner())
+    /// The config as it is on disk now, including changes by other instances.
+    pub fn get(&self) -> AppConfig {
+        AppConfig::load(&self.path)
     }
 
-    /// Applies `f` and saves the result.
+    /// Applies `f` to the config as it is on disk and saves the result, holding an OS
+    /// lock (`config.json.lock`) so a concurrent update by another instance is never lost.
     pub fn update(&self, f: impl FnOnce(&mut AppConfig)) -> io::Result<()> {
-        let mut data = self.get();
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = self.lock()?;
+        let mut data = AppConfig::load(&self.path);
         f(&mut data);
         data.save(&self.path)
+    }
+
+    /// Blocks until no other process is updating the config. Released when dropped.
+    fn lock(&self) -> io::Result<File> {
+        if let Some(dir) = self.path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.path.with_extension("json.lock"))?;
+        file.lock()?;
+        Ok(file)
     }
 }
 
@@ -110,5 +131,31 @@ mod tests {
 
         fs::write(&path, "{ not json").unwrap();
         assert_eq!(AppConfig::load(&path), AppConfig::default());
+    }
+
+    #[test]
+    fn concurrent_updates_from_two_instances_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        // Two `Config`s on one file stand in for two processes.
+        let a = Config::new(path.clone());
+        let b = Config::new(path.clone());
+        std::thread::scope(|s| {
+            for (config, name) in [(&a, "a"), (&b, "b")] {
+                s.spawn(move || {
+                    for i in 0..5 {
+                        config.update(|c| c.remember(Path::new(&format!("{name}{i}.hush")))).unwrap();
+                    }
+                });
+            }
+        });
+        let recent = a.get().recent_vaults;
+        assert_eq!(recent.len(), MAX_RECENT);
+        for name in ["a", "b"] {
+            for i in 0..5 {
+                assert!(recent.contains(&PathBuf::from(format!("{name}{i}.hush"))), "{name}{i} was lost");
+            }
+        }
+        assert_eq!(b.get(), a.get(), "each instance sees the other's changes");
     }
 }
