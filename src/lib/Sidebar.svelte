@@ -237,11 +237,26 @@
     for (const id of visibleIds()) picked.add(id);
   }
 
-  function pickedNotes(): NoteSummary[] {
-    return [...picked].flatMap((id) => {
+  function notesOf(ids: Iterable<number>): NoteSummary[] {
+    return [...ids].flatMap((id) => {
       const note = hits.find((h) => h.note.id === id)?.note ?? findNote(id);
       return note ? [note] : [];
     });
+  }
+
+  function pickedNotes(): NoteSummary[] {
+    return notesOf(picked);
+  }
+
+  /** Notes dragged onto a folder in the tree; moved notes that were picked are unpicked. */
+  async function dropNotes(ids: number[], folder: string) {
+    if (busy) return;
+    busy = true;
+    const ok = await onmove(ids, folder, notesOf(ids).map((n) => n.folder));
+    busy = false;
+    if (!ok) return;
+    for (const id of ids) picked.delete(id);
+    if (picked.size === 0) clearSelection();
   }
 
   async function moveSelection(e: SubmitEvent) {
@@ -401,6 +416,7 @@
         onclearselection={clearSelection}
         oncreatefolder={addFolder}
         onerror={(e) => (error = errorMessage(e))}
+        ondropnotes={(ids, folder) => void dropNotes(ids, folder)}
       />
     </div>
   {:else}
