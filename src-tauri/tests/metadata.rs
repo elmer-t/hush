@@ -26,24 +26,26 @@ fn add_tag_creates_frontmatter_or_key_and_skips_notes_that_have_it() {
     let (_dir, mut vault) = common::vault();
     let bare = vault.create_note("", "Bare", "Text").unwrap();
     let no_tags = vault.create_note("", "No tags", "---\nauthor: Ada\n---\nText").unwrap();
-    let has_it = vault.create_note("", "Has it", "---\ntags: [x, Journal]\n---\nText").unwrap();
+    let has_it = vault.create_note("", "Has it", "---\ntags: [x, journal]\n---\nText").unwrap();
+    let other_case = vault.create_note("", "Other case", "---\ntags: [Journal]\n---\nText").unwrap();
     let before = vault.note(has_it).unwrap().updated_at;
     tick();
 
-    let report = vault.edit_notes_metadata(&[bare, no_tags, has_it], &add("#journal")).unwrap();
-    assert_eq!(report.changed, vec![bare, no_tags]);
+    let report = vault.edit_notes_metadata(&[bare, no_tags, has_it, other_case], &add("#journal")).unwrap();
+    assert_eq!(report.changed, vec![bare, no_tags, other_case]);
     assert_eq!(report.unchanged, 1);
 
     assert_eq!(body(&vault, bare), "---\ntags: [journal]\n---\nText");
     assert_eq!(body(&vault, no_tags), "---\nauthor: Ada\ntags: [journal]\n---\nText");
-    assert_eq!(body(&vault, has_it), "---\ntags: [x, Journal]\n---\nText");
+    assert_eq!(body(&vault, has_it), "---\ntags: [x, journal]\n---\nText");
+    // Tags are case-sensitive, so `Journal` doesn't count as already having `journal`.
+    assert_eq!(body(&vault, other_case), "---\ntags: [Journal, journal]\n---\nText");
     assert_eq!(vault.note(has_it).unwrap().updated_at, before, "unchanged note not bumped");
     assert!(vault.note(bare).unwrap().updated_at > before, "changed note bumped");
-    // The tags table keeps the first spelling it saw.
-    assert_eq!(vault.note(no_tags).unwrap().tags, vec!["Journal"]);
+    assert_eq!(vault.note(no_tags).unwrap().tags, vec!["journal"]);
 
     let q = SearchQuery { tags: vec!["journal".into()], ..Default::default() };
-    assert_eq!(search_ids(&vault, q), vec![bare, no_tags, has_it]);
+    assert_eq!(search_ids(&vault, q), vec![bare, no_tags, has_it, other_case]);
 }
 
 #[test]
@@ -66,13 +68,14 @@ fn remove_tag_drops_it_from_frontmatter_and_reports_inline_ones() {
     let report = vault
         .edit_notes_metadata(&[other, only, alone, inline, inline_only], &MetadataEdit::RemoveTag("dr".into()))
         .unwrap();
-    assert_eq!(report.changed, vec![other, only, alone, inline]);
-    assert_eq!(report.unchanged, 1);
+    // `DR` is a different tag from `dr`, so `only` keeps it.
+    assert_eq!(report.changed, vec![other, alone, inline]);
+    assert_eq!(report.unchanged, 2);
     let still: Vec<&str> = report.still_inline.iter().map(|n| n.title.as_str()).collect();
     assert_eq!(still, vec!["Inline", "Inline only"]);
 
     assert_eq!(body(&vault, other), "---\ntags: [keep]\n---\nText");
-    assert_eq!(body(&vault, only), "---\nauthor: Ada\n---\nText", "empty key removed");
+    assert_eq!(body(&vault, only), "---\nauthor: Ada\ntags: [DR]\n---\nText", "other case untouched");
     assert_eq!(body(&vault, alone), "Text", "empty frontmatter removed");
     assert_eq!(body(&vault, inline), "See #dr", "inline tag untouched");
     assert_eq!(vault.note(inline).unwrap().tags, vec!["dr"]);
