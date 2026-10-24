@@ -80,6 +80,11 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - `created_at` precedence: rule match → frontmatter `created`/`date` → date in filename → file mtime. `updated_at` = file mtime.
 - Import report lists warnings and ambiguous links.
 
+## Extensibility
+- **No plugins or third-party code** (2026-10-24). Features that would otherwise be plugins (templates, daily notes, custom CSS, …) are built into Hush and requested as separate issues.
+- Why: a plugin runs after unlock and sees every decrypted note, and loading one would need the strict CSP relaxed.
+- Revisit a sandboxed plugin API (WASM/WebWorker, no network, per-plugin permissions) only if the list of built-in features keeps growing.
+
 ## UI
 Three panes: left = search, filters, note list / folder tree (sorted by updated); centre = title + editor; right = metadata panel, backlinks, outgoing links. Side panes collapsible.
 
