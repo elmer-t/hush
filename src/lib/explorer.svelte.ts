@@ -55,6 +55,15 @@ export async function refreshFolders(folders: string[]): Promise<void> {
   );
 }
 
+/** A loaded note's summary, if any folder holding it is loaded. */
+export function findNote(id: number): NoteSummary | undefined {
+  for (const folder of loaded.values()) {
+    const note = folder.notes.find((n) => n.id === id);
+    if (note) return note;
+  }
+  return undefined;
+}
+
 /** Forgets every loaded folder (after an import, which can touch any of them). */
 export function clearLoaded() {
   loaded.clear();

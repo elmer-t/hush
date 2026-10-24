@@ -123,6 +123,18 @@ pub fn trash_note(session: State<'_, Session>, id: i64) -> Result<()> {
     Ok(session.with_vault(|v| v.trash_note(id))?)
 }
 
+/// Moves notes into `folder`, all or nothing.
+#[tauri::command]
+pub fn move_notes(session: State<'_, Session>, ids: Vec<i64>, folder: String) -> Result<()> {
+    Ok(session.with_vault(|v| v.move_notes(&ids, &folder))?)
+}
+
+/// Bulk delete: moves notes to the trash, all or nothing.
+#[tauri::command]
+pub fn trash_notes(session: State<'_, Session>, ids: Vec<i64>) -> Result<()> {
+    Ok(session.with_vault(|v| v.trash_notes(&ids))?)
+}
+
 /// Deletes a note for good, whether live or in the trash.
 #[tauri::command]
 pub fn delete_note(session: State<'_, Session>, id: i64) -> Result<()> {

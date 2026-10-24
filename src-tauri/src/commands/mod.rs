@@ -62,6 +62,7 @@ impl CommandError {
                 D::InvalidTitle(_) => "invalidTitle",
                 D::TitleTaken => "titleTaken",
                 D::NoteNotFound => "noteNotFound",
+                D::MoveClash(_) => "moveClash",
                 D::InvalidRule(_) => "invalidRule",
                 D::InvalidTrashDays => "invalidTrashDays",
                 D::Sql(_) => "database",

@@ -138,6 +138,53 @@
     show(note, false);
   }
 
+  // Bumped to remount the editor on the same note, e.g. after a bulk move.
+  let editorRevision = $state(0);
+
+  /** Flushes the open note's pending autosave if it is in `ids`; returns its id. */
+  async function flushIfIn(ids: number[]): Promise<number | null> {
+    const id = opened?.note.id ?? null;
+    if (id === null || !ids.includes(id)) return null;
+    await editor?.flush();
+    return id;
+  }
+
+  async function moveNotes(ids: number[], folder: string, sources: string[]): Promise<boolean> {
+    const open = await flushIfIn(ids);
+    try {
+      await api.moveNotes(ids, folder);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    await sidebar?.refresh([...sources, folder]);
+    // Reopen, so its folder field and any rewritten links are current.
+    if (open !== null) {
+      try {
+        show(await api.openNote(open), false);
+        editorRevision++;
+      } catch (e) {
+        error = errorMessage(e);
+      }
+    }
+    return true;
+  }
+
+  async function deleteNotes(ids: number[], sources: string[]): Promise<boolean> {
+    const open = await flushIfIn(ids);
+    try {
+      await api.trashNotes(ids);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    if (open !== null) opened = summary = meta = null;
+    await sidebar?.refresh(sources);
+    return true;
+  }
+
   async function deleted(id: number) {
     const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
@@ -168,7 +215,14 @@
 
   {#if showLeft}
     <div class="left">
-      <Sidebar bind:this={sidebar} selected={opened ? summary : null} onselect={select} oncreate={create} />
+      <Sidebar
+        bind:this={sidebar}
+        selected={opened ? summary : null}
+        onselect={select}
+        oncreate={create}
+        onmove={moveNotes}
+        ondelete={deleteNotes}
+      />
     </div>
   {/if}
 
@@ -183,7 +237,7 @@
       <div class="page"><Trash onrestored={restored} /></div>
     {:else if view === "note"}
       {#if opened}
-        {#key opened.note.id}
+        {#key `${opened.note.id}:${editorRevision}`}
           <NoteEditor
             bind:this={editor}
             {opened}

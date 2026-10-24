@@ -29,18 +29,26 @@ pub struct TrashedNote {
 impl Vault {
     /// Moves a note to the trash.
     pub fn trash_note(&mut self, id: i64) -> Result<()> {
+        self.trash_notes(&[id])
+    }
+
+    /// Moves several notes to the trash in one transaction: all or nothing, so an
+    /// unknown (or already trashed) id changes nothing. The single entry point for
+    /// bulk delete.
+    pub fn trash_notes(&mut self, ids: &[i64]) -> Result<()> {
         let tx = self.conn.transaction()?;
-        if tx.execute(
-            "UPDATE notes SET deleted_at = ?2 WHERE id = ?1 AND deleted_at IS NULL",
-            params![id, now_ms()],
-        )? == 0
-        {
-            return Err(Error::NoteNotFound);
+        let now = now_ms();
+        for &id in ids {
+            if tx.execute("UPDATE notes SET deleted_at = ?2 WHERE id = ?1 AND deleted_at IS NULL", params![id, now])?
+                == 0
+            {
+                return Err(Error::NoteNotFound);
+            }
+            for table in ["note_tags", "note_attributes"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE note_id = ?1"), [id])?;
+            }
+            tx.execute("DELETE FROM links WHERE from_note_id = ?1", [id])?;
         }
-        for table in ["note_tags", "note_attributes"] {
-            tx.execute(&format!("DELETE FROM {table} WHERE note_id = ?1"), [id])?;
-        }
-        tx.execute("DELETE FROM links WHERE from_note_id = ?1", [id])?;
         tx.commit()?;
         Ok(())
     }
