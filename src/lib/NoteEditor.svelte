@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote } from "$lib/api";
+  import { confirmTrash } from "$lib/confirmTrash";
   import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
@@ -143,9 +144,10 @@
     }
   }
 
-  /** Moves the note to the trash. No confirmation: it can be restored from there. */
+  /** Moves the note to the trash, asking first unless that is turned off in Settings. */
   async function remove() {
     menuOpen = false;
+    if (!(await confirmTrash(1, committed.title))) return;
     clearTimeout(timer);
     await saving;
     try {

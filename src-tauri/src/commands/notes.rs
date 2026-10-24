@@ -81,6 +81,21 @@ pub fn set_sidebar_view(session: State<'_, Session>, view: String) -> Result<()>
     Ok(session.with_vault(|v| v.set_setting(SIDEBAR_VIEW_SETTING, view))?)
 }
 
+/// Whether moving notes to the trash asks first: `"false"` turns it off; anything else, or
+/// no value, leaves it on.
+pub const CONFIRM_TRASH_SETTING: &str = "confirm_trash";
+
+#[tauri::command]
+pub fn confirm_trash(session: State<'_, Session>) -> Result<bool> {
+    let value = session.with_vault(|v| v.setting(CONFIRM_TRASH_SETTING))?;
+    Ok(value.as_deref() != Some("false"))
+}
+
+#[tauri::command]
+pub fn set_confirm_trash(session: State<'_, Session>, confirm: bool) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_setting(CONFIRM_TRASH_SETTING, if confirm { "true" } else { "false" }))?)
+}
+
 /// Creates an untitled note in `folder`, with the vault's default author in its frontmatter.
 #[tauri::command]
 pub fn create_note(session: State<'_, Session>, folder: String) -> Result<OpenedNote> {

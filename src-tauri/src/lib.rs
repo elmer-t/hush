@@ -74,6 +74,8 @@ pub fn run() {
             commands::notes::folder_notes,
             commands::notes::sidebar_view,
             commands::notes::set_sidebar_view,
+            commands::notes::confirm_trash,
+            commands::notes::set_confirm_trash,
             commands::notes::create_note,
             commands::notes::open_note,
             commands::notes::save_note,
