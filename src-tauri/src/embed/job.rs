@@ -6,6 +6,9 @@
 //! also embeds the tag descriptions that zero-shot suggestions compare notes with, and
 //! after each pass it brings the related-notes index ([`super::related`]) up to date.
 //!
+//! While an import runs ([`Session::begin_import`]) it starts no work and stops a pass
+//! between batches; the queue keeps filling, and it carries on once the import ends.
+//!
 //! It works from the vault's embedding queue (`embedding_dirty`), which triggers fill
 //! in the same transaction as every write that can change a note's embedded text, so
 //! a save costs one queued note, not a scan of the vault.
@@ -46,6 +49,8 @@ pub enum IndexStatus {
     /// `eta_secs`: the time left at the rate of the last minute, once there are ten
     /// seconds of it to go by.
     Indexing { done: usize, total: usize, eta_secs: Option<u64> },
+    /// An import is running; indexing carries on when it ends.
+    Paused,
     /// The job stopped; the rest of Hush keeps working.
     Failed { message: String },
 }
@@ -81,6 +86,8 @@ pub struct Pass {
     pub descriptions: usize,
     /// Whether the related-notes index changed.
     pub related_changed: bool,
+    /// Whether the pass stopped early because an import started.
+    pub paused: bool,
 }
 
 /// The rate over the last [`Eta::WINDOW`], for the time left.
@@ -154,7 +161,20 @@ pub fn run_with(
     // Where the safety-net scan continues; `None` once it is done.
     let mut scan = Some(0);
     let mut found = 0;
+    let mut paused = false;
     loop {
+        if session.import_running() {
+            paused = true;
+            report(IndexStatus::Paused);
+            if !sleep_while_open(session, generation, poll) {
+                return;
+            }
+            continue;
+        }
+        if paused {
+            paused = false;
+            report(IndexStatus::Idle);
+        }
         if !first {
             let pending = match session.with_vault_quiet(generation, |v| v.embedding_pending()) {
                 Ok(p) => p,
@@ -183,8 +203,12 @@ pub fn run_with(
         }
         first = false;
         match pass(session, generation, source, &mut report) {
-            Ok(p) if p.related_changed => related_changed(),
-            Ok(_) => {}
+            Ok(p) => {
+                paused = p.paused;
+                if p.related_changed {
+                    related_changed();
+                }
+            }
             Err(e) => return fail(e, &mut report),
         }
     }
@@ -221,7 +245,8 @@ fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(us
 /// One pass: embeds the queued notes whose vector for the active model is missing or
 /// stale (the others just leave the queue). When the queue is empty, the active
 /// model's vectors are complete: it becomes the ready model and other models' vectors
-/// are deleted. Ends by syncing the related-notes index.
+/// are deleted. Ends by syncing the related-notes index. Stops between batches once an
+/// import runs (see [`Pass::paused`]), leaving the rest queued.
 pub fn pass(
     session: &Session,
     generation: u64,
@@ -242,7 +267,8 @@ pub fn pass(
     let mut changed = session.with_vault_quiet(generation, |v| v.take_deleted_notes())?;
     let mut eta = Eta::default();
     let mut after = db::QueueCursor::default();
-    loop {
+    let mut paused = false;
+    'pages: loop {
         let page = session.with_vault_quiet(generation, |v| v.queued_embeddings(&model, &after, SCAN_PAGE))?;
         done += page.settled;
         changed.extend(&page.dropped);
@@ -254,9 +280,18 @@ pub fn pass(
             if !session.is_open(generation) {
                 return Err(JobError::Locked);
             }
+            if session.import_running() {
+                paused = true;
+                break 'pages;
+            }
             // One call for the batch: the model runs chunks of several notes together.
             let texts: Vec<&str> = batch.iter().map(|q| q.note.text.as_str()).collect();
-            let embedded = match embedder.embed_batch(&texts, &|| !session.is_open(generation)) {
+            let stop = || !session.is_open(generation) || session.import_running();
+            let embedded = match embedder.embed_batch(&texts, &stop) {
+                Err(EmbedError::Stopped) if session.is_open(generation) => {
+                    paused = true;
+                    break 'pages;
+                }
                 Err(EmbedError::Stopped) => return Err(JobError::Locked),
                 result => result?,
             };
@@ -281,6 +316,12 @@ pub fn pass(
             None => break,
         }
     }
+    if paused {
+        report(IndexStatus::Paused);
+        // The notes embedded so far still go into the related-notes index.
+        let related_changed = related::update(session, generation, &changed)?;
+        return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
+    }
     if show {
         report(IndexStatus::Indexing { done: total, total, eta_secs: Some(0) });
     }
@@ -299,7 +340,7 @@ pub fn pass(
     // Only the notes this pass touched; a full rebuild when the ready model changed or
     // the index isn't built yet.
     let related_changed = related::update(session, generation, &changed)?;
-    Ok(Pass { stale, total, descriptions, related_changed })
+    Ok(Pass { stale, total, descriptions, related_changed, paused })
 }
 
 /// Embeds the tag descriptions that have no `model` vector yet. Only called while

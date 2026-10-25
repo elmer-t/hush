@@ -284,6 +284,49 @@ fn the_job_stops_promptly_on_lock() {
     );
 }
 
+/// An import's notes are still arriving: the job stops between batches, embeds nothing
+/// until the import ends, and then embeds everything that was queued meanwhile.
+#[test]
+fn the_job_pauses_while_an_import_runs_and_catches_up_after() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::slow(4, Duration::from_millis(5));
+    let source = Fakes(vec![fake.clone()]);
+    session.with_vault(|v| {
+        for i in 0..100 {
+            v.create_note("", &format!("N{i}"), "some words")?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let statuses = std::sync::Mutex::new(Vec::new());
+    let last = || statuses.lock().unwrap().last().cloned();
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |st| statuses.lock().unwrap().push(st.clone())));
+        wait_for(|| fake.calls() >= 3);
+
+        let import = session.begin_import();
+        wait_for(|| last() == Some(IndexStatus::Paused));
+        let calls = fake.calls();
+        assert!(calls < 100, "the pass stopped before the end");
+        let texts: Vec<(String, String)> = (0..50).map(|i| (format!("Imp {i}"), format!("Imported text {i}"))).collect();
+        let notes: Vec<NewNote> = texts
+            .iter()
+            .map(|(title, body)| NewNote { folder: "imp", title, body, created_at: 1, updated_at: 1 })
+            .collect();
+        session.with_vault(|v| v.import_notes(&notes).map(|_| ())).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(fake.calls(), calls, "nothing is embedded during the import");
+        assert_eq!(last(), Some(IndexStatus::Paused));
+
+        drop(import);
+        wait_for(|| count(&session, "fake-4") == 150);
+        wait_for(|| last() == Some(IndexStatus::Idle));
+        // At most the batch the pause interrupted is embedded twice.
+        assert!(fake.calls() <= 150 + job::BATCH, "{} calls", fake.calls());
+        session.lock();
+    });
+}
+
 #[test]
 fn switching_models_keeps_the_old_vectors_until_the_new_ones_are_complete() {
     let (_dir, path, session, g) = session("fake-4");

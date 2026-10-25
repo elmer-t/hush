@@ -369,6 +369,8 @@ export const api = {
 export type IndexStatus =
   | { state: "idle" }
   | { state: "indexing"; done: number; total: number; etaSecs: number | null }
+  /** An import is running; indexing carries on when it ends. */
+  | { state: "paused" }
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";
