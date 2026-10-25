@@ -3,7 +3,7 @@
 //! except background work, which uses [`Session::with_vault_quiet`].
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -40,6 +40,17 @@ pub struct Session {
     /// Interrupts the open vault's connection; `Some` only while a search runs on it,
     /// so an interrupt can never hit a save or the background jobs.
     running_search: Mutex<Option<rusqlite::InterruptHandle>>,
+    /// Imports writing to the vault right now (see [`Session::begin_import`]).
+    imports: AtomicUsize,
+}
+
+/// Held while an import writes notes; see [`Session::begin_import`].
+pub struct ImportRunning<'a>(&'a Session);
+
+impl Drop for ImportRunning<'_> {
+    fn drop(&mut self) {
+        self.0.imports.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 struct Unlocked {
@@ -214,6 +225,21 @@ impl Session {
             }
             other => other,
         }
+    }
+
+    /// Marks an import as running until the returned guard drops, however the import
+    /// ends. The background jobs (embedding, tag training) don't start work meanwhile
+    /// and the embedding job stops between batches: the notes they would work on are
+    /// still arriving, and they would compete with the import for the cores and the
+    /// vault. The embedding queue keeps filling, so nothing is missed.
+    pub fn begin_import(&self) -> ImportRunning<'_> {
+        self.imports.fetch_add(1, Ordering::SeqCst);
+        ImportRunning(self)
+    }
+
+    /// Whether an import is running (see [`Session::begin_import`]).
+    pub fn import_running(&self) -> bool {
+        self.imports.load(Ordering::SeqCst) > 0
     }
 
     /// Whether a search is running on the vault right now.

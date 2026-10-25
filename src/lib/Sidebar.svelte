@@ -812,6 +812,8 @@
           <span class="pause">Indexing pauses when the vault locks.</span>
         {/if}
       </div>
+    {:else if indexStatus.state === "paused"}
+      <div class="index" role="status">Indexing paused while importing.</div>
     {:else if indexStatus.state === "failed"}
       <div class="index failed" role="status" title={indexStatus.message}>
         Indexing stopped: {indexStatus.message}

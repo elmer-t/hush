@@ -52,9 +52,12 @@ pub fn start_import(
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let job = app.state::<ImportJob>();
+        // A dry run only reads, so indexing carries on.
+        let pause = (!dry_run).then(|| session.begin_import());
         let result = import::run(&session, &source, &target, dry_run, &job.cancel, |p| {
             let _ = app.emit(IMPORT_PROGRESS_EVENT, p);
         });
+        drop(pause);
         job.running.store(false, Ordering::SeqCst);
         let finished = match result {
             Ok(report) => ImportFinished::Done { report },
