@@ -29,6 +29,12 @@ export type NoteMeta = {
 export type OpenedNote = { note: Note; meta: NoteMeta };
 /** A note in the trash; `folder` is where it was deleted from. */
 export type TrashedNote = { id: number; folder: string; title: string; deletedAt: number };
+/** One row of the trash: a folder deleted as a whole (its notes share `deletedAt`), or a note. */
+export type TrashEntry =
+  | { kind: "folder"; deletedAt: number; folder: string; notes: number }
+  | ({ kind: "note" } & TrashedNote);
+/** What deleting a folder would move to the trash. */
+export type FolderContents = { notes: number; subfolders: number };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
 /** Mirrors `db::MetadataEdit`. An empty topic or author removes the key. */
@@ -252,7 +258,18 @@ export const api = {
     invoke<MetadataEditReport>("edit_notes_metadata", { ids, edit }),
   /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
-  trashedNotes: () => invoke<TrashedNote[]>("trashed_notes"),
+  /** One page of the trash, newest first: folder groups as one entry each, and loose notes. */
+  trashEntries: (offset: number, limit: number) => invoke<TrashEntry[]>("trash_entries", { offset, limit }),
+  /** How many notes are in the trash, folder groups included. */
+  trashCount: () => invoke<number>("trash_count"),
+  /** The live notes and subfolders in `folder` and below it. */
+  folderContents: (folder: string) => invoke<FolderContents>("folder_contents", { folder }),
+  /** Moves `folder` with everything in it to the trash as one entry; resolves to the number of notes. */
+  trashFolder: (folder: string) => invoke<number>("trash_folder", { folder }),
+  /** Restores a folder group; resolves to the number of notes restored. */
+  restoreFolder: (deletedAt: number) => invoke<number>("restore_folder", { deletedAt }),
+  /** Deletes a folder group from the trash for good. */
+  deleteTrashFolder: (deletedAt: number) => invoke<number>("delete_trash_folder", { deletedAt }),
   restoreNote: (id: number) => invoke<OpenedNote>("restore_note", { id }),
   emptyTrash: () => invoke<number>("empty_trash"),
   trashDays: () => invoke<number>("trash_days"),

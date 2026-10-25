@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashedNote, Vault};
+use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashEntry, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -218,9 +218,41 @@ pub fn delete_note(session: State<'_, Session>, id: i64) -> Result<()> {
     Ok(session.with_vault(|v| v.delete_note(id))?)
 }
 
+/// One page of the trash: folder groups as one entry each, and loose notes.
 #[tauri::command]
-pub fn trashed_notes(session: State<'_, Session>) -> Result<Vec<TrashedNote>> {
-    Ok(session.with_vault(|v| v.trashed_notes())?)
+pub fn trash_entries(session: State<'_, Session>, offset: u32, limit: u32) -> Result<Vec<TrashEntry>> {
+    Ok(session.with_vault(|v| v.trash_entries(offset, limit))?)
+}
+
+/// How many notes are in the trash.
+#[tauri::command]
+pub fn trash_count(session: State<'_, Session>) -> Result<usize> {
+    Ok(session.with_vault(|v| v.trash_count())?)
+}
+
+/// What deleting `folder` would move to the trash, for the confirmation.
+#[tauri::command]
+pub fn folder_contents(session: State<'_, Session>, folder: String) -> Result<FolderContents> {
+    Ok(session.with_vault(|v| v.folder_contents(&folder))?)
+}
+
+/// Moves a folder and every note in it and below it to the trash as one entry. Returns
+/// how many notes were trashed.
+#[tauri::command]
+pub fn trash_folder(session: State<'_, Session>, folder: String) -> Result<usize> {
+    Ok(session.with_vault(|v| v.trash_folder(&folder))?)
+}
+
+/// Restores a folder group from the trash. Returns how many notes came back.
+#[tauri::command]
+pub fn restore_folder(session: State<'_, Session>, deleted_at: i64) -> Result<usize> {
+    Ok(session.with_vault(|v| v.restore_folder(deleted_at))?)
+}
+
+/// Deletes a folder group from the trash for good. Returns how many notes.
+#[tauri::command]
+pub fn delete_trash_folder(session: State<'_, Session>, deleted_at: i64) -> Result<usize> {
+    Ok(session.with_vault(|v| v.delete_trash_folder(deleted_at))?)
 }
 
 /// Restores a trashed note and returns it opened (its title may have changed).

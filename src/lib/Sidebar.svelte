@@ -17,6 +17,7 @@
   import {
     clearLoaded,
     findNote,
+    folderDeleted as treeFolderDeleted,
     folderMoved as treeFolderMoved,
     rebase,
     refreshFolders,
@@ -48,6 +49,8 @@
     onmovefolder: (from: string, to: string) => Promise<boolean>;
     /** Bulk delete (to the trash). Resolves to whether it worked. */
     ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
+    /** Moves a folder that holds notes, with everything in it, to the trash. Resolves to whether it worked. */
+    ondeletefolder: (folder: string) => Promise<boolean>;
     /** Bulk metadata edit. Resolves to the report, or null when it failed. */
     onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
     /** Accepts a tag on notes in the Suggestions view. Resolves to the report, or null when it failed. */
@@ -64,6 +67,7 @@
     onmove,
     onmovefolder,
     ondelete,
+    ondeletefolder,
     onedit,
     onaccepttag,
     onrejecttag,
@@ -109,8 +113,8 @@
   // What the last bulk edit did.
   let editNotice = $state<{ text: string; titles: string[] } | null>(null);
   let busy = $state(false);
-  // The tree's open context menu: the note it was opened on and where.
-  let menu = $state<{ id: number; x: number; y: number } | null>(null);
+  // The tree's open context menu: the note or folder it was opened on and where.
+  let menu = $state<{ id: number; x: number; y: number } | { folder: string; x: number; y: number } | null>(null);
 
   // The "Recently opened" section: empty when the list is off or nothing was opened yet.
   let recentOpened = $state<NoteSummary[]>([]);
@@ -210,6 +214,32 @@
       .filter((f, i, all) => all.findIndex((g) => g.toLowerCase() === f.toLowerCase()) === i);
     if (selectedFolder !== null) selectedFolder = follow(selectedFolder);
     await Promise.all([treeFolderMoved(from, to).catch((e) => (error = errorMessage(e))), refresh()]);
+  }
+
+  /** Moves a folder and everything in it to the trash. A folder that only exists in the
+   * tree (no notes in it or below it) is just removed, without asking. */
+  async function deleteFolder(path: string) {
+    if (busy) return;
+    const inside = (f: string) => rebase(f, path, path) !== null;
+    if (folders.some(inside)) {
+      busy = true;
+      const ok = await ondeletefolder(path);
+      busy = false;
+      if (!ok) return;
+    }
+    emptyFolders = emptyFolders.filter((f) => !inside(f));
+    if (selectedFolder !== null && inside(selectedFolder)) {
+      const parent = path.split("/").slice(0, -1).join("/");
+      selectedFolder = parent || null;
+    }
+    treeFolderDeleted(path);
+    // Notes in the folder may have been picked; they are in the trash now.
+    for (const id of [...picked]) {
+      const note = notesOf([id])[0];
+      if (note && inside(note.folder)) picked.delete(id);
+    }
+    if (picked.size === 0) clearSelection();
+    await refresh();
   }
 
   /** Shows the Suggestions view for `tag` (Settings → Tags → Review suggestions). */
@@ -408,14 +438,24 @@
     menu = { id, x, y };
   }
 
-  function closeNoteMenu(refocus: boolean) {
-    const id = menu?.id;
+  function openFolderMenu(folder: string, x: number, y: number) {
+    menu = { folder, x, y };
+  }
+
+  function closeMenu(refocus: boolean) {
+    const was = menu;
     menu = null;
-    if (refocus && id !== undefined) explorer?.focusNote(id);
+    if (!refocus || !was) return;
+    if ("id" in was) explorer?.focusNote(was.id);
+    else explorer?.focusFolder(was.folder);
   }
 
   const menuItems = $derived.by((): MenuItem[] => {
     if (!menu) return [];
+    if ("folder" in menu) {
+      const folder = menu.folder;
+      return [{ label: "Move folder to trash", icon: "trash", danger: true, action: () => void deleteFolder(folder) }];
+    }
     const id = menu.id;
     const n = targetsOf(id).length;
     const items: MenuItem[] = [];
@@ -616,6 +656,8 @@
         oncreatefolder={addFolder}
         onnotemenu={openNoteMenu}
         ondeletenote={(id) => void trash(targetsOf(id))}
+        onfoldermenu={openFolderMenu}
+        ondeletefolder={(path) => void deleteFolder(path)}
         onerror={(e) => (error = errorMessage(e))}
         ondropnotes={(ids, folder) => void dropNotes(ids, folder)}
         ondropfolder={(from, to) => void dropFolder(from, to)}
@@ -724,9 +766,13 @@
     <ContextMenu
       x={menu.x}
       y={menu.y}
-      label={targetsOf(menu.id).length === 1 ? "Note actions" : "Actions for the selected notes"}
+      label={"folder" in menu
+        ? "Folder actions"
+        : targetsOf(menu.id).length === 1
+          ? "Note actions"
+          : "Actions for the selected notes"}
       items={menuItems}
-      onclose={closeNoteMenu}
+      onclose={closeMenu}
     />
   {/if}
   <div class="footer">

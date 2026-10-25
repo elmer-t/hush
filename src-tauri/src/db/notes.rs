@@ -262,19 +262,19 @@ impl Vault {
         let tx = self.conn.transaction()?;
         // Every live note in the folder or below it, with its new folder: `dest` plus the
         // rest of its path below `from`, in the case it is stored with.
-        let len = from.chars().count() as i64;
+        let len = from.chars().count();
         let mut moving: Vec<(i64, String, String)> = Vec::new();
         {
-            let mut stmt = tx.prepare_cached(
-                "SELECT id, folder, title FROM notes
-                 WHERE deleted_at IS NULL AND (folder = ?1 OR substr(folder, 1, ?2) = ?3 COLLATE NOCASE)",
-            )?;
-            let rows = stmt.query_map(params![from, len + 1, format!("{from}/")], |r| {
+            let mut stmt = tx.prepare_cached(&format!(
+                "SELECT id, folder, title FROM notes WHERE deleted_at IS NULL AND {IN_SUBTREE}"
+            ))?;
+            let (a, b, c) = subtree_params(&from);
+            let rows = stmt.query_map(params![a, b, c], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
             })?;
             for row in rows {
                 let (id, folder, title) = row?;
-                let rest: String = folder.chars().skip(len as usize).collect();
+                let rest: String = folder.chars().skip(len).collect();
                 moving.push((id, format!("{dest}{rest}"), title));
             }
         }
@@ -354,9 +354,12 @@ impl Vault {
     /// Deletes a note for good, live or trashed (`secure_delete` overwrites its text).
     /// The default delete is [`Vault::trash_note`].
     pub fn delete_note(&mut self, id: i64) -> Result<()> {
-        if self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
+        let tx = self.conn.transaction()?;
+        if tx.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
             return Err(Error::NoteNotFound);
         }
+        super::trash::forget_empty_groups(&tx)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -393,6 +396,16 @@ impl Vault {
         let folders = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(folders)
     }
+}
+
+/// Matches folder `?1` and every folder below it, case-insensitively like the column, as
+/// one range on the `folder` index rather than a scan: `?2` is `?1/` and `?3` is `?1`
+/// followed by `0`, the character after `/`. (Written as `folder = ?1 OR folder > ?2 AND
+/// folder < ?3`, SQLite scans the whole index.) Bind with [`subtree_params`].
+pub(super) const IN_SUBTREE: &str = "(folder >= ?1 AND folder < ?3 AND (folder = ?1 OR folder > ?2))";
+
+pub(super) fn subtree_params(folder: &str) -> (String, String, String) {
+    (folder.to_string(), format!("{folder}/"), format!("{folder}0"))
 }
 
 /// Rebuilds the index rows of one note from its body.

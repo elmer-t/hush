@@ -112,6 +112,17 @@ export async function folderMoved(from: string, to: string): Promise<void> {
   await expandTo(to.split("/").slice(0, -1).join("/"));
 }
 
+/** After folder `folder` went to the trash: forgets its and its subfolders' state. */
+export function folderDeleted(folder: string) {
+  for (const k of [...expanded]) if (rebase(k, folder, folder) !== null) expanded.delete(k);
+  for (const k of [...loaded.keys()]) {
+    if (rebase(k, folder, folder) === null) continue;
+    loaded.delete(k);
+    // A load still under way is dropped.
+    generations.set(k, (generations.get(k) ?? 0) + 1);
+  }
+}
+
 /** Expands every ancestor of `folder` and the folder itself, loading them as needed. */
 export async function expandTo(folder: string): Promise<void> {
   const parts = folder.split("/").filter(Boolean);

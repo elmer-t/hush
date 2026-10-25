@@ -38,7 +38,7 @@ pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionRevi
 pub use schema::Upgrade;
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
 pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
-pub use trash::{DEFAULT_TRASH_DAYS, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashedNote};
+pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -68,6 +68,8 @@ pub enum Error {
     MoveClash(Vec<String>),
     #[error("{0}")]
     InvalidFolderMove(String),
+    #[error("{0}")]
+    InvalidFolder(String),
     #[error("invalid tag: {0}")]
     InvalidTag(String),
     #[error("{0}")]
