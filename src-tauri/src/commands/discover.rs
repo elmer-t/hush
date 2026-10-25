@@ -21,7 +21,10 @@ pub struct DiscoverJob {
 #[tauri::command]
 pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Discovery>> {
     let session = app.state::<Session>();
-    let generation = session.generation().ok_or(SessionError::Locked)?;
+    let generation = session.generation();
+    if generation == 0 {
+        return Err(SessionError::Locked.into());
+    }
     // Starting a run is the user's doing; the run itself is not activity.
     session.touch();
     let run = app.state::<DiscoverJob>().runs.fetch_add(1, Ordering::SeqCst) + 1;
