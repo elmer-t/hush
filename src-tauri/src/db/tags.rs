@@ -69,13 +69,18 @@ impl Vault {
     /// Sets a tag's description; an empty one removes it, so the tag is no longer
     /// suggested. A changed description loses its vector until the job embeds it again.
     pub fn set_tag_description(&mut self, tag: &str, description: &str) -> Result<()> {
+        Self::set_tag_description_in(&self.conn, tag, description)
+    }
+
+    /// [`Vault::set_tag_description`] on `conn`, which may be a transaction.
+    pub(super) fn set_tag_description_in(conn: &Connection, tag: &str, description: &str) -> Result<()> {
         let tag = normalize_tag(tag)?;
         let description = description.trim();
         if description.is_empty() {
-            self.conn.execute("DELETE FROM tag_descriptions WHERE tag = ?1", [&tag])?;
+            conn.execute("DELETE FROM tag_descriptions WHERE tag = ?1", [&tag])?;
             return Ok(());
         }
-        self.conn.execute(
+        conn.execute(
             "INSERT INTO tag_descriptions(tag, description) VALUES (?1, ?2)
              ON CONFLICT(tag) DO UPDATE SET
                  vector = CASE WHEN description = excluded.description THEN vector END,
@@ -264,7 +269,7 @@ pub(super) fn record_hand_edits(conn: &Connection, id: i64, before: &[String], n
 }
 
 /// The latest decision wins.
-fn set_feedback(conn: &Connection, id: i64, tag: &str, accepted: bool, now: i64) -> Result<()> {
+pub(super) fn set_feedback(conn: &Connection, id: i64, tag: &str, accepted: bool, now: i64) -> Result<()> {
     conn.prepare_cached(
         "INSERT INTO tag_feedback(note_id, tag, accepted, created_at) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(note_id, tag) DO UPDATE SET accepted = excluded.accepted, created_at = excluded.created_at",

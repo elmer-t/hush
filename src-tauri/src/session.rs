@@ -198,6 +198,12 @@ impl Session {
         self.current.load(Ordering::SeqCst) == generation
     }
 
+    /// The generation of the open vault, for starting background work on it; `None`
+    /// while locked. Doesn't wait for the vault.
+    pub fn generation(&self) -> Option<u64> {
+        Some(self.current.load(Ordering::SeqCst)).filter(|&g| g != 0)
+    }
+
     /// How long the vault has been idle; `None` while locked.
     pub fn idle_for(&self) -> Option<Duration> {
         self.guard().as_ref().map(|u| u.activity.idle_at(Activity::now()))

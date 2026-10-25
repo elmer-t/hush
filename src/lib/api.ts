@@ -55,6 +55,12 @@ export type TagInfo = { tag: string; notes: number; description: string };
 export type TagSuggestion = { tag: string; score: number };
 /** The threshold of the model suggestions use; `threshold` is null for an unknown model without one. */
 export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
+/** A note in a discovered group; `score` is its similarity to the group's centre. */
+export type GroupNote = { id: number; folder: string; title: string; score: number };
+/** Notes grouped by meaning (see `discover::Group`): nearest the centre first. */
+export type DiscoverGroup = { words: string[]; notes: GroupNote[] };
+/** `model` is `null` while no model is ready; `k` is the number of groups asked for. */
+export type Discovery = { model: string | null; notes: number; k: number; groups: DiscoverGroup[] };
 
 export type DateField = "created" | "updated";
 
@@ -229,6 +235,14 @@ export const api = {
   suggestionThreshold: () => invoke<SuggestionThreshold>("suggestion_threshold"),
   /** `null` goes back to the model's default. */
   setSuggestionThreshold: (threshold: number | null) => invoke<void>("set_suggestion_threshold", { threshold }),
+
+  /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
+  discoverTags: (groups: number | null, untaggedOnly: boolean) =>
+    invoke<Discovery | null>("discover_tags", { options: { groups, untaggedOnly } }),
+  cancelDiscoverTags: () => invoke<void>("cancel_discover_tags"),
+  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, all or nothing. */
+  createTagFromGroup: (tag: string, description: string, ids: number[]) =>
+    invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids }),
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),
