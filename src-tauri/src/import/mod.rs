@@ -37,8 +37,10 @@ pub const BATCH_SIZE: usize = 500;
 pub const MAX_TEXT_BYTES: u64 = 10 * 1024 * 1024;
 /// The report's name for the `<page>_files` folders browsers save next to a web page.
 const PAGE_ASSETS: &str = "web page assets";
-/// The report lists this many warnings at most; `warning_count` has the total.
-const MAX_REPORTED_WARNINGS: usize = 2000;
+/// The report lists this many warnings, skipped files and folders at most; the
+/// `*_count` fields have the totals. Uncapped, re-previewing 100k files that are
+/// already in the vault gave a 14 MB report.
+const MAX_REPORTED: usize = 2000;
 const SAMPLE_COUNT: usize = 20;
 const SAMPLE_MAX_BYTES: usize = 6000;
 
@@ -117,12 +119,18 @@ pub struct ImportReport {
     pub files: usize,
     /// Notes written, or that would be written in a dry run.
     pub imported: usize,
+    /// Files that weren't imported, in source order, at most [`MAX_REPORTED`]. Files
+    /// that couldn't be read are listed before those that already exist, so a few
+    /// errors aren't lost among thousands of notes imported earlier.
     pub skipped: Vec<FileMessage>,
-    /// How many of `skipped` were left out because a note with that folder and title
-    /// already exists.
+    pub skipped_count: usize,
+    /// How many of the skipped files were left out because a note with that folder and
+    /// title already exists.
     pub already_exist: usize,
-    /// Every folder notes were (or would be) written to, with how many, sorted.
+    /// The folders notes were (or would be) written to, with how many, sorted. At most
+    /// [`MAX_REPORTED`]: the ones with the most notes.
     pub folders: Vec<FolderCount>,
+    pub folder_count: usize,
     pub warnings: Vec<FileMessage>,
     pub warning_count: usize,
     pub ambiguous_links: Vec<AmbiguousLink>,
@@ -396,6 +404,7 @@ pub fn run(
         ..Default::default()
     };
     let mut folders: BTreeMap<String, usize> = BTreeMap::new();
+    let mut skipped = Skipped::default();
     let mut unsupported: BTreeMap<String, usize> = BTreeMap::new();
     if scan.page_assets > 0 {
         unsupported.insert(PAGE_ASSETS.into(), scan.page_assets);
@@ -424,7 +433,7 @@ pub fn run(
                     let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
                     *unsupported.entry(format).or_default() += 1;
                 }
-                Err(e) => report.skipped.push(FileMessage {
+                Err(e) => skipped.push(false, FileMessage {
                     path: rel.to_string_lossy().replace('\\', "/"),
                     message: e.to_string(),
                 }),
@@ -433,7 +442,7 @@ pub fn run(
         for p in &batch {
             for w in &p.warnings {
                 report.warning_count += 1;
-                if report.warnings.len() < MAX_REPORTED_WARNINGS {
+                if report.warnings.len() < MAX_REPORTED {
                     report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
                 }
             }
@@ -478,6 +487,7 @@ pub fn run(
                     }
                 }
                 Err(e) => {
+                    let exists = matches!(e, db::Error::TitleTaken);
                     let message = match e {
                         db::Error::TitleTaken => {
                             report.already_exist += 1;
@@ -486,7 +496,7 @@ pub fn run(
                         }
                         e => e.to_string(),
                     };
-                    report.skipped.push(FileMessage { path: p.path.clone(), message });
+                    skipped.push(exists, FileMessage { path: p.path.clone(), message });
                 }
             }
         }
@@ -497,7 +507,10 @@ pub fn run(
         unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
     unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
     report.unsupported = unsupported;
-    report.folders = folders.into_iter().map(|(folder, count)| FolderCount { folder, count }).collect();
+    report.skipped_count = skipped.count;
+    report.skipped = skipped.into_list();
+    report.folder_count = folders.len();
+    report.folders = largest_folders(folders);
 
     if !dry_run && !imported_ids.is_empty() {
         report.ambiguous_links = on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
@@ -506,6 +519,45 @@ pub fn run(
             .collect();
     }
     Ok(report)
+}
+
+/// The skipped files listed in the report: up to [`MAX_REPORTED`] that couldn't be read,
+/// then as many that already exist as fit, numbered so they go back into source order.
+#[derive(Default)]
+struct Skipped {
+    count: usize,
+    failed: Vec<(usize, FileMessage)>,
+    exist: Vec<(usize, FileMessage)>,
+}
+
+impl Skipped {
+    fn push(&mut self, exists: bool, message: FileMessage) {
+        let list = if exists { &mut self.exist } else { &mut self.failed };
+        if list.len() < MAX_REPORTED {
+            list.push((self.count, message));
+        }
+        self.count += 1;
+    }
+
+    fn into_list(mut self) -> Vec<FileMessage> {
+        self.exist.truncate(MAX_REPORTED - self.failed.len());
+        let mut all = self.failed;
+        all.append(&mut self.exist);
+        all.sort_unstable_by_key(|(n, _)| *n);
+        all.into_iter().map(|(_, m)| m).collect()
+    }
+}
+
+/// The [`MAX_REPORTED`] folders with the most notes (ties by name), sorted by name.
+fn largest_folders(folders: BTreeMap<String, usize>) -> Vec<FolderCount> {
+    let mut all: Vec<FolderCount> = folders.into_iter().map(|(folder, count)| FolderCount { folder, count }).collect();
+    if all.len() > MAX_REPORTED {
+        // Stable, so equal counts keep name order.
+        all.sort_by(|a, b| b.count.cmp(&a.count));
+        all.truncate(MAX_REPORTED);
+        all.sort_by(|a, b| a.folder.cmp(&b.folder));
+    }
+    all
 }
 
 /// Files with the same name in one folder (`letter.txt`, `letter.rtf`) would get the
@@ -550,4 +602,42 @@ fn truncate(s: &str) -> String {
         end -= 1;
     }
     format!("{}\n…", &s[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(n: usize) -> FileMessage {
+        FileMessage { path: format!("f{n:05}"), message: String::new() }
+    }
+
+    #[test]
+    fn skipped_files_are_capped_with_unreadable_ones_kept_first() {
+        let mut skipped = Skipped::default();
+        for n in 0..10_000 {
+            // Every 100th file couldn't be read; the rest already exist.
+            skipped.push(n % 100 != 0, message(n));
+        }
+        assert_eq!(skipped.count, 10_000);
+        let list = skipped.into_list();
+        assert_eq!(list.len(), MAX_REPORTED);
+        let failed: Vec<&str> = list.iter().map(|m| m.path.as_str()).filter(|p| p.ends_with("00")).collect();
+        assert_eq!(failed.len(), 100, "every unreadable file is listed");
+        assert_eq!(failed.last(), Some(&"f09900"));
+        assert!(list.windows(2).all(|w| w[0].path < w[1].path), "source order");
+    }
+
+    #[test]
+    fn only_the_largest_folders_are_listed_sorted_by_name() {
+        let folders: BTreeMap<String, usize> =
+            (0..MAX_REPORTED + 500).map(|n| (format!("d{n:05}"), if n % 2 == 0 { 2 } else { 1 })).collect();
+        let listed = largest_folders(folders);
+        assert_eq!(listed.len(), MAX_REPORTED);
+        // All 1,250 two-note folders, then the one-note folders that come first by name.
+        assert_eq!(listed.iter().filter(|f| f.count == 2).count(), (MAX_REPORTED + 500) / 2);
+        assert!(listed.iter().any(|f| f.folder == "d00001"));
+        assert!(!listed.iter().any(|f| f.folder == "d02499"));
+        assert!(listed.windows(2).all(|w| w[0].folder < w[1].folder));
+    }
 }

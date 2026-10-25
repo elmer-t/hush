@@ -201,11 +201,14 @@ export type ImportReport = {
   existingInTarget: number;
   files: number;
   imported: number;
+  /** At most 2,000, files that couldn't be read first; `skippedCount` has the total. */
   skipped: FileMessage[];
-  /** How many of `skipped` already exist in the vault with that folder and title. */
+  skippedCount: number;
+  /** How many skipped files already exist in the vault with that folder and title. */
   alreadyExist: number;
-  /** Folders notes go to, with how many, sorted. */
+  /** Folders notes go to, with how many, sorted: at most 2,000, the largest. */
   folders: { folder: string; count: number }[];
+  folderCount: number;
   warnings: FileMessage[];
   warningCount: number;
   ambiguousLinks: { note: string; target: string }[];
