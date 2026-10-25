@@ -21,6 +21,8 @@
   let passphraseError = $state("");
 
   let confirmTrash = $state(true);
+  let allCores = $state(false);
+  let coresError = $state("");
   let confirmError = $state("");
 
   let trashDays = $state(30);
@@ -36,6 +38,7 @@
   let authorError = $state("");
 
   onMount(async () => {
+    api.indexAllCores().then((on) => (allCores = on), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
@@ -44,6 +47,16 @@
       api.recentOpenedCount(),
     ]);
   });
+
+  async function saveAllCores() {
+    coresError = "";
+    try {
+      await api.setIndexAllCores(allCores);
+    } catch (err) {
+      coresError = errorMessage(err);
+      allCores = !allCores;
+    }
+  }
 
   // Saved on change: a checkbox has no Save button.
   async function saveConfirmTrash() {
@@ -159,6 +172,19 @@
       <button type="submit">Save</button>
     </div>
   </form>
+
+  <section class="card">
+    <h2>Indexing</h2>
+    <p class="muted">
+      Hush works out what each note is about on this computer, in the background. Indexing pauses while the vault is
+      locked and picks up where it left off, most recently changed notes first.
+    </p>
+    <label class="check">
+      <input type="checkbox" bind:checked={allCores} onchange={saveAllCores} />
+      Use all cores while indexing (faster, but the computer may get busy and warm)
+    </label>
+    {#if coresError}<p class="error" role="alert">{coresError}</p>{/if}
+  </section>
 
   <form class="card" onsubmit={saveTrashDays}>
     <h2>Trash</h2>

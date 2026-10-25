@@ -503,7 +503,14 @@ fn scale_benchmark() {
         _ => println!("5. peak RSS: not measured on this OS (needs /proc/self/clear_refs)"),
     }
     match throughput {
-        Some((n, d)) => println!("6. real model: {:.1} notes/s ({n} notes in {})", n as f64 / d.as_secs_f64(), secs(d)),
+        Some(t) => println!(
+            "6. real model: {:.1} notes/s ({} notes in {}); {:.2} chunks and {:.0} tokens per note",
+            t.notes as f64 / t.time.as_secs_f64(),
+            t.notes,
+            secs(t.time),
+            t.chunks as f64 / t.notes as f64,
+            t.tokens as f64 / t.notes as f64,
+        ),
         None => println!("6. real model: SKIPPED (model files missing; run `npm run fetch-model`)"),
     }
     for (text, median, worst, hits) in &searches {
@@ -518,8 +525,16 @@ fn scale_benchmark() {
     );
 }
 
-/// Notes per second of the bundled model on the first 1,000 notes; `None` without the files.
-fn real_model_throughput(path: &Path, notes: usize) -> Option<(usize, Duration)> {
+struct Throughput {
+    notes: usize,
+    time: Duration,
+    chunks: usize,
+    tokens: usize,
+}
+
+/// The bundled model on the first 1,000 notes in the job's batches, and their size in
+/// chunks and tokens; `None` without the files.
+fn real_model_throughput(path: &Path, notes: usize) -> Option<Throughput> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
     if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
@@ -530,11 +545,18 @@ fn real_model_throughput(path: &Path, notes: usize) -> Option<(usize, Duration)>
     let ids: Vec<i64> = (1..=MODEL_SAMPLE.min(notes) as i64).collect();
     let texts = vault.embedding_texts(&ids).unwrap();
     drop(vault);
-    let start = Instant::now();
-    for note in &texts {
-        model.embed(&note.text).unwrap();
+    let texts: Vec<&str> = texts.iter().map(|n| n.text.as_str()).collect();
+    let (mut chunks, mut tokens) = (0, 0);
+    for text in &texts {
+        let lengths = model.chunk_lengths(text).unwrap();
+        chunks += lengths.len();
+        tokens += lengths.iter().sum::<usize>();
     }
-    Some((texts.len(), start.elapsed()))
+    let start = Instant::now();
+    for batch in texts.chunks(job::BATCH) {
+        model.embed_batch(batch, &|| false).unwrap();
+    }
+    Some(Throughput { notes: texts.len(), time: start.elapsed(), chunks, tokens })
 }
 
 /// The generator itself, so a change to it shows up without running the benchmark.

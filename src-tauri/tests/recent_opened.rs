@@ -153,6 +153,8 @@ fn config_json_holds_no_note_ids_or_titles() {
     assert!(!text.contains("recent_opened"), "{text}");
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
-    assert_eq!(keys, ["recent_vaults"], "vault paths only");
+    // Vault paths and machine settings only.
+    assert_eq!(keys, ["index_all_cores", "recent_vaults"]);
+    assert!(json["index_all_cores"].is_boolean());
     assert_eq!(json["recent_vaults"][0].as_str().map(Path::new), Some(vault_path.as_path()));
 }

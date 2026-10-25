@@ -33,8 +33,10 @@ pub fn run() {
         .manage(DiscoverJob::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
-            app.manage(Config::new(config_path));
-            app.manage(Indexer::new(app.path().resource_dir()?.join("models")));
+            let config = Config::new(config_path);
+            let all_cores = config.get().index_all_cores;
+            app.manage(config);
+            app.manage(Indexer::new(app.path().resource_dir()?.join("models"), all_cores));
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
             // while the window is hidden.
@@ -124,6 +126,8 @@ pub fn run() {
             commands::import::default_import_rules,
             commands::import::test_import_rules,
             commands::embeddings::index_status,
+            commands::embeddings::index_all_cores,
+            commands::embeddings::set_index_all_cores,
             commands::tags::tag_list,
             commands::tags::set_tag_description,
             commands::tags::tag_suggestions,

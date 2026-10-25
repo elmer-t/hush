@@ -4,11 +4,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::config::Config;
 use crate::db::NoteSummary;
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
 use crate::embed::related;
@@ -32,28 +34,39 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    /// `models_dir` is the app's `models` resource folder.
-    pub fn new(models_dir: PathBuf) -> Self {
-        Self { status: Mutex::new(IndexStatus::Idle), models: BundledModels { dir: models_dir, loaded: Mutex::default() } }
+    /// `models_dir` is the app's `models` resource folder; `all_cores` the
+    /// "use all cores while indexing" choice.
+    pub fn new(models_dir: PathBuf, all_cores: bool) -> Self {
+        Self {
+            status: Mutex::new(IndexStatus::Idle),
+            models: BundledModels { dir: models_dir, all_cores: AtomicBool::new(all_cores), loaded: Mutex::default() },
+        }
     }
 }
 
 /// The models shipped with the app. A loaded model holds no note data, so it is kept
-/// across lock and unlock.
+/// across lock and unlock, once per core count: the job asks for its model at the
+/// start of every pass, so a change of [`BundledModels::all_cores`] applies from the
+/// next pass.
 struct BundledModels {
     dir: PathBuf,
-    loaded: Mutex<HashMap<&'static str, Arc<dyn Embedder>>>,
+    all_cores: AtomicBool,
+    loaded: Mutex<HashMap<(&'static str, usize), Arc<dyn Embedder>>>,
 }
 
 impl EmbedderSource for BundledModels {
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
         let descriptor = embed::descriptor(model).ok_or_else(|| EmbedError::UnknownModel(model.to_string()))?;
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let threads = if self.all_cores.load(Ordering::SeqCst) { cores } else { (cores / 2).max(1) };
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = loaded.get(descriptor.id) {
+        if let Some(e) = loaded.get(&(descriptor.id, threads)) {
             return Ok(e.clone());
         }
-        let embedder: Arc<dyn Embedder> = Arc::new(OnnxEmbedder::load(&self.dir, descriptor)?);
-        loaded.insert(descriptor.id, embedder.clone());
+        // Only one core count is kept loaded.
+        loaded.clear();
+        let embedder: Arc<dyn Embedder> = Arc::new(OnnxEmbedder::load_with_threads(&self.dir, descriptor, threads)?);
+        loaded.insert((descriptor.id, threads), embedder.clone());
         Ok(embedder)
     }
 }
@@ -87,6 +100,20 @@ fn set_status(app: &AppHandle, session: &Session, generation: u64, status: &Inde
     }
     *app.state::<Indexer>().status.lock().unwrap_or_else(|e| e.into_inner()) = status.clone();
     let _ = app.emit(INDEX_STATUS_EVENT, status);
+}
+
+/// Whether the indexing job's model uses every core (else half of them).
+#[tauri::command]
+pub fn index_all_cores(config: State<'_, Config>) -> bool {
+    config.get().index_all_cores
+}
+
+/// Saves the choice for this machine; the job uses it from its next pass.
+#[tauri::command]
+pub fn set_index_all_cores(config: State<'_, Config>, indexer: State<'_, Indexer>, on: bool) -> super::Result<()> {
+    config.update(|c| c.index_all_cores = on)?;
+    indexer.models.all_cores.store(on, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]

@@ -13,6 +13,10 @@ const MAX_RECENT: usize = 10;
 pub struct AppConfig {
     #[serde(default)]
     pub recent_vaults: Vec<PathBuf>,
+    /// The indexing job's model runs on every core instead of half of them. A choice
+    /// for this machine, so it lives here rather than in a vault.
+    #[serde(default)]
+    pub index_all_cores: bool,
 }
 
 impl AppConfig {

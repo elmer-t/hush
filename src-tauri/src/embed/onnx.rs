@@ -15,7 +15,7 @@ use super::{EmbedError, Embedder, ModelDescriptor, TokenPooling, normalize, pool
 /// A note longer than this many chunks is embedded from its start only, so one huge
 /// note can't keep the job busy for minutes.
 const MAX_CHUNKS: usize = 64;
-/// Chunks run through the model together.
+/// Chunks of one note run through the model together.
 const CHUNK_BATCH: usize = 8;
 
 pub struct OnnxEmbedder {
@@ -28,7 +28,14 @@ pub struct OnnxEmbedder {
 
 impl OnnxEmbedder {
     /// Loads `descriptor`'s files from `dir`, refusing any whose checksum doesn't match.
+    /// The model runs on half the cores.
     pub fn load(dir: &Path, descriptor: &'static ModelDescriptor) -> Result<Self, EmbedError> {
+        let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
+        Self::load_with_threads(dir, descriptor, threads)
+    }
+
+    /// [`OnnxEmbedder::load`], running the model on `threads` cores.
+    pub fn load_with_threads(dir: &Path, descriptor: &'static ModelDescriptor, threads: usize) -> Result<Self, EmbedError> {
         let tokenizer_bytes = read_verified(dir, &descriptor.tokenizer)?;
         let model_bytes = read_verified(dir, &descriptor.model)?;
 
@@ -36,15 +43,21 @@ impl OnnxEmbedder {
         tokenizer.with_truncation(None).map_err(|e| EmbedError::Load(e.to_string()))?;
         tokenizer.with_padding(None);
 
-        let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
         let session = Session::builder(environment()?)
             .and_then(|b| Ok(b.with_optimization_level(GraphOptimizationLevel::Level3)?))
-            .and_then(|b| Ok(b.with_intra_threads(threads)?))
+            .and_then(|b| Ok(b.with_intra_threads(threads.max(1))?))
             .and_then(|b| Ok(b.with_inter_threads(1)?))
             .and_then(|mut b| b.commit_from_memory(&model_bytes))
             .map_err(|e| EmbedError::Load(e.to_string()))?;
         let token_types = session.inputs().iter().any(|i| i.name() == "token_type_ids");
         Ok(Self { descriptor, tokenizer, session: Mutex::new(session), token_types })
+    }
+
+    /// The token count of each chunk `text` is split into (special tokens included), as
+    /// a document. For the scale benchmark.
+    #[doc(hidden)]
+    pub fn chunk_lengths(&self, text: &str) -> Result<Vec<usize>, EmbedError> {
+        Ok(self.chunks(text, "")?.iter().map(Encoding::len).collect())
     }
 
     /// Splits `text` into chunks of at most `max_tokens` tokens, each with the model's
@@ -140,16 +153,35 @@ impl Embedder for OnnxEmbedder {
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
         self.embed_with(text, self.descriptor.query_prefix)
     }
+
+    fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.batch_with(texts, self.descriptor.prefix, stop)
+    }
 }
 
 impl OnnxEmbedder {
     fn embed_with(&self, text: &str, prefix: &str) -> Result<Vec<f32>, EmbedError> {
-        let chunks = self.chunks(text, prefix)?;
-        let mut vectors = Vec::with_capacity(chunks.len());
-        for batch in chunks.chunks(CHUNK_BATCH) {
-            vectors.extend(self.run(batch)?);
+        Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
+    }
+
+    /// Embeds each text on its own, its chunks run [`CHUNK_BATCH`] at a time, asking
+    /// `stop` before each run. Texts are not batched together: the bundled int8 model
+    /// quantises each run with one scale for the whole run, so a text's vector would
+    /// depend on the texts it ran with (up to 0.04 per element, measured).
+    fn batch_with(&self, texts: &[&str], prefix: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            let chunks = self.chunks(text, prefix)?;
+            let mut vectors = Vec::with_capacity(chunks.len());
+            for run in chunks.chunks(CHUNK_BATCH) {
+                if stop() {
+                    return Err(EmbedError::Stopped);
+                }
+                vectors.extend(self.run(run)?);
+            }
+            out.push(pool_chunks(self.descriptor.chunk_pooling, &vectors));
         }
-        Ok(pool_chunks(self.descriptor.chunk_pooling, &vectors))
+        Ok(out)
     }
 }
 

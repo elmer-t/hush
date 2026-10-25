@@ -10,8 +10,9 @@
 //! in the same transaction as every write that can change a note's embedded text, so
 //! a save costs one queued note, not a scan of the vault.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -39,10 +40,12 @@ pub trait EmbedderSource: Send + Sync {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "camelCase")]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum IndexStatus {
     Idle,
-    Indexing { done: usize, total: usize },
+    /// `eta_secs`: the time left at the rate of the last minute, once there are ten
+    /// seconds of it to go by.
+    Indexing { done: usize, total: usize, eta_secs: Option<u64> },
     /// The job stopped; the rest of Hush keeps working.
     Failed { message: String },
 }
@@ -78,6 +81,32 @@ pub struct Pass {
     pub descriptions: usize,
     /// Whether the related-notes index changed.
     pub related_changed: bool,
+}
+
+/// The rate over the last [`Eta::WINDOW`], for the time left.
+#[derive(Default)]
+pub struct Eta {
+    samples: VecDeque<(Instant, usize)>,
+}
+
+impl Eta {
+    const WINDOW: Duration = Duration::from_secs(60);
+    const MIN_SPAN: Duration = Duration::from_secs(10);
+
+    /// Records that `done` of `total` are done at `now`; the seconds left, if known.
+    pub fn update(&mut self, now: Instant, done: usize, total: usize) -> Option<u64> {
+        self.samples.push_back((now, done));
+        while self.samples.len() > 2 && self.samples.get(1).is_some_and(|s| now.duration_since(s.0) >= Self::WINDOW) {
+            self.samples.pop_front();
+        }
+        let &(start, from) = self.samples.front()?;
+        let span = now.duration_since(start);
+        if span < Self::MIN_SPAN || done <= from {
+            return None;
+        }
+        let rate = (done - from) as f64 / span.as_secs_f64();
+        Some((total.saturating_sub(done) as f64 / rate).ceil() as u64)
+    }
 }
 
 /// Runs the job for unlock `generation` until the vault locks or the job fails.
@@ -211,28 +240,36 @@ pub fn pass(
     let mut stale = 0;
     // Notes whose vector changed or went away, for the related-notes index.
     let mut changed = session.with_vault_quiet(generation, |v| v.take_deleted_notes())?;
-    let mut after = 0;
+    let mut eta = Eta::default();
+    let mut after = db::QueueCursor::default();
     loop {
-        let page = session.with_vault_quiet(generation, |v| v.queued_embeddings(&model, after, SCAN_PAGE))?;
+        let page = session.with_vault_quiet(generation, |v| v.queued_embeddings(&model, &after, SCAN_PAGE))?;
         done += page.settled;
         changed.extend(&page.dropped);
         for batch in page.stale.chunks(BATCH) {
             if show {
-                report(IndexStatus::Indexing { done: done.min(total), total });
+                let done = done.min(total);
+                report(IndexStatus::Indexing { done, total, eta_secs: eta.update(Instant::now(), done, total) });
             }
-            let mut vectors = Vec::with_capacity(batch.len());
-            for queued in batch {
-                if !session.is_open(generation) {
-                    return Err(JobError::Locked);
-                }
-                let note = &queued.note;
-                vectors.push(db::QueuedVector {
-                    id: note.id,
+            if !session.is_open(generation) {
+                return Err(JobError::Locked);
+            }
+            // One call for the batch: the model runs chunks of several notes together.
+            let texts: Vec<&str> = batch.iter().map(|q| q.note.text.as_str()).collect();
+            let embedded = match embedder.embed_batch(&texts, &|| !session.is_open(generation)) {
+                Err(EmbedError::Stopped) => return Err(JobError::Locked),
+                result => result?,
+            };
+            let vectors: Vec<db::QueuedVector> = batch
+                .iter()
+                .zip(embedded)
+                .map(|(queued, vector)| db::QueuedVector {
+                    id: queued.note.id,
                     version: queued.version,
-                    hash: note.hash,
-                    vector: embedder.embed(&note.text)?,
-                });
-            }
+                    hash: queued.note.hash,
+                    vector,
+                })
+                .collect();
             session.with_vault_quiet(generation, |v| v.write_queued_embeddings(&model, &vectors))?;
             changed.extend(vectors.iter().map(|v| v.id));
             done += batch.len();
@@ -245,7 +282,7 @@ pub fn pass(
         }
     }
     if show {
-        report(IndexStatus::Indexing { done: total, total });
+        report(IndexStatus::Indexing { done: total, total, eta_secs: Some(0) });
     }
 
     let empty = session.with_vault_quiet(generation, |v| v.embedding_queue_len())? == 0;
@@ -301,4 +338,29 @@ pub(crate) fn sleep_while_open(session: &Session, generation: u64, duration: Dur
         left -= step;
     }
     session.is_open(generation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_time_left_comes_from_the_last_minute() {
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut eta = Eta::default();
+        assert_eq!(eta.update(at(0), 0, 1_000), None);
+        assert_eq!(eta.update(at(5), 50, 1_000), None, "under ten seconds of rate");
+        // 10 notes/s: 900 left is 90 s.
+        assert_eq!(eta.update(at(10), 100, 1_000), Some(90));
+        // It slows to 1 note/s; after a minute only the slow rate counts.
+        for s in 11..=80 {
+            eta.update(at(s), 100 + (s as usize - 10), 1_000);
+        }
+        assert_eq!(eta.update(at(81), 171, 1_000), Some(829));
+        // Nothing done in the window: unknown.
+        let mut stuck = Eta::default();
+        stuck.update(at(0), 10, 100);
+        assert_eq!(stuck.update(at(30), 10, 100), None);
+    }
 }
