@@ -165,3 +165,68 @@ fn links_are_rederived() {
     vault.edit_notes_metadata(&[a], &add("x")).unwrap();
     assert_eq!(vault.backlinks(target).unwrap().len(), 1);
 }
+
+#[test]
+fn rating_follows_the_frontmatter() {
+    let (_dir, mut vault) = common::vault();
+    let id = vault.create_note("", "Rated", "---\nauthor: Ada\nrating: 2\n---\nText").unwrap();
+    assert_eq!(vault.note(id).unwrap().rating, Some(2));
+    vault.update_body(id, "---\nauthor: Ada\nrating: 9\n---\nText").unwrap();
+    assert_eq!(vault.note(id).unwrap().rating, None, "9 is not a rating");
+    let q = SearchQuery { attributes: vec![("rating".into(), "9".into())], ..Default::default() };
+    assert_eq!(search_ids(&vault, q), [id], "kept as an attribute");
+    vault.update_body(id, "---\nauthor: Ada\n---\nText").unwrap();
+    assert_eq!(vault.note(id).unwrap().rating, None);
+}
+
+#[test]
+fn set_rating_rewrites_only_the_rating_key() {
+    let (_dir, mut vault) = common::vault();
+    let bare = vault.create_note("", "Bare", "Text").unwrap();
+    let rated = vault.create_note("", "Rated", "---\nauthor: Ada\nrating: 3\ntags: [x]\n---\nText").unwrap();
+    let same = vault.create_note("", "Same", "---\nrating: 4\n---\nText").unwrap();
+    let invalid = vault.create_note("", "Invalid", "---\nrating: five\n---\nText").unwrap();
+
+    let report = vault.edit_notes_metadata(&[bare, rated, same, invalid], &MetadataEdit::SetRating(Some(4))).unwrap();
+    assert_eq!(report.changed, vec![bare, rated, invalid]);
+    assert_eq!(report.unchanged, 1);
+    assert_eq!(body(&vault, bare), "---\nrating: 4\n---\nText");
+    assert_eq!(body(&vault, rated), "---\nauthor: Ada\nrating: 4\ntags: [x]\n---\nText");
+    assert_eq!(body(&vault, invalid), "---\nrating: 4\n---\nText");
+    for id in [bare, rated, same, invalid] {
+        assert_eq!(vault.note(id).unwrap().rating, Some(4));
+    }
+
+    let report = vault.edit_notes_metadata(&[bare, rated], &MetadataEdit::SetRating(None)).unwrap();
+    assert_eq!(report.changed, vec![bare, rated]);
+    assert_eq!(body(&vault, bare), "Text");
+    assert_eq!(body(&vault, rated), "---\nauthor: Ada\ntags: [x]\n---\nText");
+    assert_eq!(vault.note(rated).unwrap().rating, None);
+    let report = vault.edit_notes_metadata(&[bare], &MetadataEdit::SetRating(None)).unwrap();
+    assert_eq!(report.unchanged, 1, "clearing an unrated note changes nothing");
+
+    let nine = vault.create_note("", "Nine", "---\nrating: 9\n---\nText").unwrap();
+    vault.edit_notes_metadata(&[nine], &MetadataEdit::SetRating(None)).unwrap();
+    assert_eq!(body(&vault, nine), "Text", "clearing removes an invalid value too");
+}
+
+#[test]
+fn set_rating_rejects_values_outside_1_to_5_and_skips_unreadable_notes() {
+    let (_dir, mut vault) = common::vault();
+    let ok = vault.create_note("", "Ok", "Text").unwrap();
+    let broken = vault.create_note("", "Broken", "---\n: [unclosed\n---\nText").unwrap();
+    for bad in [0, 6] {
+        assert!(matches!(vault.edit_notes_metadata(&[ok], &MetadataEdit::SetRating(Some(bad))), Err(Error::InvalidRating)));
+    }
+    let report = vault.edit_notes_metadata(&[ok, broken], &MetadataEdit::SetRating(Some(5))).unwrap();
+    assert_eq!(report.changed, vec![ok]);
+    assert_eq!(report.unreadable.iter().map(|n| n.id).collect::<Vec<_>>(), vec![broken]);
+}
+
+#[test]
+fn set_rating_deserializes_from_the_frontend_shape() {
+    let set: MetadataEdit = serde_json::from_str(r#"{"kind":"setRating","value":3}"#).unwrap();
+    assert_eq!(set, MetadataEdit::SetRating(Some(3)));
+    let clear: MetadataEdit = serde_json::from_str(r#"{"kind":"setRating","value":null}"#).unwrap();
+    assert_eq!(clear, MetadataEdit::SetRating(None));
+}

@@ -2,6 +2,7 @@
   import { api, errorMessage, type NoteMeta, type NoteSummary, type TagSuggestion } from "$lib/api";
   import { longDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
+  import StarRating from "$lib/StarRating.svelte";
 
   type Props = {
     meta: NoteMeta;
@@ -130,6 +131,10 @@
       Topic
       <input value={meta.topic ?? ""} onchange={(e) => setText("topic", e.currentTarget.value)} />
     </label>
+    <div class="rating">
+      <span>Rating</span>
+      <StarRating value={meta.rating} onchange={(r) => onset("rating", r === null ? [] : [String(r)])} />
+    </div>
     <div class="date">
       Created
       <span>{longDate(summary.createdAt)}</span>
@@ -241,6 +246,15 @@
 
   .grid input {
     min-height: 30px;
+  }
+
+  .rating {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--muted);
   }
 
   .date {

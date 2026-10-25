@@ -1,6 +1,6 @@
 mod common;
 
-use hush_lib::db::{DateField, Facets, SearchQuery, Vault};
+use hush_lib::db::{DateField, Facets, NewNote, SearchQuery, Vault};
 use hush_lib::markdown::parse_date;
 
 fn titles(vault: &Vault, q: &SearchQuery) -> Vec<String> {
@@ -243,4 +243,63 @@ fn a_newer_search_interrupts_a_running_one() {
     assert!(interrupted, "the running search was never interrupted");
     // The connection works normally afterwards.
     assert_eq!(session.with_vault(|v| v.search(&text("word7"))).unwrap().len(), 200);
+}
+
+#[test]
+fn min_rating_filter() {
+    let (_dir, mut vault) = common::vault();
+    for (title, rating) in [("One", "1"), ("Three", "3"), ("Four", "4"), ("Five", "5"), ("Half", "4.5")] {
+        vault.create_note("", title, &format!("---\nrating: {rating}\n---\nlighthouse")).unwrap();
+    }
+    vault.create_note("", "Unrated", "lighthouse").unwrap();
+    let q = |min: Option<u8>, t: &str| SearchQuery { min_rating: min, text: t.into(), ..Default::default() };
+    let mut four = titles(&vault, &q(Some(4), ""));
+    four.sort();
+    assert_eq!(four, ["Five", "Four"]);
+    let mut with_text = titles(&vault, &q(Some(4), "lighthouse"));
+    with_text.sort();
+    assert_eq!(with_text, ["Five", "Four"]);
+    assert_eq!(titles(&vault, &q(Some(1), "")).len(), 4, "unrated and invalid never match");
+    assert_eq!(titles(&vault, &q(None, "")).len(), 6);
+    assert_eq!(titles(&vault, &q(Some(0), "")).len(), 6, "0 is no filter");
+    let rated: Vec<Option<u8>> = vault.search(&q(Some(5), "")).unwrap().into_iter().map(|h| h.note.rating).collect();
+    assert_eq!(rated, [Some(5)], "summaries carry the rating");
+}
+
+/// The "★ 4+" filter alone at 1M notes, 1% of them rated (issue #56). Ignored, so it
+/// only runs on request:
+///
+/// ```text
+/// cargo test --release --manifest-path src-tauri/Cargo.toml --test search -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "timing: builds a 1M-note vault"]
+fn min_rating_filter_at_1m_notes() {
+    const NOTES: usize = 1_000_000;
+    let (_dir, mut vault) = common::vault();
+    let notes: Vec<(String, String, String)> = (0..NOTES)
+        .map(|i| {
+            let body = if i % 100 == 0 { format!("---\nrating: {}\n---\nnote {i}", i / 100 % 5 + 1) } else { format!("note {i}") };
+            (format!("f{}", i % 50_000), format!("Note {i}"), body)
+        })
+        .collect();
+    for chunk in notes.chunks(10_000) {
+        let batch: Vec<NewNote> = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, (f, t, b))| NewNote { folder: f, title: t, body: b, created_at: j as i64, updated_at: j as i64 })
+            .collect();
+        vault.import_notes(&batch).unwrap();
+    }
+    let q = SearchQuery { min_rating: Some(4), limit: Some(500), ..Default::default() };
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        let t = std::time::Instant::now();
+        let hits = vault.search(&q).unwrap();
+        times.push(t.elapsed());
+        assert_eq!(hits.len(), 500);
+        assert!(hits.iter().all(|h| h.note.rating >= Some(4)));
+    }
+    times.sort();
+    println!("min_rating = 4 at 1M notes (10k rated, 4k at 4+): first page median {:?}, all {times:?}", times[2]);
 }

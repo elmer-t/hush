@@ -11,6 +11,8 @@ export type NoteSummary = {
   title: string;
   author: string | null;
   topic: string | null;
+  /** 1–5 stars, or null when unrated. */
+  rating: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -21,6 +23,8 @@ export type Note = NoteSummary & { body: string; tags: string[] };
 export type NoteMeta = {
   author: string | null;
   topic: string | null;
+  /** A valid `rating` (1–5); any other value is listed under `attributes`. */
+  rating: number | null;
   tags: string[];
   frontmatterTags: string[];
   attributes: [string, string][];
@@ -37,12 +41,13 @@ export type TrashEntry =
 export type FolderContents = { notes: number; subfolders: number };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
-/** Mirrors `db::MetadataEdit`. An empty topic or author removes the key. */
+/** Mirrors `db::MetadataEdit`. An empty topic or author, or a null rating, removes the key. */
 export type MetadataEdit =
   | { kind: "addTag"; value: string }
   | { kind: "removeTag"; value: string }
   | { kind: "setTopic"; value: string }
-  | { kind: "setAuthor"; value: string };
+  | { kind: "setAuthor"; value: string }
+  | { kind: "setRating"; value: number | null };
 export type TitledNote = { id: number; folder: string; title: string };
 export type MetadataEditReport = {
   /** Notes whose body was rewritten. */
@@ -121,6 +126,8 @@ export type SearchQuery = {
   from: number | null;
   to: number | null;
   attributes: [string, string][];
+  /** Notes rated this many stars or more; null for any. */
+  minRating: number | null;
   limit: number;
   offset: number;
 };
