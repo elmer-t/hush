@@ -69,6 +69,7 @@ impl CommandError {
                 D::NoteNotFound => "noteNotFound",
                 D::MoveClash(_) => "moveClash",
                 D::InvalidFolderMove(_) => "invalidFolderMove",
+                D::InvalidFolder(_) => "invalidFolder",
                 D::InvalidTag(_) => "invalidTag",
                 D::InvalidRule(_) => "invalidRule",
                 D::InvalidTrashDays => "invalidTrashDays",

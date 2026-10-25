@@ -216,6 +216,14 @@ CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, body ON notes BEGIN
     INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
     INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
 END;
+"#, r#"
+-- Folders moved to the trash as a whole. A group is the notes trashed with it: they
+-- share its `deleted_at`, which no other trash operation uses. Notes keep their own
+-- `folder` and `deleted_at`, so nothing existing changes.
+CREATE TABLE trash_folders (
+    deleted_at INTEGER PRIMARY KEY,
+    folder     TEXT NOT NULL COLLATE NOCASE
+);
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -428,7 +436,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -531,5 +539,38 @@ mod tests {
         conn.execute("DELETE FROM notes WHERE id = 2", []).unwrap();
         assert_eq!(count("lighthouse"), 4_498);
         conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')", []).unwrap();
+    }
+
+    /// A vault from before folder trash (version 9) keeps its notes, trashed ones too,
+    /// and gains an empty `trash_folders` table keyed on `deleted_at`.
+    #[test]
+    fn trash_folders_migration_keeps_notes_and_trash() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..9] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 9).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, folder, title, body, created_at, updated_at) VALUES (1, 'a', 'A', 'x', 1, 1);
+             INSERT INTO notes(id, folder, title, body, created_at, updated_at, deleted_at) VALUES (2, 'a/b', 'B', 'y', 1, 1, 7);",
+        )
+        .unwrap();
+
+        migrate(&mut conn, &mut |_| {}).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let notes: Vec<(i64, Option<i64>)> = conn
+            .prepare("SELECT id, deleted_at FROM notes ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(notes, [(1, None), (2, Some(7))]);
+        let groups: i64 = conn.query_row("SELECT count(*) FROM trash_folders", [], |r| r.get(0)).unwrap();
+        assert_eq!(groups, 0);
+        conn.execute("INSERT INTO trash_folders VALUES (7, 'a/b')", []).unwrap();
+        assert!(conn.execute("INSERT INTO trash_folders VALUES (7, 'c')", []).is_err(), "one group per deleted_at");
     }
 }
