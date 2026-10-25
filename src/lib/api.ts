@@ -49,6 +49,13 @@ export type MetadataEditReport = {
   unreadable: TitledNote[];
 };
 
+/** A tag used on notes, described, or both (see `db::TagInfo`). */
+export type TagInfo = { tag: string; notes: number; description: string };
+/** A tag suggested for a note; `score` is the similarity to its description. */
+export type TagSuggestion = { tag: string; score: number };
+/** The threshold of the model suggestions use; `threshold` is null for an unknown model without one. */
+export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
+
 export type DateField = "created" | "updated";
 
 /** The left pane: the explorer tree, or the folder tree with a flat list by updated. */
@@ -209,6 +216,19 @@ export const api = {
   defaultImportRules: () => invoke<Rule[]>("default_import_rules"),
   testImportRules: (rules: Rule[], fileName: string, sample: string) =>
     invoke<RuleOutput>("test_import_rules", { rules, fileName, sample }),
+
+  /** Every tag used on a note or described, sorted by name. */
+  tagList: () => invoke<TagInfo[]>("tag_list"),
+  /** An empty description removes it, and the tag is no longer suggested. */
+  setTagDescription: (tag: string, description: string) =>
+    invoke<void>("set_tag_description", { tag, description }),
+  tagSuggestions: (id: number) => invoke<TagSuggestion[]>("tag_suggestions", { id }),
+  /** Adds the tag to the note's frontmatter; resolves to the note fresh. Flush the editor first. */
+  acceptTagSuggestion: (id: number, tag: string) => invoke<OpenedNote>("accept_tag_suggestion", { id, tag }),
+  rejectTagSuggestion: (id: number, tag: string) => invoke<void>("reject_tag_suggestion", { id, tag }),
+  suggestionThreshold: () => invoke<SuggestionThreshold>("suggestion_threshold"),
+  /** `null` goes back to the model's default. */
+  setSuggestionThreshold: (threshold: number | null) => invoke<void>("set_suggestion_threshold", { threshold }),
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),

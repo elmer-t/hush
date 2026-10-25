@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
+  import TagSettings from "$lib/TagSettings.svelte";
 
   let minutes = $state(10);
   let minutesStatus = $state("");
@@ -111,6 +112,8 @@
       <button type="submit">Save</button>
     </div>
   </form>
+
+  <TagSettings />
 
   <form class="card" onsubmit={saveMinutes}>
     <h2>Auto-lock</h2>

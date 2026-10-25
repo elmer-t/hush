@@ -264,6 +264,23 @@
     return report;
   }
 
+  /** Adds a suggested tag to the open note. Like a bulk edit: flush first, reload after. */
+  async function acceptSuggestion(tag: string) {
+    const id = opened?.note.id;
+    if (id === undefined) return;
+    await editor?.flush();
+    // Reloading would drop edits that couldn't be saved; the editor shows why.
+    if (editor?.unsaved()) return;
+    try {
+      const fresh = await api.acceptTagSuggestion(id, tag);
+      sidebar?.noteSaved(fresh.note);
+      show(fresh, false);
+      editorRevision++;
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
   async function deleteNotes(ids: number[], sources: string[]): Promise<boolean> {
     const title = ids.length === 1 ? (summary?.id === ids[0] ? summary.title : findNote(ids[0])?.title) : undefined;
     try {
@@ -406,7 +423,12 @@
     {#if showRight}
       <div class="right">
         {#if opened && summary && meta}
-          <MetadataPanel {meta} {summary} onset={(key, values) => editor?.setField(key, values)} />
+          <MetadataPanel
+            {meta}
+            {summary}
+            onset={(key, values) => editor?.setField(key, values)}
+            onaccept={acceptSuggestion}
+          />
         {/if}
       </div>
     {:else}

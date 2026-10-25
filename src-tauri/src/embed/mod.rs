@@ -39,7 +39,12 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     token_pooling: TokenPooling::Cls,
     chunk_pooling: ChunkPooling::Mean,
     prefix: "",
-    suggestion_threshold: 0.75,
+    // bge's instruction for short queries matched against passages; it ranked fixture
+    // notes better than the bare description (docs/decisions.md, Tag suggestions).
+    query_prefix: "Represent this sentence for searching relevant passages: ",
+    // Measured on the fixture vault with the fp32 export of this model, not the int8 file
+    // itself: re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
+    suggestion_threshold: 0.67,
 };
 
 /// One model: its files, the shape of its vectors and how text is fed to it.
@@ -60,7 +65,11 @@ pub struct ModelDescriptor {
     pub chunk_pooling: ChunkPooling,
     /// Prepended to every chunk (some models want a task prefix).
     pub prefix: &'static str,
-    /// Default similarity above which a tag is suggested.
+    /// Used instead of `prefix` for short queries matched against notes, such as tag
+    /// descriptions.
+    pub query_prefix: &'static str,
+    /// Default similarity at or above which a tag is suggested. Overridden per vault by
+    /// the `suggest_threshold:<model ID>` setting.
     pub suggestion_threshold: f32,
 }
 
@@ -116,6 +125,10 @@ pub trait Embedder: Send + Sync {
     fn model_id(&self) -> &str;
     /// One unit-length vector for the whole text, however long.
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError>;
+    /// A vector for a short query (a tag description) to compare with note vectors.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.embed(text)
+    }
 }
 
 /// The text embedded for a note: title and body, without frontmatter (it holds the

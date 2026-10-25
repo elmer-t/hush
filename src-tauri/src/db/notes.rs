@@ -4,7 +4,7 @@
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
 use serde::Serialize;
 
-use super::{Error, Result, Vault, links, now_ms};
+use super::{Error, Result, Vault, links, now_ms, tags};
 use crate::markdown;
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,14 +139,17 @@ impl Vault {
     /// other note's links can change meaning.
     pub fn update_body(&mut self, id: i64, body: &str) -> Result<()> {
         let tx = self.conn.transaction()?;
+        let before = tags::note_tag_names(&tx, id)?;
+        let now = now_ms();
         let n = tx.execute(
             "UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1 AND deleted_at IS NULL",
-            params![id, body, now_ms()],
+            params![id, body, now],
         )?;
         if n == 0 {
             return Err(Error::NoteNotFound);
         }
         derive(&tx, id, body)?;
+        tags::record_hand_edits(&tx, id, &before, now)?;
         tx.commit()?;
         Ok(())
     }

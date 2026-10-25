@@ -48,14 +48,14 @@ impl OnnxEmbedder {
     }
 
     /// Splits `text` into chunks of at most `max_tokens` tokens, each with the model's
-    /// special tokens and the descriptor's prefix.
-    fn chunks(&self, text: &str) -> Result<Vec<Encoding>, EmbedError> {
+    /// special tokens and `prefix`.
+    fn chunks(&self, text: &str, prefix: &str) -> Result<Vec<Encoding>, EmbedError> {
         let err = |e: tokenizers::Error| EmbedError::Inference(e.to_string());
         let ids = self.tokenizer.encode(text, false).map_err(err)?.get_ids().to_vec();
-        let prefix = if self.descriptor.prefix.is_empty() {
+        let prefix = if prefix.is_empty() {
             Vec::new()
         } else {
-            self.tokenizer.encode(self.descriptor.prefix, false).map_err(err)?.get_ids().to_vec()
+            self.tokenizer.encode(prefix, false).map_err(err)?.get_ids().to_vec()
         };
         let special = self.tokenizer.get_post_processor().map_or(0, |p| p.added_tokens(false));
         let window = self.descriptor.max_tokens.saturating_sub(special + prefix.len()).max(1);
@@ -134,7 +134,17 @@ impl Embedder for OnnxEmbedder {
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
-        let chunks = self.chunks(text)?;
+        self.embed_with(text, self.descriptor.prefix)
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.embed_with(text, self.descriptor.query_prefix)
+    }
+}
+
+impl OnnxEmbedder {
+    fn embed_with(&self, text: &str, prefix: &str) -> Result<Vec<f32>, EmbedError> {
+        let chunks = self.chunks(text, prefix)?;
         let mut vectors = Vec::with_capacity(chunks.len());
         for batch in chunks.chunks(CHUNK_BATCH) {
             vectors.extend(self.run(batch)?);

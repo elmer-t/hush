@@ -109,6 +109,13 @@ pub fn run() {
             commands::import::default_import_rules,
             commands::import::test_import_rules,
             commands::embeddings::index_status,
+            commands::tags::tag_list,
+            commands::tags::set_tag_description,
+            commands::tags::tag_suggestions,
+            commands::tags::accept_tag_suggestion,
+            commands::tags::reject_tag_suggestion,
+            commands::tags::suggestion_threshold,
+            commands::tags::set_suggestion_threshold,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

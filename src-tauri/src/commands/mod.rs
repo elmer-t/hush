@@ -4,6 +4,7 @@ pub mod embeddings;
 pub mod import;
 pub mod notes;
 pub mod search;
+pub mod tags;
 pub mod vault;
 
 use serde::{Serialize, Serializer};
@@ -68,6 +69,7 @@ impl CommandError {
                 D::InvalidTag(_) => "invalidTag",
                 D::InvalidRule(_) => "invalidRule",
                 D::InvalidTrashDays => "invalidTrashDays",
+                D::InvalidThreshold => "invalidThreshold",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",
