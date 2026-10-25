@@ -21,7 +21,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use discover::NoteVector;
-pub use embeddings::{EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, StoredVector};
+pub use embeddings::{
+    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueuePage, QueuedText, QueuedVector,
+    StoredVector,
+};
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
 pub use links::{Backlink, OutgoingLink, Resolution};
 pub use lock::lock_path;

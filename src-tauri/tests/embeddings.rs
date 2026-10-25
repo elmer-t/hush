@@ -367,3 +367,164 @@ fn bundled_model_puts_similar_notes_closer_than_unrelated_ones() {
     let v = model.embed(&long).unwrap();
     assert!((v.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
 }
+
+fn queued(session: &Session) -> usize {
+    session.with_vault(|v| v.embedding_queue_len()).unwrap()
+}
+
+/// Every write that can change a note's embedded text queues the note, in its own
+/// transaction (triggers on `notes`), and a pass empties the queue again.
+#[test]
+fn every_write_path_queues_the_note() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let source = Fakes(vec![Fake::new(4)]);
+    let id = session.with_vault(|v| v.create_note("a", "Walk", "A walk in the park")).unwrap();
+    assert_eq!(queued(&session), 1, "create");
+    index(&session, g, &source);
+    assert_eq!(queued(&session), 0);
+
+    let check = |what: &str, f: &dyn Fn(&mut Vault)| {
+        session.with_vault(|v| {
+            f(v);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(queued(&session), 1, "{what}");
+        index(&session, g, &source);
+        assert_eq!(queued(&session), 0, "{what}: the pass empties the queue");
+    };
+    check("update_body", &|v| v.update_body(id, "Rain all day").unwrap());
+    check("rename", &|v| v.rename_note(id, "a", "Rain").unwrap());
+    check("bulk metadata edit", &|v| {
+        v.edit_notes_metadata(&[id], &MetadataEdit::AddTag("x".into())).unwrap();
+    });
+    check("accept suggestion", &|v| v.accept_tag_suggestion(id, "y").unwrap());
+    check("create tag from group", &|v| {
+        v.create_tag_from_group("z", "", &[id]).unwrap();
+    });
+    check("trash", &|v| v.trash_note(id).unwrap());
+    check("restore", &|v| {
+        v.restore_note(id).unwrap();
+    });
+    check("import", &|v| {
+        let notes = [NewNote { folder: "imp", title: "Imported", body: "Imported words", created_at: 1, updated_at: 1 }];
+        v.import_notes(&notes).unwrap();
+    });
+
+    // Moving to another folder doesn't change the embedded text, so nothing is queued.
+    session.with_vault(|v| v.move_notes(&[id], "b")).unwrap();
+    assert_eq!(queued(&session), 0);
+}
+
+/// A save made while the model runs keeps its queue row, so the new text is embedded next.
+#[test]
+fn a_save_during_embedding_is_not_lost() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::new(4);
+    let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
+    let page = session.with_vault(|v| v.queued_embeddings("fake-4", 0, 10)).unwrap();
+    assert_eq!(page.stale.len(), 1);
+    // Saved after the job read the text, before it wrote the vector.
+    session.with_vault(|v| v.update_body(id, "second text")).unwrap();
+    let q = &page.stale[0];
+    let embedded = fake.embed(&q.note.text).unwrap();
+    let written = hush_lib::db::QueuedVector { id, version: q.version, hash: q.note.hash, vector: embedded };
+    session.with_vault(|v| v.write_queued_embeddings("fake-4", &[written])).unwrap();
+    assert_eq!(queued(&session), 1, "still queued for the second text");
+
+    let source = Fakes(vec![fake.clone()]);
+    index(&session, g, &source);
+    assert_eq!(fake.calls(), 2);
+    assert_eq!(vector(&session, id).unwrap(), fake.embed("T\n\nsecond text").unwrap());
+}
+
+/// Counts passes: the job asks for its embedder once at the start of each.
+struct CountingFakes {
+    fakes: Fakes,
+    passes: AtomicUsize,
+}
+
+impl EmbedderSource for CountingFakes {
+    fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        self.passes.fetch_add(1, Ordering::SeqCst);
+        self.fakes.embedder(model)
+    }
+}
+
+#[test]
+fn the_job_runs_one_pass_per_save_and_does_not_wake_itself() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::new(4);
+    let source = CountingFakes { fakes: Fakes(vec![fake.clone()]), passes: AtomicUsize::new(0) };
+    let ids: Vec<i64> =
+        session.with_vault(|v| (0..20).map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}"))).collect()).unwrap();
+    let passes = || source.passes.load(Ordering::SeqCst);
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
+        wait_for(|| count(&session, "fake-4") == 20);
+        // Unlock pass, then the safety-net scan finds nothing: the job stays idle.
+        std::thread::sleep(Duration::from_millis(200));
+        let idle = passes();
+        assert_eq!(idle, 1, "one pass after unlock embeds everything");
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(passes(), idle, "its own writes don't wake it");
+
+        for (n, &id) in ids.iter().take(3).enumerate() {
+            let calls = fake.calls();
+            let before = passes();
+            session.with_vault(|v| v.update_body(id, &format!("changed {n}"))).unwrap();
+            wait_for(|| fake.calls() == calls + 1);
+            std::thread::sleep(Duration::from_millis(200));
+            assert_eq!(passes() - before, 1, "save {n}");
+        }
+        session.lock();
+    });
+}
+
+/// A write that bypasses the queue (a code path that forgot it) is caught by the
+/// scan the job runs once per unlock.
+#[test]
+fn the_unlock_safety_net_finds_unqueued_changes() {
+    let (_dir, path, session, g) = session("fake-4");
+    let fake = Fake::new(4);
+    let source = Fakes(vec![fake.clone()]);
+    let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
+    index(&session, g, &source);
+
+    // Change the text on a second connection and drop the queue row the trigger made.
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.pragma_update(None, "key", common::PASS).unwrap();
+    raw.execute("UPDATE notes SET body = 'other text' WHERE id = ?1", [id]).unwrap();
+    raw.execute("DELETE FROM embedding_dirty", []).unwrap();
+    drop(raw);
+    assert_eq!(queued(&session), 0);
+    index(&session, g, &source);
+    assert_eq!(fake.calls(), 1, "the queue alone misses it");
+
+    // The running job scans once the queue is empty, and embeds what it finds.
+    let expected = fake.embed("T\n\nother text").unwrap();
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
+        // (`expected` counted one call.)
+        wait_for(|| fake.calls() == 3);
+        wait_for(|| session.with_vault_quiet(g, |v| v.note_embedding(id)).unwrap().as_ref() == Some(&expected));
+        session.lock();
+    });
+
+    let g = session.unlock(Vault::open(&path, common::PASS).unwrap(), path.clone()).unwrap();
+    assert_eq!(job::safety_net(&session, g).unwrap(), 0);
+}
+
+#[test]
+fn a_model_switch_queues_every_live_note_once() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let source = Fakes(vec![Fake::new(4), Fake::new(8)]);
+    let ids: Vec<i64> =
+        session.with_vault(|v| (0..5).map(|i| v.create_note("", &format!("N{i}"), "words")).collect()).unwrap();
+    session.with_vault(|v| v.trash_note(ids[0])).unwrap();
+    index(&session, g, &source);
+    session.with_vault(|v| v.set_embedding_model("fake-4")).unwrap();
+    assert_eq!(queued(&session), 0, "setting the same model queues nothing");
+    session.with_vault(|v| v.set_embedding_model("fake-8")).unwrap();
+    assert_eq!(queued(&session), 4);
+}

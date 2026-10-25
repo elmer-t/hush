@@ -280,8 +280,8 @@ fn switching_the_ready_model_re_embeds_descriptions_and_uses_its_threshold() {
     // The new model's threshold is set too high for any suggestion.
     session.with_vault(|v| v.set_suggestion_threshold("fake-8", Some(1.0))).unwrap();
     session.with_vault(|v| v.set_embedding_model("fake-8")).unwrap();
-    job::pass(&session, g, &source, &mut |_| {}).unwrap();
-    // Mid-switch: the old model's description and threshold still serve.
+    // Mid-switch (a pass that drains the queue completes it): the old model's
+    // description and threshold still serve.
     let (model, _) = session.with_vault(|v| v.tag_description_vector("dream")).unwrap().unwrap();
     assert_eq!(model, "fake-4");
     assert_eq!(suggested(&session, id), ["dream"]);

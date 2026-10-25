@@ -161,6 +161,36 @@ CREATE TABLE tag_heads (
     trained_at INTEGER NOT NULL,
     inputs     BLOB NOT NULL
 );
+"#, r#"
+-- Notes whose vector may be out of date, so the embedding job works on these instead
+-- of rescanning every note after every change. Filled by triggers, so every write
+-- that can change the embedded text (title, body, trash, restore) queues the note in
+-- its own transaction. `version` grows with every queueing: the job only drops a row
+-- whose version it read, so a save made while the model ran is never lost.
+CREATE TABLE embedding_dirty (
+    note_id INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 0
+);
+CREATE TRIGGER embedding_dirty_insert AFTER INSERT ON notes
+BEGIN
+    INSERT INTO embedding_dirty(note_id) VALUES (NEW.id)
+    ON CONFLICT(note_id) DO UPDATE SET version = version + 1;
+END;
+CREATE TRIGGER embedding_dirty_update AFTER UPDATE OF title, body, deleted_at ON notes
+WHEN OLD.title IS NOT NEW.title OR OLD.body IS NOT NEW.body OR OLD.deleted_at IS NOT NEW.deleted_at
+BEGIN
+    INSERT INTO embedding_dirty(note_id) VALUES (NEW.id)
+    ON CONFLICT(note_id) DO UPDATE SET version = version + 1;
+END;
+-- Notes deleted for good since the job last looked, so it can drop them from the
+-- related-notes index (the queue's rows go with the note).
+CREATE TABLE embedding_gone (note_id INTEGER PRIMARY KEY);
+CREATE TRIGGER embedding_gone_delete AFTER DELETE ON notes
+BEGIN
+    INSERT OR IGNORE INTO embedding_gone(note_id) VALUES (OLD.id);
+END;
+-- Every live note is checked once after the upgrade.
+INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE deleted_at IS NULL;
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -339,7 +369,7 @@ mod tests {
         migrate(&mut conn).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -362,5 +392,47 @@ mod tests {
         assert!(conn.execute(insert, ["jr"]).is_err(), "one head per tag");
         let recall: Option<f64> = conn.query_row("SELECT recall FROM tag_heads WHERE tag = 'jr'", [], |r| r.get(0)).unwrap();
         assert_eq!(recall, None);
+    }
+
+    /// A vault from before the embedding queue (version 7) keeps its notes and vectors
+    /// and queues every live note exactly once; later writes queue through the triggers.
+    #[test]
+    fn embedding_queue_migration_queues_every_live_note_once() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..7] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 7).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES (1, 'A', 'a', 1, 1), (2, 'B', 'b', 1, 1);
+             INSERT INTO notes(id, title, body, created_at, updated_at, deleted_at) VALUES (3, 'C', 'c', 1, 1, 9);
+             INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let queued = |conn: &Connection| -> Vec<(i64, i64)> {
+            let mut stmt = conn.prepare("SELECT note_id, version FROM embedding_dirty ORDER BY note_id").unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(queued(&conn), [(1, 0), (2, 0)], "live notes, once each");
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
+        assert_eq!(vectors, 1);
+        migrate(&mut conn).unwrap();
+        assert_eq!(queued(&conn), [(1, 0), (2, 0)], "migrating again changes nothing");
+
+        conn.execute("DELETE FROM embedding_dirty", []).unwrap();
+        conn.execute("UPDATE notes SET updated_at = 5, folder = 'x' WHERE id = 1", []).unwrap();
+        assert_eq!(queued(&conn), [], "a folder or date change doesn't queue");
+        conn.execute("UPDATE notes SET body = 'new' WHERE id = 1", []).unwrap();
+        conn.execute("UPDATE notes SET title = 'New' WHERE id = 1", []).unwrap();
+        conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 3", []).unwrap();
+        conn.execute("INSERT INTO notes(id, title, created_at, updated_at) VALUES (4, 'D', 1, 1)", []).unwrap();
+        assert_eq!(queued(&conn), [(1, 1), (3, 0), (4, 0)]);
+        conn.execute("DELETE FROM notes WHERE id = 4", []).unwrap();
+        assert_eq!(queued(&conn), [(1, 1), (3, 0)], "the queue cascades from notes");
+        let gone: i64 = conn.query_row("SELECT note_id FROM embedding_gone", [], |r| r.get(0)).unwrap();
+        assert_eq!(gone, 4, "a deleted note is remembered for the related-notes index");
     }
 }

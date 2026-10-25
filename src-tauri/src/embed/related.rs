@@ -2,7 +2,7 @@
 //! the ready model (`embedding_model_ready`) are kept in memory in one contiguous
 //! buffer, so a lookup is a brute-force scan that never touches the vault. The index
 //! lives in the [`Session`] next to the vault, is dropped and zeroed on lock, and is
-//! kept in sync by the embedding job (see [`sync`]).
+//! kept in sync by the embedding job (see [`update`] and [`sync`]).
 
 use std::collections::{HashMap, HashSet};
 
@@ -212,6 +212,39 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
             let Some(index) = index.as_mut() else { return };
             for &id in &remove {
                 index.remove(id);
+            }
+            for v in &loaded {
+                index.upsert(v.id, v.hash, &v.vector);
+            }
+        })
+        .ok_or(SessionError::Locked)?;
+    Ok(true)
+}
+
+/// Brings the index up to date for the notes in `ids` only (the ones the job just
+/// embedded, emptied, saw trashed or deleted): loads their vectors, or drops them if
+/// they have none. Falls back to [`sync`] when the index isn't built for the ready
+/// model yet. Returns whether the index changed.
+pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, SessionError> {
+    let ready = session.with_vault_quiet(generation, |v| v.embedding_model_ready())?;
+    let built = session.related_index().as_ref().map(|index| index.model.clone());
+    if built.as_ref() != Some(&ready) {
+        return sync(session, generation);
+    }
+    let Some(model) = ready else { return Ok(false) };
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    let mut loaded: Vec<StoredVector> = Vec::with_capacity(ids.len());
+    for page in ids.chunks(LOAD_PAGE) {
+        loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(&model, page))?);
+    }
+    let found: HashSet<i64> = loaded.iter().map(|v| v.id).collect();
+    session
+        .update_related_index(generation, |index| {
+            let Some(index) = index.as_mut() else { return };
+            for id in ids.iter().filter(|id| !found.contains(id)) {
+                index.remove(*id);
             }
             for v in &loaded {
                 index.upsert(v.id, v.hash, &v.vector);

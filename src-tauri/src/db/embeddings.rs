@@ -29,6 +29,38 @@ pub struct StoredVector {
     pub vector: Zeroizing<Vec<f32>>,
 }
 
+/// Stores a vector unless the note was trashed or deleted since its text was read.
+const WRITE_EMBEDDING: &str = "INSERT INTO note_embeddings(note_id, model, content_hash, vector)
+     SELECT id, ?2, ?3, ?4 FROM notes WHERE id = ?1 AND deleted_at IS NULL
+     ON CONFLICT(note_id, model) DO UPDATE SET content_hash = excluded.content_hash, vector = excluded.vector";
+
+/// A queued note's text, with the queue version it was read at.
+pub struct QueuedText {
+    pub note: NoteText,
+    pub version: i64,
+}
+
+/// A vector made from a [`QueuedText`].
+pub struct QueuedVector {
+    pub id: i64,
+    pub version: i64,
+    pub hash: [u8; 32],
+    pub vector: Vec<f32>,
+}
+
+/// One page of the embedding queue (see [`Vault::queued_embeddings`]).
+#[derive(Default)]
+pub struct QueuePage {
+    /// Queued notes whose vector is missing or was made from other text.
+    pub stale: Vec<QueuedText>,
+    /// Queued notes that needed no embedding and left the queue.
+    pub settled: usize,
+    /// Of those, the ones without a vector now (emptied or trashed).
+    pub dropped: Vec<i64>,
+    /// The id to continue after, or `None` when this was the last page.
+    pub next: Option<i64>,
+}
+
 /// One page of a scan for notes whose vector is missing or out of date.
 #[derive(Debug, Default)]
 pub struct EmbeddingScan {
@@ -46,8 +78,23 @@ impl Vault {
         Ok(self.setting(EMBEDDING_MODEL_SETTING)?.unwrap_or_else(|| embed::DEFAULT_MODEL.to_string()))
     }
 
+    /// Switching to another model queues every live note for it.
     pub fn set_embedding_model(&self, model: &str) -> Result<()> {
-        self.set_setting(EMBEDDING_MODEL_SETTING, model)
+        if self.setting(EMBEDDING_MODEL_SETTING)?.as_deref() == Some(model) {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![EMBEDDING_MODEL_SETTING, model],
+        )?;
+        tx.execute(
+            "INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE deleted_at IS NULL
+             ON CONFLICT(note_id) DO UPDATE SET version = version + 1",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// The model whose vectors cover every note, if any has finished yet.
@@ -99,6 +146,138 @@ impl Vault {
         Ok(scan)
     }
 
+    /// Up to `limit` queued notes with an id above `after`, in id order. Those whose
+    /// text still matches their `model` vector, that have no text or that are trashed
+    /// leave the queue here (losing any vector they had); the rest are returned with
+    /// their text, to embed and write with [`Vault::write_queued_embeddings`].
+    pub fn queued_embeddings(&mut self, model: &str, after: i64, limit: u32) -> Result<QueuePage> {
+        let tx = self.conn.transaction()?;
+        let mut page = QueuePage::default();
+        let mut settled = Vec::new();
+        let mut seen = 0;
+        {
+            let mut stmt = tx.prepare_cached(
+                "SELECT q.note_id, q.version, n.title, n.body, n.deleted_at IS NULL, e.content_hash
+                 FROM embedding_dirty q JOIN notes n ON n.id = q.note_id
+                 LEFT JOIN note_embeddings e ON e.note_id = q.note_id AND e.model = ?1
+                 WHERE q.note_id > ?2 ORDER BY q.note_id LIMIT ?3",
+            )?;
+            let mut rows = stmt.query(params![model, after, limit])?;
+            while let Some(r) = rows.next()? {
+                let id: i64 = r.get(0)?;
+                let version: i64 = r.get(1)?;
+                let live: bool = r.get(4)?;
+                let stored: Option<Vec<u8>> = r.get(5)?;
+                seen += 1;
+                page.next = Some(id);
+                let text = if live {
+                    let title: String = r.get(2)?;
+                    let body = Zeroizing::new(r.get::<_, String>(3)?);
+                    embed::note_text(&title, &body)
+                } else {
+                    None
+                };
+                match text {
+                    Some(text) => {
+                        let hash = embed::content_hash(&text);
+                        if stored.as_deref() == Some(&hash[..]) {
+                            settled.push((id, version, None));
+                        } else {
+                            page.stale.push(QueuedText { note: NoteText { id, text, hash }, version });
+                        }
+                    }
+                    None => settled.push((id, version, Some(stored.is_some()))),
+                }
+            }
+        }
+        if seen < limit {
+            page.next = None;
+        }
+        // `lost`: no vector now; `Some(true)` if it had one to delete.
+        for &(id, version, lost) in &settled {
+            if let Some(had) = lost {
+                if had {
+                    tx.prepare_cached("DELETE FROM note_embeddings WHERE note_id = ?1 AND model = ?2")?
+                        .execute(params![id, model])?;
+                }
+                page.dropped.push(id);
+            }
+            tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?.execute(params![id, version])?;
+        }
+        tx.commit()?;
+        page.settled = settled.len();
+        Ok(page)
+    }
+
+    /// Stores `model` vectors for queued notes, as [`Vault::write_embeddings`], and takes
+    /// each note off the queue unless it was queued again since its text was read.
+    pub fn write_queued_embeddings(&mut self, model: &str, vectors: &[QueuedVector]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut write = tx.prepare_cached(WRITE_EMBEDDING)?;
+            let mut done = tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?;
+            for v in vectors {
+                write.execute(params![v.id, model, &v.hash[..], embed::vector_to_blob(&v.vector)])?;
+                done.execute(params![v.id, v.version])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Queues `ids` for the embedding job (the unlock safety-net scan uses it).
+    pub fn queue_embeddings(&mut self, ids: &[i64]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE id = ?1
+                 ON CONFLICT(note_id) DO UPDATE SET version = version + 1",
+            )?;
+            for id in ids {
+                stmt.execute([id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Notes deleted for good since the last call (the record is cleared).
+    pub fn take_deleted_notes(&mut self) -> Result<Vec<i64>> {
+        let tx = self.conn.transaction()?;
+        let ids = tx
+            .prepare_cached("SELECT note_id FROM embedding_gone")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        tx.execute("DELETE FROM embedding_gone", [])?;
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// How many notes are queued for the embedding job.
+    pub fn embedding_queue_len(&self) -> Result<usize> {
+        let n: i64 = self.conn.query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// Whether the embedding job has anything to do: queued or deleted notes, a model
+    /// switch to finish, or tag descriptions without a vector from the ready model. Cheap; the
+    /// idle job asks once a second.
+    pub fn embedding_pending(&self) -> Result<bool> {
+        if self.conn.prepare_cached("SELECT 1 FROM embedding_dirty LIMIT 1")?.exists([])?
+            || self.conn.prepare_cached("SELECT 1 FROM embedding_gone LIMIT 1")?.exists([])?
+        {
+            return Ok(true);
+        }
+        let model = self.embedding_model()?;
+        if self.embedding_model_ready()?.as_deref() != Some(model.as_str()) {
+            return Ok(true);
+        }
+        Ok(self
+            .conn
+            .prepare_cached("SELECT 1 FROM tag_descriptions WHERE vector IS NULL OR model IS NOT ?1 LIMIT 1")?
+            .exists([&model])?)
+    }
+
     /// The text to embed for each of `ids` that is live and not empty.
     pub fn embedding_texts(&self, ids: &[i64]) -> Result<Vec<NoteText>> {
         let mut stmt = self.conn.prepare_cached("SELECT title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
@@ -123,11 +302,7 @@ impl Vault {
     pub fn write_embeddings(&mut self, model: &str, vectors: &[(i64, [u8; 32], Vec<f32>)]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare_cached(
-                "INSERT INTO note_embeddings(note_id, model, content_hash, vector)
-                 SELECT id, ?2, ?3, ?4 FROM notes WHERE id = ?1 AND deleted_at IS NULL
-                 ON CONFLICT(note_id, model) DO UPDATE SET content_hash = excluded.content_hash, vector = excluded.vector",
-            )?;
+            let mut stmt = tx.prepare_cached(WRITE_EMBEDDING)?;
             for (id, hash, vector) in vectors {
                 stmt.execute(params![id, model, &hash[..], embed::vector_to_blob(vector)])?;
             }
