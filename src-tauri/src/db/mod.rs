@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
-pub use discover::NoteVector;
+pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueuePage, QueuedText, QueuedVector,
     StoredVector,

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hush_lib::db::{NewNote, TagFeedback, Vault};
-use hush_lib::discover::{self, DiscoverError, Discovery, Options};
+use hush_lib::db::SearchQuery;
+use hush_lib::discover::{self, DiscoverError, Discovery, Options, Scope};
 use hush_lib::embed::job::{self, EmbedderSource};
 use hush_lib::embed::onnx::OnnxEmbedder;
 use hush_lib::embed::{self, EmbedError, Embedder, ModelDescriptor};
@@ -50,6 +51,8 @@ fn partition(d: &Discovery) -> Vec<Vec<i64>> {
         .map(|g| {
             let mut ids: Vec<i64> = g.notes.iter().map(|n| n.id).collect();
             ids.sort();
+            assert_eq!(ids, g.members, "every member is listed in a group this small");
+            assert_eq!(g.size, ids.len());
             ids
         })
         .collect();
@@ -94,7 +97,7 @@ fn groups_notes_by_meaning_without_trashed_notes() {
         })
         .unwrap();
 
-    let d = run(&session, generation, Options { groups: Some(3), untagged_only: false });
+    let d = run(&session, generation, Options { groups: Some(3), scope: Scope::All });
     assert_eq!(d.model.as_deref(), Some(MODEL));
     assert_eq!((d.notes, d.k), (9, 3));
     let mut expected: Vec<Vec<i64>> = themes.to_vec();
@@ -112,7 +115,7 @@ fn groups_notes_by_meaning_without_trashed_notes() {
     }
 
     // Deterministic: the same run gives the same result.
-    assert_eq!(run(&session, generation, Options { groups: Some(3), untagged_only: false }), d);
+    assert_eq!(run(&session, generation, Options { groups: Some(3), scope: Scope::All }), d);
     // Without a number, the default (at least 5, at most the number of notes).
     assert_eq!(run(&session, generation, Options::default()).k, 5);
 }
@@ -129,10 +132,119 @@ fn untagged_only_leaves_out_notes_with_any_tag() {
             Ok(())
         })
         .unwrap();
-    let d = run(&session, generation, Options { groups: Some(3), untagged_only: true });
+    let d = run(&session, generation, Options { groups: Some(3), scope: Scope::Untagged });
     let ids: Vec<i64> = partition(&d).concat();
     assert_eq!(d.notes, 7);
     assert!(!ids.contains(&themes[0][0]) && !ids.contains(&themes[1][0]));
+}
+
+/// `per` notes for each of three themes, in folders `ferry`, `garden/<n>` and `budget`,
+/// with vectors near three axes; the theme's notes by id.
+fn many_themed_notes(session: &Session, per: usize) -> [Vec<i64>; 3] {
+    session
+        .with_vault(|v| {
+            let mut out: [Vec<i64>; 3] = Default::default();
+            for i in 0..per {
+                for (axis, word) in ["ferry", "garden", "budget"].iter().enumerate() {
+                    let folder = if axis == 1 { format!("garden/{}", i % 3) } else { word.to_string() };
+                    let id = v.create_note(&folder, &format!("{word} {i}"), &format!("All about the {word}, part {i}."))?;
+                    set_vector(v, MODEL, id, &near(axis, 0.01 * (i % 7) as f32));
+                    out[axis].push(id);
+                }
+            }
+            v.finish_embedding_model(MODEL)?;
+            Ok(out)
+        })
+        .unwrap()
+}
+
+#[test]
+fn notes_outside_the_sample_join_the_nearest_group() {
+    let (_dir, session, generation) = session();
+    let themes = many_themed_notes(&session, 40);
+    let options = Options { groups: Some(3), scope: Scope::All };
+    let d = discover::run_sampled(&session, generation, &options, 12, &|| false).unwrap();
+    assert_eq!((d.notes, d.sampled, d.k), (120, 12, 3));
+    let mut found: Vec<Vec<i64>> = d.groups.iter().map(|g| g.members.clone()).collect();
+    found.sort();
+    let mut expected = themes.to_vec();
+    expected.sort();
+    assert_eq!(found, expected);
+    for g in &d.groups {
+        assert_eq!(g.size, 40);
+        // The listed notes are the nearest of all members, not only of the sample.
+        assert_eq!(g.notes.len(), 40.min(discover::GROUP_NOTES));
+        assert!(g.notes.windows(2).all(|w| w[0].score >= w[1].score));
+        assert!(g.notes.iter().all(|n| g.members.contains(&n.id)));
+    }
+    // Sampling is deterministic: the same notes give the same groups.
+    assert_eq!(discover::run_sampled(&session, generation, &options, 12, &|| false).unwrap(), d);
+    // A trashed note is in no group, even when it was not sampled.
+    let trashed = themes[2][39];
+    session.with_vault(|v| v.trash_note(trashed)).unwrap();
+    let d = discover::run_sampled(&session, generation, &options, 12, &|| false).unwrap();
+    assert_eq!(d.notes, 119);
+    assert!(!d.groups.iter().any(|g| g.members.contains(&trashed)));
+}
+
+#[test]
+fn folder_and_search_scopes_group_only_their_notes() {
+    let (_dir, session, generation) = session();
+    let themes = many_themed_notes(&session, 9);
+    // `garden` and its subfolders, but not `gardening` next to it.
+    let outside = session
+        .with_vault(|v| {
+            let id = v.create_note("gardening", "tools", "All about the garden tools.")?;
+            set_vector(v, MODEL, id, &near(1, 0.0));
+            Ok(id)
+        })
+        .unwrap();
+    let members = |scope: Scope| -> Vec<i64> {
+        let d = run(&session, generation, Options { groups: Some(2), scope });
+        let mut ids: Vec<i64> = d.groups.iter().flat_map(|g| g.members.clone()).collect();
+        ids.sort();
+        assert_eq!(d.notes, ids.len());
+        ids
+    };
+    assert_eq!(members(Scope::Folder { folder: "Garden".into() }), themes[1]);
+    let sub: Vec<i64> = themes[1].iter().copied().skip(1).step_by(3).collect();
+    assert_eq!(members(Scope::Folder { folder: "garden/1".into() }), sub);
+    assert_eq!(members(Scope::Folder { folder: "nowhere".into() }), Vec::<i64>::new());
+    // The root is every note.
+    assert_eq!(members(Scope::Folder { folder: "".into() }).len(), 28);
+
+    // A search: its text and its filters, every match.
+    let query = SearchQuery { text: "budget".into(), ..Default::default() };
+    assert_eq!(members(Scope::Search { query }), themes[2]);
+    let query = SearchQuery { text: "garden".into(), folder: Some("gardening".into()), ..Default::default() };
+    assert_eq!(members(Scope::Search { query }), [outside]);
+}
+
+#[test]
+fn select_all_tags_every_member_and_records_feedback_for_each() {
+    let (_dir, session, generation) = session();
+    many_themed_notes(&session, 30);
+    let d = discover::run_sampled(&session, generation, &Options { groups: Some(3), scope: Scope::All }, 9, &|| false)
+        .unwrap();
+    let group = &d.groups[0];
+    assert!(group.members.len() > group.notes.len().min(9));
+    let report = session.with_vault(|v| v.create_tag_from_group("theme", "one theme", &group.members)).unwrap();
+    assert_eq!(report.changed, group.members);
+    session
+        .with_vault(|v| {
+            assert_eq!(v.tag_list()?.into_iter().find(|t| t.tag == "theme").unwrap().notes, group.members.len());
+            for &id in &group.members {
+                assert!(v.note(id)?.tags.contains(&"theme".to_string()));
+                let feedback: Vec<(String, bool)> =
+                    v.tag_feedback(id)?.into_iter().map(|TagFeedback { tag, accepted, .. }| (tag, accepted)).collect();
+                assert_eq!(feedback, [("theme".to_string(), true)]);
+            }
+            // A member trashed since the run is left out by `live_notes`.
+            v.trash_note(group.members[0])?;
+            assert_eq!(v.live_notes(&group.members)?, group.members[1..]);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -140,7 +252,7 @@ fn nothing_to_group_before_a_model_is_ready() {
     let (_dir, session, generation) = session();
     session.with_vault(|v| v.create_note("", "A", "text")).unwrap();
     let d = run(&session, generation, Options::default());
-    assert_eq!(d, Discovery { model: None, notes: 0, k: 0, groups: Vec::new() });
+    assert_eq!(d, Discovery { model: None, notes: 0, sampled: 0, k: 0, groups: Vec::new() });
 
     // A ready model but no vectors: no groups, no error.
     session.with_vault(|v| v.finish_embedding_model(MODEL)).unwrap();
@@ -309,8 +421,8 @@ fn ten_thousand(structured: bool) {
         d.k,
         took.as_secs_f32(),
         if cfg!(debug_assertions) { "debug" } else { "release" },
-        d.groups.first().map_or(0, |g| g.notes.len()),
-        d.groups.last().map_or(0, |g| g.notes.len()),
+        d.groups.first().map_or(0, |g| g.size),
+        d.groups.last().map_or(0, |g| g.size),
     );
     assert_eq!((d.notes, d.k), (N, 50));
     // A debug build (`tauri dev`) is several times slower; the limit is for the app.
@@ -366,7 +478,7 @@ fn fixture_vault_journal_and_dream_notes_group_together() {
     let mut journal: Vec<usize> = Vec::new();
     let mut dream: Vec<usize> = Vec::new();
     for (g, group) in d.groups.iter().enumerate() {
-        println!("\n== group {} ({} notes): {}", g + 1, group.notes.len(), group.words.join(", "));
+        println!("\n== group {} ({} notes): {}", g + 1, group.size, group.words.join(", "));
         for n in &group.notes {
             let t = tags(n.id);
             let kind = if t.iter().any(|t| t == "journal") {

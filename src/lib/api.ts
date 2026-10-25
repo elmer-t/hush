@@ -86,10 +86,26 @@ export type TagTraining = {
 export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
 /** A note in a discovered group; `score` is its similarity to the group's centre. */
 export type GroupNote = { id: number; folder: string; title: string; score: number };
-/** Notes grouped by meaning (see `discover::Group`): nearest the centre first. */
-export type DiscoverGroup = { words: string[]; notes: GroupNote[] };
-/** `model` is `null` while no model is ready; `k` is the number of groups asked for. */
-export type Discovery = { model: string | null; notes: number; k: number; groups: DiscoverGroup[] };
+/** Notes grouped by meaning (see `discover::Group`): `size` notes, of which `notes`
+ * are the ones nearest the centre, nearest first. */
+export type DiscoverGroup = { words: string[]; size: number; notes: GroupNote[] };
+/** `model` is `null` while no model is ready; `k` is the number of groups asked for;
+ * `sampled` is how many notes the groups were computed from (the rest joined the
+ * nearest group). `run` names the groups for "select all". */
+export type Discovery = {
+  run: number;
+  model: string | null;
+  notes: number;
+  sampled: number;
+  k: number;
+  groups: DiscoverGroup[];
+};
+/** Which notes Discover tags groups. */
+export type DiscoverScope =
+  | { kind: "all" }
+  | { kind: "untagged" }
+  | { kind: "folder"; folder: string }
+  | { kind: "search"; query: SearchQuery };
 
 export type DateField = "created" | "updated";
 
@@ -328,12 +344,17 @@ export const api = {
   tagTraining: () => invoke<TagTraining[]>("tag_training"),
 
   /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
-  discoverTags: (groups: number | null, untaggedOnly: boolean) =>
-    invoke<Discovery | null>("discover_tags", { options: { groups, untaggedOnly } }),
+  discoverTags: (groups: number | null, scope: DiscoverScope) =>
+    invoke<Discovery | null>("discover_tags", { options: { groups, scope } }),
   cancelDiscoverTags: () => invoke<void>("cancel_discover_tags"),
-  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, all or nothing. */
-  createTagFromGroup: (tag: string, description: string, ids: number[]) =>
-    invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids }),
+  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, or with
+   * `wholeGroup` to every member of group `group` of run `run`; all or nothing. */
+  createTagFromGroup: (
+    tag: string,
+    description: string,
+    ids: number[],
+    wholeGroup: { run: number; group: number } | null = null,
+  ) => invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids, wholeGroup }),
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),

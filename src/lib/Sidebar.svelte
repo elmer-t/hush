@@ -28,6 +28,7 @@
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
+  import { currentSearch } from "$lib/currentSearch.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
   import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
@@ -297,6 +298,7 @@
     loading = true;
     try {
       const query = toQuery(text, selectedFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
+      if (reset) currentSearch.query = searching ? query : null;
       const result = await api.searchNotes(query);
       if (run !== generation || result.cancelled) return;
       const page = result.hits;
