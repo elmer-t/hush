@@ -1,5 +1,6 @@
 //! The indexing job (embeddings) as the app runs it: started on unlock, with the
-//! bundled model, reporting its status to the frontend.
+//! bundled model, reporting its status to the frontend. Also the related-notes lookup
+//! the job's vectors feed.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,13 +9,19 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::db::NoteSummary;
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
+use crate::embed::related;
 use crate::embed::onnx::OnnxEmbedder;
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::Session;
 
 /// Emitted with an [`IndexStatus`] whenever it changes.
 pub const INDEX_STATUS_EVENT: &str = "index-status";
+
+/// Emitted whenever the related-notes index changed (a note was re-embedded, trashed,
+/// restored or deleted, or the ready model changed), so an open Related panel refreshes.
+pub const RELATED_CHANGED_EVENT: &str = "related-changed";
 
 /// How often the job checks whether the vault changed.
 const POLL: Duration = Duration::from_secs(1);
@@ -58,9 +65,18 @@ pub fn start(app: &AppHandle, generation: u64) {
         let session = app.state::<Session>();
         let indexer = app.state::<Indexer>();
         set_status(&app, &session, generation, &IndexStatus::Idle);
-        job::run(&session, generation, &indexer.models, POLL, |status| {
-            set_status(&app, &session, generation, status);
-        });
+        job::run_with(
+            &session,
+            generation,
+            &indexer.models,
+            POLL,
+            |status| set_status(&app, &session, generation, status),
+            || {
+                if session.is_open(generation) {
+                    let _ = app.emit(RELATED_CHANGED_EVENT, ());
+                }
+            },
+        );
     });
 }
 
@@ -76,4 +92,11 @@ fn set_status(app: &AppHandle, session: &Session, generation: u64, status: &Inde
 #[tauri::command]
 pub fn index_status(indexer: State<'_, Indexer>) -> IndexStatus {
     indexer.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Up to `limit` notes closest in meaning to note `id`, most similar first; `None` when
+/// the note has no vector yet.
+#[tauri::command]
+pub fn related_notes(session: State<'_, Session>, id: i64, limit: usize) -> super::Result<Option<Vec<NoteSummary>>> {
+    Ok(related::related_notes(&session, id, limit)?)
 }

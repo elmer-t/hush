@@ -73,6 +73,12 @@ export type TagTraining = {
 };
 /** The threshold of the model suggestions use; `threshold` is null for an unknown model without one. */
 export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
+/** A note in a discovered group; `score` is its similarity to the group's centre. */
+export type GroupNote = { id: number; folder: string; title: string; score: number };
+/** Notes grouped by meaning (see `discover::Group`): nearest the centre first. */
+export type DiscoverGroup = { words: string[]; notes: GroupNote[] };
+/** `model` is `null` while no model is ready; `k` is the number of groups asked for. */
+export type Discovery = { model: string | null; notes: number; k: number; groups: DiscoverGroup[] };
 
 export type DateField = "created" | "updated";
 
@@ -250,8 +256,18 @@ export const api = {
   /** Per-tag classifier state; `TAGS_TRAINED_EVENT` says when it changed. */
   tagTraining: () => invoke<TagTraining[]>("tag_training"),
 
+  /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
+  discoverTags: (groups: number | null, untaggedOnly: boolean) =>
+    invoke<Discovery | null>("discover_tags", { options: { groups, untaggedOnly } }),
+  cancelDiscoverTags: () => invoke<void>("cancel_discover_tags"),
+  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, all or nothing. */
+  createTagFromGroup: (tag: string, description: string, ids: number[]) =>
+    invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids }),
+
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),
+  /** Notes closest in meaning, most similar first; `null` if the note isn't indexed yet. */
+  relatedNotes: (id: number, limit: number) => invoke<NoteSummary[] | null>("related_notes", { id, limit }),
 };
 
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
@@ -261,6 +277,8 @@ export type IndexStatus =
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";
+/** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
+export const RELATED_CHANGED_EVENT = "related-changed";
 /** Emitted after the training job trained or dropped a tag's classifier. */
 export const TAGS_TRAINED_EVENT = "tags-trained";
 

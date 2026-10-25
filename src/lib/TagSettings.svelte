@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, errorMessage, type SuggestionThreshold, type TagInfo } from "$lib/api";
+  import DiscoverTags from "$lib/DiscoverTags.svelte";
   import TagTraining from "$lib/TagTraining.svelte";
 
   let tags = $state<TagInfo[]>([]);
@@ -97,6 +98,7 @@
     Describe a tag in a sentence and Hush suggests it on notes whose meaning is close to it. Until a tag has a
     classifier (below), it is only suggested if it has a description. Tags are case-sensitive.
   </p>
+  <DiscoverTags {tags} oncreated={load} />
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if loaded && tags.length === 0}

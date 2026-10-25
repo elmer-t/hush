@@ -2,6 +2,7 @@ pub mod classify;
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod discover;
 pub mod embed;
 pub mod import;
 pub mod markdown;
@@ -11,6 +12,7 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use crate::commands::discover::DiscoverJob;
 use crate::commands::embeddings::Indexer;
 use crate::commands::import::ImportJob;
 use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
@@ -28,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Session::default())
         .manage(ImportJob::default())
+        .manage(DiscoverJob::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             app.manage(Config::new(config_path));
@@ -117,6 +120,10 @@ pub fn run() {
             commands::tags::reject_tag_suggestion,
             commands::tags::suggestion_threshold,
             commands::tags::set_suggestion_threshold,
+            commands::embeddings::related_notes,
+            commands::discover::discover_tags,
+            commands::discover::cancel_discover_tags,
+            commands::discover::create_tag_from_group,
             commands::training::tag_training,
         ])
         .build(tauri::generate_context!())

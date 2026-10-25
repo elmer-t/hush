@@ -3,7 +3,7 @@
 //! note's body and re-derives its index rows, the same as a save. Inline `#tags` in
 //! the body text are never touched.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::notes::derive;
@@ -49,8 +49,15 @@ impl Vault {
     /// nothing, so an unknown (or trashed) id changes nothing. Title and folder don't
     /// change, so no other note's links change meaning.
     pub fn edit_notes_metadata(&mut self, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
-        let edit = normalize(edit)?;
         let tx = self.conn.transaction()?;
+        let report = Self::edit_notes_metadata_in(&tx, ids, edit)?;
+        tx.commit()?;
+        Ok(report)
+    }
+
+    /// [`Vault::edit_notes_metadata`] inside the caller's transaction.
+    pub(super) fn edit_notes_metadata_in(tx: &Connection, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
+        let edit = normalize(edit)?;
         let now = now_ms();
         let mut report = MetadataEditReport::default();
         let mut seen: Vec<i64> = Vec::with_capacity(ids.len());
@@ -87,7 +94,6 @@ impl Vault {
             tags::record_hand_edits(&tx, id, &before, now)?;
             report.changed.push(id);
         }
-        tx.commit()?;
         Ok(report)
     }
 }
@@ -156,7 +162,7 @@ fn set_scalar(body: &str, key: &str, current: Option<&str>, value: &str) -> Stri
     markdown::set_frontmatter_field(body, key, &values)
 }
 
-/// Tags compare case-insensitively, as when they are derived.
+/// Tags are case-sensitive: `jr` and `Jr` are different tags.
 fn same_tag(a: &str, b: &str) -> bool {
-    a.to_lowercase() == b.to_lowercase()
+    a == b
 }
