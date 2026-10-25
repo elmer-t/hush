@@ -8,6 +8,7 @@ mod links;
 mod lock;
 mod metadata;
 mod notes;
+mod recent;
 mod review;
 mod rules;
 mod schema;
@@ -30,6 +31,9 @@ pub use links::{Backlink, OutgoingLink, Resolution};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
+pub use recent::{
+    DEFAULT_RECENT_OPENED_COUNT, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING, RECENT_OPENED_SETTING,
+};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
 pub use schema::Upgrade;
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
@@ -70,6 +74,8 @@ pub enum Error {
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
     InvalidTrashDays,
+    #[error("the number of recently opened notes must be between 0 and {}", recent::MAX_RECENT_OPENED_COUNT)]
+    InvalidRecentOpenedCount,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
     #[error(transparent)]

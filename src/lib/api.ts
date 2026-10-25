@@ -221,8 +221,19 @@ export const api = {
   /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
   confirmTrash: () => invoke<boolean>("confirm_trash"),
   setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),
+  /** The recently opened notes, most recent first, without trashed ones. */
+  recentOpenedNotes: () => invoke<NoteSummary[]>("recent_opened_notes"),
+  /** How many recently opened notes are kept, 0–50; 0 turns the list off. */
+  recentOpenedCount: () => invoke<number>("recent_opened_count"),
+  setRecentOpenedCount: (count: number) => invoke<void>("set_recent_opened_count", { count }),
+  clearRecentOpened: () => invoke<void>("clear_recent_opened"),
+  recentOpenedCollapsed: () => invoke<boolean>("recent_opened_collapsed"),
+  setRecentOpenedCollapsed: (collapsed: boolean) => invoke<void>("set_recent_opened_collapsed", { collapsed }),
   createNote: (folder: string) => invoke<OpenedNote>("create_note", { folder }),
+  /** Opens a note for the user: it moves to the front of the recently opened list. */
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
+  /** Reads the open note again (after a move, an edit elsewhere, leaving Settings); not recorded as opened. */
+  reloadNote: (id: number) => invoke<OpenedNote>("open_note", { id, record: false }),
   saveNote: (id: number, body: string) => invoke<SavedNote>("save_note", { id, body }),
   renameNote: (id: number, folder: string, title: string) => invoke<OpenedNote>("rename_note", { id, folder, title }),
   /** The default delete: moves the note to the trash. */

@@ -109,13 +109,58 @@ pub fn create_note(session: State<'_, Session>, folder: String) -> Result<Opened
             _ => String::new(),
         };
         let id = v.create_untitled(&folder, &body)?;
-        opened(v, id)
+        let note = opened(v, id)?;
+        v.record_opened(id)?;
+        Ok(note)
     })?)
 }
 
+/// Opens a note and, unless `record` is false (the frontend reading the open note
+/// again), puts it at the front of the recently opened list.
 #[tauri::command]
-pub fn open_note(session: State<'_, Session>, id: i64) -> Result<OpenedNote> {
-    Ok(session.with_vault(|v| opened(v, id))?)
+pub fn open_note(session: State<'_, Session>, id: i64, record: Option<bool>) -> Result<OpenedNote> {
+    Ok(session.with_vault(|v| {
+        let note = opened(v, id)?;
+        if record != Some(false) {
+            v.record_opened(id)?;
+        }
+        Ok(note)
+    })?)
+}
+
+/// The recently opened notes, most recent first, without trashed ones.
+#[tauri::command]
+pub fn recent_opened_notes(session: State<'_, Session>) -> Result<Vec<NoteSummary>> {
+    Ok(session.with_vault(|v| v.recent_opened_notes())?)
+}
+
+#[tauri::command]
+pub fn recent_opened_count(session: State<'_, Session>) -> Result<u32> {
+    Ok(session.with_vault(|v| v.recent_opened_count())?)
+}
+
+/// Sets how many recently opened notes are kept (0 turns the list off and clears it).
+#[tauri::command]
+pub fn set_recent_opened_count(session: State<'_, Session>, count: u32) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_recent_opened_count(count))?)
+}
+
+#[tauri::command]
+pub fn clear_recent_opened(session: State<'_, Session>) -> Result<()> {
+    Ok(session.with_vault(|v| v.clear_recent_opened())?)
+}
+
+/// Whether the "Recently opened" section is collapsed: `"true"` collapses it.
+pub const RECENT_OPENED_COLLAPSED_SETTING: &str = "recent_opened_collapsed";
+
+#[tauri::command]
+pub fn recent_opened_collapsed(session: State<'_, Session>) -> Result<bool> {
+    Ok(session.with_vault(|v| v.setting(RECENT_OPENED_COLLAPSED_SETTING))?.as_deref() == Some("true"))
+}
+
+#[tauri::command]
+pub fn set_recent_opened_collapsed(session: State<'_, Session>, collapsed: bool) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_setting(RECENT_OPENED_COLLAPSED_SETTING, if collapsed { "true" } else { "false" }))?)
 }
 
 #[tauri::command]
