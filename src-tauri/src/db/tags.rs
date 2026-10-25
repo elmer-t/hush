@@ -1,7 +1,9 @@
 //! Tag descriptions and zero-shot tag suggestions. The user describes a tag in a
 //! sentence; the background job embeds the description with the ready model, and a note
 //! whose vector is close enough to it gets the tag suggested. Accepting or rejecting a
-//! suggestion is remembered in `tag_feedback`, the training data for later classifiers.
+//! suggestion is remembered in `tag_feedback`, the training data for the per-tag
+//! classifiers in [`crate::classify`]: a tag with a trained head is scored by it instead
+//! (see `db::heads`).
 //!
 //! The frontmatter stays the single source of truth for tags: accepting a suggestion
 //! rewrites the note's frontmatter and re-derives it, like a save.
@@ -9,6 +11,7 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
+use super::heads::ScoreMethod;
 use super::metadata::{normalize_tag, write_tags};
 use super::notes::derive;
 use super::{Error, Result, Vault, now_ms};
@@ -35,8 +38,10 @@ pub struct TagInfo {
 #[serde(rename_all = "camelCase")]
 pub struct TagSuggestion {
     pub tag: String,
-    /// Cosine similarity of the note and the tag's description.
+    /// The head's probability for [`ScoreMethod::Classifier`], else the cosine
+    /// similarity of the note and the tag's description (blended with its examples).
     pub score: f32,
+    pub method: ScoreMethod,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -152,32 +157,34 @@ impl Vault {
         }
     }
 
-    /// Tags to suggest for a note, best first: described tags whose description (from
-    /// the ready model) scores at or above that model's threshold against the note's
-    /// vector, that the note doesn't have and that the user hasn't rejected on it.
+    /// Tags to suggest for a note, best first: tags whose scorer (`Vault::tag_scorers`:
+    /// the trained head, else the description from the ready model) scores the note's
+    /// vector at or above its threshold, that the note doesn't have and that the user
+    /// hasn't rejected on it. Classifier suggestions come before description ones (their
+    /// scores aren't comparable, and a head has learned from the user's own notes).
     pub fn tag_suggestions(&self, id: i64) -> Result<Vec<TagSuggestion>> {
-        let Some(model) = self.embedding_model_ready()? else { return Ok(Vec::new()) };
-        let Some(threshold) = self.suggestion_threshold(&model)? else { return Ok(Vec::new()) };
         let Some(note) = self.note_embedding(id)? else { return Ok(Vec::new()) };
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT d.tag, d.vector FROM tag_descriptions d
-             WHERE d.model = ?2 AND d.vector IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
-                               WHERE nt.note_id = ?1 AND t.name = d.tag)
-               AND NOT EXISTS (SELECT 1 FROM tag_feedback f
-                               WHERE f.note_id = ?1 AND f.tag = d.tag AND f.accepted = 0)",
-        )?;
-        let mut suggestions: Vec<TagSuggestion> = stmt
-            .query_map(params![id, model], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?
-            .filter_map(|row| match row {
-                Ok((tag, blob)) => {
-                    let score = embed::cosine(&note, &embed::blob_to_vector(&blob));
-                    (score >= threshold).then_some(Ok(TagSuggestion { tag, score }))
-                }
-                Err(e) => Some(Err(e)),
+        let scorers = self.tag_scorers()?;
+        if scorers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut excluded: Vec<String> = note_tag_names(&self.conn, id)?;
+        let mut stmt = self.conn.prepare_cached("SELECT tag FROM tag_feedback WHERE note_id = ?1 AND accepted = 0")?;
+        for tag in stmt.query_map([id], |r| r.get::<_, String>(0))? {
+            excluded.push(tag?);
+        }
+        let mut suggestions: Vec<TagSuggestion> = scorers
+            .iter()
+            .filter(|s| !excluded.contains(&s.tag))
+            .filter_map(|s| {
+                let score = s.score(&note);
+                (score >= s.threshold).then(|| TagSuggestion { tag: s.tag.clone(), score, method: s.method })
             })
-            .collect::<rusqlite::Result<_>>()?;
-        suggestions.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.tag.cmp(&b.tag)));
+            .collect();
+        let rank = |m: ScoreMethod| if m == ScoreMethod::Classifier { 0 } else { 1 };
+        suggestions.sort_by(|a, b| {
+            rank(a.method).cmp(&rank(b.method)).then(b.score.total_cmp(&a.score)).then_with(|| a.tag.cmp(&b.tag))
+        });
         suggestions.truncate(SUGGESTIONS_PER_NOTE);
         Ok(suggestions)
     }
@@ -243,8 +250,8 @@ pub(super) fn note_tag_names(conn: &Connection, id: i64) -> Result<Vec<String>> 
 }
 
 /// Records what an edit by hand did to a note's tags, given its tags before the edit.
-/// Removing a tag that could be suggested (it has a description, or the note has
-/// feedback for it) counts as a rejection, so it isn't suggested again right away.
+/// Removing a tag that could be suggested (it has a description or a classifier head, or
+/// the note has feedback for it) counts as a rejection, so it isn't suggested again right away.
 /// Other tags are left alone: typing `tags: [dream]` saves `d`, `dr`, … on the way,
 /// and those aren't decisions. Adding a tag back clears its rejection: the tag itself
 /// is the positive example.
@@ -254,6 +261,7 @@ pub(super) fn record_hand_edits(conn: &Connection, id: i64, before: &[String], n
         let suggestible = conn
             .prepare_cached(
                 "SELECT EXISTS (SELECT 1 FROM tag_descriptions WHERE tag = ?2)
+                     OR EXISTS (SELECT 1 FROM tag_heads WHERE tag = ?2)
                      OR EXISTS (SELECT 1 FROM tag_feedback WHERE note_id = ?1 AND tag = ?2)",
             )?
             .query_row(params![id, tag], |r| r.get::<_, bool>(0))?;

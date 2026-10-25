@@ -51,8 +51,26 @@ export type MetadataEditReport = {
 
 /** A tag used on notes, described, or both (see `db::TagInfo`). */
 export type TagInfo = { tag: string; notes: number; description: string };
-/** A tag suggested for a note; `score` is the similarity to its description. */
-export type TagSuggestion = { tag: string; score: number };
+/** How a tag was scored (see `db::ScoreMethod`). */
+export type ScoreMethod = "classifier" | "description" | "descriptionAndExamples";
+/**
+ * A tag suggested for a note: `score` is the classifier's probability, or the similarity
+ * to its description (blended with its examples).
+ */
+export type TagSuggestion = { tag: string; score: number; method: ScoreMethod };
+/** A tag's classifier (see `db::TagTraining`). */
+export type TagTraining = {
+  tag: string;
+  positives: number;
+  negatives: number;
+  rejected: number;
+  status: "trained" | "waiting" | "descriptionOnly" | "needsExamples";
+  /** More positive examples needed before it is trained. */
+  needed: number;
+  precision: number | null;
+  recall: number | null;
+  trainedAt: number | null;
+};
 /** The threshold of the model suggestions use; `threshold` is null for an unknown model without one. */
 export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
 /** A note in a discovered group; `score` is its similarity to the group's centre. */
@@ -235,6 +253,8 @@ export const api = {
   suggestionThreshold: () => invoke<SuggestionThreshold>("suggestion_threshold"),
   /** `null` goes back to the model's default. */
   setSuggestionThreshold: (threshold: number | null) => invoke<void>("set_suggestion_threshold", { threshold }),
+  /** Per-tag classifier state; `TAGS_TRAINED_EVENT` says when it changed. */
+  tagTraining: () => invoke<TagTraining[]>("tag_training"),
 
   /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
   discoverTags: (groups: number | null, untaggedOnly: boolean) =>
@@ -259,6 +279,8 @@ export type IndexStatus =
 export const INDEX_STATUS_EVENT = "index-status";
 /** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
 export const RELATED_CHANGED_EVENT = "related-changed";
+/** Emitted after the training job trained or dropped a tag's classifier. */
+export const TAGS_TRAINED_EVENT = "tags-trained";
 
 export function isApiError(e: unknown): e is ApiError {
   return typeof e === "object" && e !== null && "kind" in e && "message" in e;

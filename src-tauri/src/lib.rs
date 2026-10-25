@@ -1,3 +1,4 @@
+pub mod classify;
 pub mod commands;
 pub mod config;
 pub mod db;
@@ -123,6 +124,7 @@ pub fn run() {
             commands::discover::discover_tags,
             commands::discover::cancel_discover_tags,
             commands::discover::create_tag_from_group,
+            commands::training::tag_training,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroizing;
 
-use super::{LOCKED_EVENT, Result, embeddings};
+use super::{LOCKED_EVENT, Result, embeddings, training};
 use crate::config::Config;
 use crate::db::Vault;
 use crate::session::{self, Session};
@@ -77,6 +77,7 @@ pub async fn open_vault(
 fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
+    training::start(app, generation);
     // A config write failure must not keep the user out of an unlocked vault.
     let _ = config.update(|c| c.remember(&path));
     Ok(VaultInfo::new(path))

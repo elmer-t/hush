@@ -32,6 +32,13 @@
     }
   }
 
+  function suggestionTitle(s: TagSuggestion): string {
+    const score = s.score.toFixed(2);
+    if (s.method === "classifier") return `Classifier trained on your notes: probability ${score}`;
+    if (s.method === "descriptionAndExamples") return `Similarity to the tag's description and examples: ${score}`;
+    return `Similarity to the tag's description: ${score}`;
+  }
+
   async function accept(tag: string) {
     if (deciding) return;
     deciding = true;
@@ -150,7 +157,7 @@
     {#if suggestions.length > 0}
       <ul class="suggestions" aria-label="Suggested tags">
         {#each suggestions as s (s.tag)}
-          <li title="Similarity to the tag's description: {s.score.toFixed(2)}">
+          <li title={suggestionTitle(s)}>
             <span class="muted">Suggested:</span>
             <span class="suggested">#{s.tag}</span>
             <button class="ghost small" disabled={deciding} aria-label="Accept tag {s.tag}" onclick={() => accept(s.tag)}>
