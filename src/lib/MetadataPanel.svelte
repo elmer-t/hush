@@ -10,8 +10,10 @@
     onset: (key: string, values: string[]) => void;
     /** Accepts a suggested tag: the parent saves pending edits, adds it and reloads the note. */
     onaccept: (tag: string) => Promise<void>;
+    /** Bumped when the note's suggestions changed elsewhere (a reject in the Suggestions view). */
+    revision?: number;
   };
-  let { meta, summary, onset, onaccept }: Props = $props();
+  let { meta, summary, onset, onaccept, revision = 0 }: Props = $props();
 
   let suggestions = $state<TagSuggestion[]>([]);
   let suggestionError = $state("");
@@ -20,6 +22,7 @@
 
   // Reloaded for each note and after each save (its tags may have changed).
   $effect(() => {
+    void revision;
     void loadSuggestions(summary.id, summary.updatedAt);
   });
 

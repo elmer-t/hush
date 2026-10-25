@@ -114,6 +114,15 @@ impl RelatedIndex {
         self.ids.truncate(last);
     }
 
+    /// `score` applied to every vector in the index, as `(note id, score)` in no
+    /// particular order. The vectors are unit length, as stored note vectors are.
+    pub fn score_all(&self, score: impl Fn(&[f32]) -> f32) -> Vec<(i64, f32)> {
+        if self.dims == 0 {
+            return Vec::new();
+        }
+        self.vectors.chunks_exact(self.dims).zip(&self.ids).map(|(v, id)| (*id, score(v))).collect()
+    }
+
     /// Up to `k` notes most similar to `id`, most similar first, `id` itself left out.
     /// `None` when `id` has no vector.
     pub fn nearest(&self, id: i64, k: usize) -> Option<Vec<i64>> {

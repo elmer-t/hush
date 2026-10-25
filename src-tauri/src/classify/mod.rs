@@ -7,6 +7,7 @@
 //! warm starts, and the whole thing is a loss, its gradient and L-BFGS.
 
 pub mod job;
+pub mod review;
 
 /// A tag needs this many positive examples before it gets a head.
 pub const MIN_POSITIVES: usize = 10;

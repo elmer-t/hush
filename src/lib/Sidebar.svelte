@@ -31,6 +31,7 @@
   import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
   import SearchFilters from "$lib/SearchFilters.svelte";
+  import Suggestions from "$lib/Suggestions.svelte";
 
   type Props = {
     /** The open note. */
@@ -48,8 +49,24 @@
     ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
     /** Bulk metadata edit. Resolves to the report, or null when it failed. */
     onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
+    /** Accepts a tag on notes in the Suggestions view. Resolves to the report, or null when it failed. */
+    onaccepttag: (ids: number[], tag: string, sources: string[]) => Promise<MetadataEditReport | null>;
+    /** Rejects a tag on notes in the Suggestions view. Resolves to whether it worked. */
+    onrejecttag: (ids: number[], tag: string) => Promise<boolean>;
   };
-  let { selected, trashCount, trashOpen, ontrash, onselect, onmove, onmovefolder, ondelete, onedit }: Props = $props();
+  let {
+    selected,
+    trashCount,
+    trashOpen,
+    ontrash,
+    onselect,
+    onmove,
+    onmovefolder,
+    ondelete,
+    onedit,
+    onaccepttag,
+    onrejecttag,
+  }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
@@ -74,6 +91,8 @@
   let loading = false;
   let generation = 0;
   let explorer = $state<ReturnType<typeof ExplorerTree>>();
+  // The tag the Suggestions view reviews; kept until the vault locks.
+  let reviewedTag = $state<string | null>(null);
 
   // Notes picked for a bulk action, in the visible list only. Frontend state, never stored.
   const picked = new SvelteSet<number>();
@@ -156,6 +175,14 @@
       .filter((f, i, all) => all.findIndex((g) => g.toLowerCase() === f.toLowerCase()) === i);
     if (selectedFolder !== null) selectedFolder = follow(selectedFolder);
     await Promise.all([treeFolderMoved(from, to).catch((e) => (error = errorMessage(e))), refresh()]);
+  }
+
+  /** Shows the Suggestions view for `tag` (Settings → Tags → Review suggestions). */
+  export function reviewTag(tag: string) {
+    text = "";
+    filters = emptyFilters();
+    reviewedTag = tag;
+    setView("suggestions");
   }
 
   /** The folder new notes go into. */
@@ -490,6 +517,13 @@
       <div class="segmented" role="group" aria-label="Note list view">
         <button aria-pressed={view === "tree"} onclick={() => setView("tree")}>Tree</button>
         <button aria-pressed={view === "recent"} onclick={() => setView("recent")}>Recent</button>
+        <button
+          aria-pressed={view === "suggestions"}
+          onclick={() => setView("suggestions")}
+          title="Review one tag's suggestions across the vault"
+        >
+          Suggestions
+        </button>
       </div>
       <div class="spacer"></div>
       <button
@@ -513,7 +547,15 @@
       {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
     </p>
   {/if}
-  {#if view === "tree" && !searching}
+  {#if view === "suggestions" && !searching}
+    <Suggestions
+      bind:tag={reviewedTag}
+      {selectedId}
+      onopen={onselect}
+      onaccept={onaccepttag}
+      onreject={onrejecttag}
+    />
+  {:else if view === "tree" && !searching}
     <div class="explorer">
       <ExplorerTree
         bind:this={explorer}
@@ -717,6 +759,7 @@
 
   .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
   }

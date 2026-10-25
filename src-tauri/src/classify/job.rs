@@ -10,6 +10,7 @@
 //! longer have enough examples, are deleted.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
@@ -27,6 +28,10 @@ use crate::session::{Session, SessionError};
 pub const QUIET: Duration = Duration::from_secs(30);
 /// Note vectors read per vault access.
 const PAGE: u32 = 500;
+/// Held for a whole pass, so a pass asked for on demand (the Suggestions view, after
+/// every 10 decisions) and the job's own never train the same heads side by side: the
+/// second waits and then finds them current.
+static PASSES: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrainError {
@@ -102,6 +107,7 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
 /// One pass: drops heads that shouldn't exist and (re)trains every tag with enough
 /// examples whose inputs changed. Each head is written as soon as it is trained.
 pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError> {
+    let _one_at_a_time = PASSES.lock().unwrap_or_else(|e| e.into_inner());
     let mut result = TrainPass::default();
     let Some((model, labels, heads)) = session.with_vault_quiet(generation, |v| {
         let Some(model) = v.embedding_model_ready()? else { return Ok(None) };

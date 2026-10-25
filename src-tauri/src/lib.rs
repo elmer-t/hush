@@ -125,6 +125,10 @@ pub fn run() {
             commands::discover::cancel_discover_tags,
             commands::discover::create_tag_from_group,
             commands::training::tag_training,
+            commands::review::review_tag_suggestions,
+            commands::review::accept_tag_suggestions,
+            commands::review::reject_tag_suggestions,
+            commands::review::retrain_tags,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
