@@ -197,8 +197,9 @@ fn the_index_is_rebuilt_when_the_ready_model_changes() {
     assert_eq!(related(&session, a, 10).unwrap().len(), 2);
 
     // Switch: the old vectors keep serving until the new model is complete.
+    // (A pass that drains the queue completes the new model, so check before it.)
     session.with_vault(|v| v.set_embedding_model("ctl-8")).unwrap();
-    job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    related::sync(&session, g).unwrap();
     assert_eq!(model(&session).as_deref(), Some("ctl-4"));
     index(&session, g, &source);
     assert_eq!(model(&session).as_deref(), Some("ctl-8"));
