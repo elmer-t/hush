@@ -380,3 +380,38 @@ fn import_into_an_existing_target_reports_the_merge() {
         })
         .unwrap();
 }
+
+#[test]
+fn oversized_files_are_skipped_or_unsupported_by_content() {
+    let source = tempfile::tempdir().unwrap();
+    let big = import::MAX_TEXT_BYTES as usize + 1;
+    fs::write(source.path().join("log.txt"), "line\n".repeat(big / 5 + 1)).unwrap();
+    let mut binary = vec![b'x'; big];
+    binary[10] = 0;
+    fs::write(source.path().join("dump.txt"), binary).unwrap();
+    let (_dir, session) = unlocked();
+    let report = run(&session, source.path(), true);
+    assert_eq!(report.imported, 0);
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].path, "log.txt");
+    assert!(report.skipped[0].message.starts_with("too large"), "{}", report.skipped[0].message);
+    assert_eq!(report.unsupported, vec![import::FormatCount { format: ".txt".into(), count: 1 }]);
+}
+
+#[test]
+fn notes_are_written_in_file_order_across_batches() {
+    let source = tempfile::tempdir().unwrap();
+    let files = import::BATCH_SIZE + 500;
+    for i in 0..files {
+        fs::write(source.path().join(format!("n{i:05}.txt")), format!("note {i}")).unwrap();
+    }
+    let (_dir, session) = unlocked();
+    let mut seen = Vec::new();
+    let report =
+        import::run(&session, source.path(), "", false, &AtomicBool::new(false), |p| seen.push(p.done)).unwrap();
+    assert_eq!(report.imported, files);
+    assert_eq!(seen, vec![0, import::BATCH_SIZE, files]);
+    let notes = session.with_vault(|v| v.folder_notes("", 0, files as u32)).unwrap();
+    assert_eq!(notes.len(), files);
+    assert!(notes.windows(2).all(|w| w[0].title < w[1].title && w[0].id < w[1].id));
+}
