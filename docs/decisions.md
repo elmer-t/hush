@@ -71,6 +71,7 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
   - **Snippets and summaries only for the page shown** (200 notes), not for every match.
   - **A newer search cancels an older one**: the session interrupts the older search's running statement (`sqlite3_interrupt`; only ever while a search, never a save or a job, is running on the connection) and the older search also stops between steps; it returns `cancelled`, which the frontend drops. A search still waiting for the vault when a newer one starts doesn't run.
   - With metadata filters the matches are still joined to `notes` (filters on tags, folders, dates and attributes at 1M notes are not covered here).
+  - **Measured** with the scale benchmark at 1M notes on the 4-core Linux container (median of 5; before → after): `t` 18.7 s → 0.1 ms (no note has the word *t*; it no longer matches every word starting with t), `th` 9.1 s → 26 ms, `the` 8.0 s → 24 ms, two words (`but monmoldaind`) 284 → 256 ms. The two-word case misses the 150 ms goal: one of its words is in nearly every note, and bm25 reads that word's whole list to weigh it.
 - Filters: tags (multi-select, AND), topic, author, folder, date range (created/updated toggle), attribute key = value.
 
 ## Import
