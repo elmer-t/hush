@@ -100,7 +100,8 @@ pub struct Scan {
     /// folders are left out.
     pub files: Vec<PathBuf>,
     /// Files in `<page>_files` folders next to a saved web page: styles, scripts and
-    /// images that belong to the page rather than being notes.
+    /// images that belong to the page rather than being notes. Such a folder with
+    /// documents in it (Markdown, text, HTML, RTF) is scanned like any other.
     pub page_assets: usize,
 }
 
@@ -186,7 +187,20 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
             }
             let path = entry.path();
             if entry.file_type()?.is_dir() {
-                walk(root, &path, scan, assets || is_page_assets(&name, &names))?;
+                if assets || !is_page_assets(&name, &names) {
+                    walk(root, &path, scan, assets)?;
+                    continue;
+                }
+                // Browsers fill `<page>_files` with styles, scripts and images. One that
+                // holds documents is an ordinary folder that happens to have that name.
+                let mut inner = Scan { files: Vec::new(), page_assets: 0 };
+                walk(root, &path, &mut inner, false)?;
+                if inner.files.iter().any(|f| formats::is_document(f)) {
+                    scan.files.extend(inner.files);
+                    scan.page_assets += inner.page_assets;
+                } else {
+                    scan.page_assets += inner.files.len() + inner.page_assets;
+                }
             } else if assets {
                 scan.page_assets += 1;
             } else {
@@ -201,6 +215,7 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
 }
 
 /// `page_files` next to `page.html` (or `.htm`), as browsers save a complete page.
+/// [`scan`] still imports it when it holds documents.
 fn is_page_assets(dir: &str, siblings: &HashSet<String>) -> bool {
     let Some(page) = dir.strip_suffix("_files") else { return false };
     let page = page.to_lowercase();

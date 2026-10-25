@@ -85,6 +85,12 @@ pub fn extension(path: &Path) -> String {
     path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
+/// Whether the extension is one people write notes in: Markdown, text, HTML or RTF.
+pub fn is_document(path: &Path) -> bool {
+    let ext = extension(path);
+    [MARKDOWN, TEXT, HTML, &["rtf"]].iter().any(|list| list.contains(&ext.as_str()))
+}
+
 /// Sniffs a file. `None` means it is not text (or not a format we can read yet).
 pub fn detect(path: &Path) -> std::io::Result<Option<Format>> {
     let ext = extension(path);
