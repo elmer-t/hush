@@ -116,6 +116,7 @@ pub fn run() {
             commands::tags::reject_tag_suggestion,
             commands::tags::suggestion_threshold,
             commands::tags::set_suggestion_threshold,
+            commands::embeddings::related_notes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -232,6 +232,8 @@ export const api = {
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),
+  /** Notes closest in meaning, most similar first; `null` if the note isn't indexed yet. */
+  relatedNotes: (id: number, limit: number) => invoke<NoteSummary[] | null>("related_notes", { id, limit }),
 };
 
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
@@ -241,6 +243,8 @@ export type IndexStatus =
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";
+/** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
+export const RELATED_CHANGED_EVENT = "related-changed";
 
 export function isApiError(e: unknown): e is ApiError {
   return typeof e === "object" && e !== null && "kind" in e && "message" in e;

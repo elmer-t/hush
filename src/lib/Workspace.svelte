@@ -18,6 +18,7 @@
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
+  import RelatedNotes from "$lib/RelatedNotes.svelte";
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import Trash from "$lib/Trash.svelte";
@@ -34,6 +35,7 @@
   let importOpened = $state(false);
   let showLeft = $state(true);
   let showRight = $state(true);
+  let showRelated = $state(true);
   let opened = $state<OpenedNote | null>(null);
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
@@ -429,6 +431,7 @@
             onset={(key, values) => editor?.setField(key, values)}
             onaccept={acceptSuggestion}
           />
+          <RelatedNotes id={summary.id} bind:open={showRelated} onopen={select} />
         {/if}
       </div>
     {:else}
