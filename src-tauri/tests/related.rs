@@ -162,6 +162,37 @@ fn the_index_follows_saves_trash_restore_and_delete() {
 }
 
 #[test]
+fn job_passes_update_only_the_notes_they_changed() {
+    let (_dir, path, session, g) = session("ctl-4");
+    let source = source(&[4]);
+    let a = note(&session, "A", "1 0 0 0");
+    index(&session, g, &source);
+    // A vector written behind the job's back, with the hash of the note's current text
+    // (so nothing will re-embed it), and the queue row its creation made dropped on a
+    // second connection: only a full comparison of the vault could find it.
+    let hidden = note(&session, "Hidden", "0.9 0.1 0 0");
+    session
+        .with_vault(|v| {
+            let text = v.embedding_texts(&[hidden])?.pop().unwrap();
+            v.write_embeddings("ctl-4", &[(hidden, text.hash, vec![0.9, 0.1, 0.0, 0.0])])
+        })
+        .unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.pragma_update(None, "key", common::PASS).unwrap();
+    raw.execute("DELETE FROM embedding_dirty", []).unwrap();
+    drop(raw);
+    let b = note(&session, "B", "0.5 0.5 0 0");
+    index(&session, g, &source);
+    let contains = |id| session.related_index().as_ref().unwrap().contains(id);
+    assert!(contains(b), "the note the pass embedded is loaded");
+    assert!(!contains(hidden), "the pass handed the index only its own notes, no full diff");
+    assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
+    // A full sync does find it.
+    assert!(related::sync(&session, g).unwrap());
+    assert_eq!(related(&session, a, 10).unwrap(), ["Hidden", "B"]);
+}
+
+#[test]
 fn the_index_is_empty_after_lock_and_rebuilt_after_unlock() {
     let (_dir, path, session, g) = session("ctl-4");
     let source = source(&[4]);

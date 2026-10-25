@@ -1,10 +1,13 @@
 //! Related notes: the notes whose vectors are closest to an open note's. The vectors of
-//! the ready model (`embedding_model_ready`) are kept in memory in one contiguous
-//! buffer, so a lookup is a brute-force scan that never touches the vault. The index
-//! lives in the [`Session`] next to the vault, is dropped and zeroed on lock, and is
-//! kept in sync by the embedding job (see [`update`] and [`sync`]).
+//! the ready model (`embedding_model_ready`) are kept in memory as `i8` (one byte per
+//! dimension, with a scale per note) in one contiguous buffer, so a lookup is a
+//! brute-force scan that never touches the vault; the best [`CANDIDATES`] are then
+//! reranked with their exact `f32` vectors from the vault. The index lives in the
+//! [`Session`] next to the vault, is dropped and zeroed on lock, and is kept in sync by
+//! the embedding job (see [`update`] and [`sync`]).
 
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use zeroize::{Zeroize, Zeroizing};
 
@@ -14,9 +17,14 @@ use crate::session::{Session, SessionError};
 
 /// Vectors read per vault access while (re)loading the index.
 const LOAD_PAGE: usize = 500;
+/// Notes the `i8` scan hands to the exact rerank.
+pub const CANDIDATES: usize = 100;
+/// Fewest rows per scan thread; below this a thread costs more than it saves.
+const MIN_ROWS_PER_THREAD: usize = 20_000;
 
-/// The in-memory vectors of one unlock. Vectors are stored unit-length, so the dot
-/// product is the cosine similarity.
+/// The in-memory vectors of one unlock. Each unit vector `x` is stored as `q · scale`
+/// with `q` in `i8` and `scale = max|x| / 127`, so the scan compares integers and
+/// multiplies once per note.
 pub struct RelatedIndex {
     /// The model the vectors come from; `None` while no model is ready.
     model: Option<String>,
@@ -28,8 +36,10 @@ pub struct RelatedIndex {
     hashes: Zeroizing<Vec<[u8; 32]>>,
     /// Row of each note in `ids`, `hashes` and `vectors`.
     rows: HashMap<i64, usize>,
-    /// `ids.len() * dims` floats, row after row.
-    vectors: Zeroizing<Vec<f32>>,
+    /// `ids.len() * dims` quantised values, row after row.
+    vectors: Zeroizing<Vec<i8>>,
+    /// The scale of each row.
+    scales: Zeroizing<Vec<f32>>,
 }
 
 impl RelatedIndex {
@@ -42,6 +52,7 @@ impl RelatedIndex {
             hashes: Zeroizing::new(Vec::with_capacity(capacity)),
             rows: HashMap::with_capacity(capacity),
             vectors: Zeroizing::new(Vec::with_capacity(capacity * dims)),
+            scales: Zeroizing::new(Vec::with_capacity(capacity)),
         }
     }
 
@@ -80,9 +91,11 @@ impl RelatedIndex {
             None => {
                 reserve(&mut self.vectors, self.dims);
                 reserve(&mut self.hashes, 1);
+                reserve(&mut self.scales, 1);
                 let len = self.vectors.len() + self.dims;
-                self.vectors.resize(len, 0.0);
+                self.vectors.resize(len, 0);
                 self.hashes.push([0; 32]);
+                self.scales.push(0.0);
                 self.ids.push(id);
                 self.rows.insert(id, self.ids.len() - 1);
                 self.ids.len() - 1
@@ -90,9 +103,9 @@ impl RelatedIndex {
         };
         self.hashes[row] = hash;
         let d = self.dims;
-        let slot = &mut self.vectors[row * d..(row + 1) * d];
-        slot.copy_from_slice(vector);
-        super::normalize(slot);
+        let mut unit = Zeroizing::new(vector.to_vec());
+        super::normalize(&mut unit);
+        self.scales[row] = quantize(&unit, &mut self.vectors[row * d..(row + 1) * d]);
     }
 
     /// Removes a note's vector: the last row moves into its place.
@@ -103,56 +116,172 @@ impl RelatedIndex {
         if row != last {
             self.vectors.copy_within(last * d..(last + 1) * d, row * d);
             self.hashes[row] = self.hashes[last];
+            self.scales[row] = self.scales[last];
             self.ids[row] = self.ids[last];
             self.rows.insert(self.ids[row], row);
         }
         // Zeroed before truncating: the spare capacity is only wiped when the buffer is dropped.
         self.vectors[last * d..].zeroize();
         self.hashes[last].zeroize();
+        self.scales[last].zeroize();
         self.vectors.truncate(last * d);
         self.hashes.truncate(last);
+        self.scales.truncate(last);
         self.ids.truncate(last);
     }
 
     /// `score` applied to every vector in the index, as `(note id, score)` in no
-    /// particular order. The vectors are unit length, as stored note vectors are.
+    /// particular order. The vectors are unit length, as stored note vectors are, give
+    /// or take the `i8` rounding (under 0.4% of the largest component).
     pub fn score_all(&self, score: impl Fn(&[f32]) -> f32) -> Vec<(i64, f32)> {
         if self.dims == 0 {
             return Vec::new();
         }
-        self.vectors.chunks_exact(self.dims).zip(&self.ids).map(|(v, id)| (*id, score(v))).collect()
+        let mut row = Zeroizing::new(vec![0.0f32; self.dims]);
+        self.vectors
+            .chunks_exact(self.dims)
+            .zip(self.scales.iter())
+            .zip(&self.ids)
+            .map(|((q, &scale), id)| {
+                row.iter_mut().zip(q).for_each(|(x, &q)| *x = f32::from(q) * scale);
+                (*id, score(&row))
+            })
+            .collect()
     }
 
-    /// Up to `k` notes most similar to `id`, most similar first, `id` itself left out.
-    /// `None` when `id` has no vector.
+    /// Up to `k` notes most similar to `id` by the `i8` vectors, most similar first,
+    /// `id` itself left out: candidates for [`rerank`]. `None` when `id` has no vector.
     pub fn nearest(&self, id: i64, k: usize) -> Option<Vec<i64>> {
         let &row = self.rows.get(&id)?;
         let d = self.dims;
         let query = &self.vectors[row * d..(row + 1) * d];
-        let mut scores: Vec<(f32, usize)> = self
-            .vectors
-            .chunks_exact(d)
-            .enumerate()
-            .filter(|&(i, _)| i != row)
-            .map(|(i, v)| (dot(query, v), i))
-            .collect();
-        let k = k.min(scores.len());
-        if k == 0 {
+        let n = self.ids.len();
+        if k == 0 || n <= 1 {
             return Some(Vec::new());
         }
+        // The best `k` of rows `start..`, in a bounded heap: the worst kept on top.
+        let scan = |start: usize, rows: &[i8]| -> Vec<(Score, Reverse<usize>)> {
+            let mut heap: BinaryHeap<Reverse<(Score, Reverse<usize>)>> = BinaryHeap::with_capacity(k + 1);
+            for (i, v) in rows.chunks_exact(d).enumerate() {
+                let i = start + i;
+                if i == row {
+                    continue;
+                }
+                let entry = (Score(idot(query, v) as f32 * self.scales[i]), Reverse(i));
+                if heap.len() < k {
+                    heap.push(Reverse(entry));
+                } else if heap.peek().is_some_and(|worst| entry > worst.0) {
+                    heap.pop();
+                    heap.push(Reverse(entry));
+                }
+            }
+            heap.into_iter().map(|r| r.0).collect()
+        };
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |c| (c.get() / 2).max(1))
+            .min(n.div_ceil(MIN_ROWS_PER_THREAD));
+        let mut best: Vec<(Score, Reverse<usize>)> = if threads <= 1 {
+            scan(0, &self.vectors)
+        } else {
+            let per = n.div_ceil(threads);
+            std::thread::scope(|s| {
+                let handles: Vec<_> = self
+                    .vectors
+                    .chunks(per * d)
+                    .enumerate()
+                    .map(|(t, rows)| s.spawn(move || scan(t * per, rows)))
+                    .collect();
+                handles.into_iter().flat_map(|h| h.join().expect("related-notes scan panicked")).collect()
+            })
+        };
         // Highest score first; ties by row, so the order is stable.
-        let order = |a: &(f32, usize), b: &(f32, usize)| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1));
-        if k < scores.len() {
-            scores.select_nth_unstable_by(k - 1, order);
-            scores.truncate(k);
-        }
-        scores.sort_unstable_by(order);
-        Some(scores.into_iter().map(|(_, i)| self.ids[i]).collect())
+        best.sort_unstable_by(|a, b| b.cmp(a));
+        best.truncate(k);
+        Some(best.into_iter().map(|(_, Reverse(i))| self.ids[i]).collect())
     }
 }
 
+/// A score that orders like a number, so `(Score, Reverse(row))` compares higher for a
+/// better score and, at equal score, for a lower row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Score(f32);
+
+impl Eq for Score {}
+
+impl PartialOrd for Score {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Score {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Writes `x` as `i8`s into `q` and returns the scale (`max|x| / 127`; 0 for a zero
+/// vector).
+fn quantize(x: &[f32], q: &mut [i8]) -> f32 {
+    let max = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if max == 0.0 || !max.is_finite() {
+        q.fill(0);
+        return 0.0;
+    }
+    let scale = max / 127.0;
+    for (q, v) in q.iter_mut().zip(x) {
+        *q = (v / scale).round().clamp(-127.0, 127.0) as i8;
+    }
+    scale
+}
+
+/// Integer dot product in sixteen running sums, so the compiler can use SIMD.
+fn idot(a: &[i8], b: &[i8]) -> i32 {
+    let mut sums = [0i32; 16];
+    let (a16, b16) = (a.chunks_exact(16), b.chunks_exact(16));
+    let tail: i32 = a16.remainder().iter().zip(b16.remainder()).map(|(&x, &y)| i32::from(x) * i32::from(y)).sum();
+    for (x, y) in a16.zip(b16) {
+        for i in 0..16 {
+            sums[i] += i32::from(x[i]) * i32::from(y[i]);
+        }
+    }
+    sums.iter().sum::<i32>() + tail
+}
+
 fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
+    let mut sums = [0.0f32; 8];
+    let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
+    let tail: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();
+    for (x, y) in a8.zip(b8) {
+        for i in 0..8 {
+            sums[i] += x[i] * y[i];
+        }
+    }
+    sums.iter().sum::<f32>() + tail
+}
+
+/// `candidates` (most similar first by the `i8` scan) reordered by the exact cosine of
+/// their `f32` vectors to `query`, the first `k`. Candidates without a vector in
+/// `vectors` (trashed or deleted since the index was synced) are left out; ties keep
+/// the scan's order.
+pub fn rerank(query: &[f32], candidates: &[i64], vectors: &[StoredVector], k: usize) -> Vec<i64> {
+    let mut q = Zeroizing::new(query.to_vec());
+    super::normalize(&mut q);
+    let mut scored: Vec<(f32, usize, i64)> = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(pos, &id)| {
+            let v = vectors.iter().find(|v| v.id == id)?;
+            if v.vector.len() != q.len() {
+                return None;
+            }
+            let mut unit = Zeroizing::new(v.vector.to_vec());
+            super::normalize(&mut unit);
+            Some((dot(&q, &unit), pos, id))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.into_iter().take(k).map(|(_, _, id)| id).collect()
 }
 
 /// Makes room for `additional` more elements without letting `Vec` reallocate, which
@@ -173,42 +302,35 @@ fn reserve<T: Zeroize + Copy>(v: &mut Zeroizing<Vec<T>>, additional: usize) {
 /// re-embedded vectors and drops those of notes that lost theirs (trashed, deleted,
 /// emptied). The vault is only held to read; never while the index is written.
 /// Returns whether the index changed.
+///
+/// The embedding job only calls this to build the index; after that it hands
+/// [`update`] the notes each pass changed. The full comparison here is for callers
+/// that don't know what changed.
 pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
-    let (ready, live) = session.with_vault_quiet(generation, |v| {
-        let Some(model) = v.embedding_model_ready()? else { return Ok((None, Vec::new())) };
-        let hashes = v.embedding_hashes(&model)?;
-        Ok((Some(model), hashes))
-    })?;
-
-    let (rebuild, remove, load) = {
+    let ready = session.with_vault_quiet(generation, |v| v.embedding_model_ready())?;
+    let built = session.related_index().as_ref().map(|index| index.model.clone());
+    if built.as_ref() != Some(&ready) {
+        return rebuild(session, generation, ready);
+    }
+    let Some(model) = ready else { return Ok(false) };
+    let live = session.with_vault_quiet(generation, |v| v.embedding_hashes(&model))?;
+    let (remove, load) = {
         let index = session.related_index();
-        match index.as_ref() {
-            Some(index) if index.model == ready => {
-                let live_ids: HashSet<i64> = live.iter().map(|(id, _)| *id).collect();
-                let remove: Vec<i64> = index.ids.iter().copied().filter(|id| !live_ids.contains(id)).collect();
-                let load: Vec<i64> =
-                    live.iter().filter(|(id, hash)| index.hash(*id) != Some(hash)).map(|(id, _)| *id).collect();
-                (false, remove, load)
-            }
-            _ => (true, Vec::new(), live.iter().map(|(id, _)| *id).collect()),
-        }
+        let Some(index) = index.as_ref() else { return Ok(false) };
+        let live_ids: HashSet<i64> = live.iter().map(|(id, _)| *id).collect();
+        let remove: Vec<i64> = index.ids.iter().copied().filter(|id| !live_ids.contains(id)).collect();
+        let load: Vec<i64> = live.iter().filter(|(id, hash)| index.hash(*id) != Some(hash)).map(|(id, _)| *id).collect();
+        (remove, load)
     };
-    if !rebuild && remove.is_empty() && load.is_empty() {
+    if remove.is_empty() && load.is_empty() {
         return Ok(false);
     }
-
     let mut loaded: Vec<StoredVector> = Vec::with_capacity(load.len());
-    if let Some(model) = &ready {
-        for page in load.chunks(LOAD_PAGE) {
-            loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(model, page))?);
-        }
+    for page in load.chunks(LOAD_PAGE) {
+        loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(&model, page))?);
     }
-
     session
         .update_related_index(generation, |index| {
-            if rebuild || index.is_none() {
-                *index = Some(RelatedIndex::new(ready.clone(), live.len()));
-            }
             let Some(index) = index.as_mut() else { return };
             for &id in &remove {
                 index.remove(id);
@@ -218,6 +340,35 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
             }
         })
         .ok_or(SessionError::Locked)?;
+    Ok(true)
+}
+
+/// Builds the index for `ready` from scratch: the stored vectors are read front to back
+/// in pages and quantised into a new index as they arrive, so no copy of every `f32`
+/// vector is held; the old index keeps serving until the new one replaces it.
+fn rebuild(session: &Session, generation: u64, ready: Option<String>) -> Result<bool, SessionError> {
+    let mut fresh = match &ready {
+        Some(model) => {
+            let count = session.with_vault_quiet(generation, |v| v.embedding_count(model))?;
+            RelatedIndex::new(ready.clone(), count)
+        }
+        None => RelatedIndex::new(None, 0),
+    };
+    if let Some(model) = &ready {
+        let mut after = 0;
+        loop {
+            let (page, next) =
+                session.with_vault_quiet(generation, |v| v.embedding_vector_page(model, after, LOAD_PAGE))?;
+            for v in &page {
+                fresh.upsert(v.id, v.hash, &v.vector);
+            }
+            match next {
+                Some(n) => after = n,
+                None => break,
+            }
+        }
+    }
+    session.update_related_index(generation, |index| *index = Some(fresh)).ok_or(SessionError::Locked)?;
     Ok(true)
 }
 
@@ -257,21 +408,34 @@ pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, S
 /// Up to `limit` live notes most similar to note `id`, most similar first. `None` when
 /// the note has no vector yet (empty, not indexed yet, or no model is ready).
 ///
-/// The scan holds only the index; the vault is taken afterwards, to look up the
-/// summaries. It does not count as activity: the frontend also asks after a background
-/// re-embed. Notes trashed or deleted since the job last synced the index are skipped.
+/// The `i8` scan holds only the index and picks [`CANDIDATES`] (or more for a long
+/// list); the vault is taken afterwards, to rerank them by their exact vectors and look
+/// up the summaries. It does not count as activity: the frontend also asks after a
+/// background re-embed. Notes trashed or deleted since the job last synced the index
+/// are skipped.
 pub fn related_notes(session: &Session, id: i64, limit: usize) -> Result<Option<Vec<NoteSummary>>, SessionError> {
     let generation = session.generation();
     if generation == 0 {
         return Err(SessionError::Locked);
     }
-    let mut k = limit;
+    let mut k = limit.max(CANDIDATES);
     loop {
-        let Some(ids) = session.related_index().as_ref().and_then(|index| index.nearest(id, k)) else {
-            return Ok(None);
+        let found = {
+            let index = session.related_index();
+            index.as_ref().and_then(|index| Some((index.model.clone()?, index.nearest(id, k)?)))
         };
-        let exhausted = ids.len() < k;
-        let mut notes = session.with_vault_quiet(generation, |v| v.note_summaries(&ids))?;
+        let Some((model, candidates)) = found else { return Ok(None) };
+        let exhausted = candidates.len() < k;
+        let notes = session.with_vault_quiet(generation, |v| {
+            let mut wanted = Vec::with_capacity(candidates.len() + 1);
+            wanted.push(id);
+            wanted.extend_from_slice(&candidates);
+            let vectors = v.embedding_vectors(&model, &wanted)?;
+            let Some(query) = vectors.iter().find(|v| v.id == id) else { return Ok(None) };
+            let ids = rerank(&query.vector, &candidates, &vectors, limit);
+            Ok(Some(v.note_summaries(&ids)?))
+        })?;
+        let Some(mut notes) = notes else { return Ok(None) };
         if notes.len() >= limit || exhausted {
             notes.truncate(limit);
             return Ok(Some(notes));
@@ -304,11 +468,15 @@ mod tests {
         index.remove(999);
         assert_eq!(index.len(), rows.len());
         assert_eq!(index.vectors.len(), rows.len() * 3);
+        assert_eq!(index.scales.len(), rows.len());
         for (id, v) in &rows {
             let row = index.rows[id];
             let mut expected = v.to_vec();
             crate::embed::normalize(&mut expected);
-            assert_eq!(&index.vectors[row * 3..row * 3 + 3], &expected[..]);
+            let stored: Vec<f32> = index.vectors[row * 3..row * 3 + 3].iter().map(|&q| f32::from(q) * index.scales[row]).collect();
+            for (s, e) in stored.iter().zip(&expected) {
+                assert!((s - e).abs() < 0.005, "{stored:?} vs {expected:?}");
+            }
             assert_eq!(index.hash(*id), Some(&[*id as u8; 32]));
         }
     }
@@ -322,5 +490,107 @@ mod tests {
         assert_eq!(index.len(), 3);
         assert_eq!(index.nearest(1, 5), Some(vec![3, 2]));
         assert_eq!(index.nearest(4, 5), None);
+    }
+
+    /// Pseudo-random unit vectors (xorshift), `n` of `dims`.
+    fn random_vectors(n: usize, dims: usize, mut seed: u64) -> Vec<Vec<f32>> {
+        (0..n)
+            .map(|_| {
+                let mut v: Vec<f32> = (0..dims)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        (seed % 20_000) as f32 / 10_000.0 - 1.0
+                    })
+                    .collect();
+                crate::embed::normalize(&mut v);
+                v
+            })
+            .collect()
+    }
+
+    #[test]
+    fn quantised_scan_and_rerank_match_exact_cosine() {
+        // Half the vectors near one of 20 centres, so many neighbours are close calls.
+        const N: usize = 10_000;
+        const DIMS: usize = 384;
+        let centres = random_vectors(20, DIMS, 7);
+        let noise = random_vectors(N, DIMS, 11);
+        let vectors: Vec<Vec<f32>> = noise
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let mut v: Vec<f32> = if i % 2 == 0 {
+                    centres[i % 20].iter().zip(n).map(|(c, x)| c + 0.6 * x).collect()
+                } else {
+                    n.clone()
+                };
+                crate::embed::normalize(&mut v);
+                v
+            })
+            .collect();
+        let mut index = RelatedIndex::new(Some("test".into()), N);
+        for (i, v) in vectors.iter().enumerate() {
+            index.upsert(i as i64, [0; 32], v);
+        }
+        let stored: Vec<StoredVector> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| StoredVector { id: i as i64, hash: [0; 32], vector: Zeroizing::new(v.clone()) })
+            .collect();
+        for query in (0..N).step_by(N / 40) {
+            let exact: Vec<(f32, i64)> = {
+                let mut all: Vec<(f32, i64)> = (0..N)
+                    .filter(|&i| i != query)
+                    .map(|i| (dot(&vectors[query], &vectors[i]), i as i64))
+                    .collect();
+                all.sort_by(|a, b| b.0.total_cmp(&a.0));
+                all
+            };
+            let candidates = index.nearest(query as i64, CANDIDATES).unwrap();
+            assert_eq!(candidates.len(), CANDIDATES);
+            let found = rerank(&vectors[query], &candidates, &stored, 10);
+            // The same ten, in the same order; a different note only where it ties
+            // (within float rounding) with the exact one at that place.
+            for (place, (&got, &(score, want))) in found.iter().zip(&exact[..10]).enumerate() {
+                if got != want {
+                    let got_score = dot(&vectors[query], &vectors[got as usize]);
+                    assert!((got_score - score).abs() < 1e-6, "query {query}, place {place}: {got} instead of {want}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_scan_splits_over_threads_without_changing_the_result() {
+        // Enough rows for several scan threads (where the machine has the cores).
+        let n = MIN_ROWS_PER_THREAD * 3 + 17;
+        let vectors = random_vectors(n, 16, 3);
+        let mut index = RelatedIndex::new(Some("test".into()), n);
+        for (i, v) in vectors.iter().enumerate() {
+            index.upsert(i as i64, [0; 32], v);
+        }
+        let threaded = index.nearest(5, 50).unwrap();
+        // The same ranking as one pass over every row by the same i8 scores.
+        let q = &index.vectors[5 * 16..6 * 16];
+        let mut all: Vec<(f32, usize)> = (0..n)
+            .filter(|&i| i != 5)
+            .map(|i| (idot(q, &index.vectors[i * 16..(i + 1) * 16]) as f32 * index.scales[i], i))
+            .collect();
+        all.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        let single: Vec<i64> = all[..50].iter().map(|&(_, i)| i as i64).collect();
+        assert_eq!(threaded, single);
+    }
+
+    #[test]
+    fn quantising_keeps_zero_vectors_and_signs() {
+        let mut q = [0i8; 4];
+        assert_eq!(quantize(&[0.0; 4], &mut q), 0.0);
+        assert_eq!(q, [0; 4]);
+        let scale = quantize(&[0.5, -0.5, 0.25, 0.0], &mut q);
+        assert_eq!(q, [127, -127, 64, 0]);
+        assert!((scale - 0.5 / 127.0).abs() < 1e-9);
+        assert_eq!(idot(&[127; 20], &[-1; 20]), -127 * 20);
     }
 }
