@@ -27,6 +27,10 @@ const SCAN_PAGE: u32 = 500;
 /// Fewer stale notes than this are embedded without a progress line, so an autosave
 /// doesn't flash one.
 const PROGRESS_MIN: usize = 10;
+/// Pause between safety-net pages. The vault mutex isn't fair: without a gap the job
+/// takes it back before a waiting lookup wakes, and at 1M notes related notes waited
+/// up to 3 s for the 33 s the scan takes.
+const SCAN_PAUSE: Duration = Duration::from_millis(5);
 /// How often a waiting job looks at the lock state (cheap, no vault access).
 const STOP_CHECK: Duration = Duration::from_millis(100);
 
@@ -168,6 +172,7 @@ pub fn run_with(
                         }
                         Err(e) => return fail(e, &mut report),
                     }
+                    std::thread::sleep(SCAN_PAUSE);
                     continue;
                 }
                 if !sleep_while_open(session, generation, poll) {

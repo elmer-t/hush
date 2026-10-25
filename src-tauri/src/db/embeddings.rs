@@ -410,6 +410,30 @@ impl Vault {
         Ok(vectors)
     }
 
+    /// Up to `limit` `model` vectors of live notes in storage order, with the position
+    /// to continue after (`None` on the last page): one pass reads the table front to
+    /// back instead of looking each note up. Trashed notes are found through the index
+    /// of trashed ids, so no note row is read.
+    pub fn embedding_vector_page(&self, model: &str, after: i64, limit: usize) -> Result<(Vec<StoredVector>, Option<i64>)> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT rowid, note_id, content_hash, vector FROM note_embeddings
+             WHERE model = ?1 AND rowid > ?2
+               AND note_id NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)
+             ORDER BY rowid LIMIT ?3",
+        )?;
+        let mut rows = stmt.query(params![model, after, limit as i64])?;
+        let (mut vectors, mut read, mut last) = (Vec::with_capacity(limit), 0, after);
+        while let Some(r) = rows.next()? {
+            read += 1;
+            last = r.get(0)?;
+            let hash: Vec<u8> = r.get(2)?;
+            let blob = Zeroizing::new(r.get::<_, Vec<u8>>(3)?);
+            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else { continue };
+            vectors.push(StoredVector { id: r.get(1)?, hash, vector: Zeroizing::new(embed::blob_to_vector(&blob)) });
+        }
+        Ok((vectors, (read == limit).then_some(last)))
+    }
+
     /// How many vectors are stored for `model`.
     pub fn embedding_count(&self, model: &str) -> Result<usize> {
         let n: i64 = self.conn.query_row("SELECT count(*) FROM note_embeddings WHERE model = ?1", [model], |r| r.get(0))?;
