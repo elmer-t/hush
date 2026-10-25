@@ -41,8 +41,10 @@ fn keeps_at_most_the_count_and_truncates_when_it_is_lowered() {
     // Raising it again doesn't bring the dropped ones back.
     vault.set_recent_opened_count(50).unwrap();
     assert_eq!(recent(&vault), ["N11", "N10", "N9"]);
-    assert!(matches!(vault.set_recent_opened_count(51), Err(Error::InvalidRecentOpenedCount)));
+    assert!(matches!(vault.set_recent_opened_count(1001), Err(Error::InvalidRecentOpenedCount)));
     assert_eq!(vault.recent_opened_count().unwrap(), 50);
+    vault.set_recent_opened_count(1000).unwrap();
+    assert_eq!(vault.recent_opened_count().unwrap(), 1000);
 }
 
 #[test]

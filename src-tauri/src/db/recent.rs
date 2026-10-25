@@ -10,7 +10,7 @@ pub const RECENT_OPENED_SETTING: &str = "recent_opened";
 /// How many notes the list keeps; 0 turns it off.
 pub const RECENT_OPENED_COUNT_SETTING: &str = "recent_opened_count";
 pub const DEFAULT_RECENT_OPENED_COUNT: u32 = 10;
-pub const MAX_RECENT_OPENED_COUNT: u32 = 50;
+pub const MAX_RECENT_OPENED_COUNT: u32 = 1000;
 
 impl Vault {
     /// How many recently opened notes are kept; 0 means none are recorded.
