@@ -53,6 +53,13 @@ impl OnnxEmbedder {
         Ok(Self { descriptor, tokenizer, session: Mutex::new(session), token_types })
     }
 
+    /// The token count of each chunk `text` is split into (special tokens included), as
+    /// a document. For the scale benchmark.
+    #[doc(hidden)]
+    pub fn chunk_lengths(&self, text: &str) -> Result<Vec<usize>, EmbedError> {
+        Ok(self.chunks(text, "")?.iter().map(Encoding::len).collect())
+    }
+
     /// Splits `text` into chunks of at most `max_tokens` tokens, each with the model's
     /// special tokens and `prefix`.
     fn chunks(&self, text: &str, prefix: &str) -> Result<Vec<Encoding>, EmbedError> {
