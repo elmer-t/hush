@@ -341,7 +341,7 @@ impl Vault {
         self.import_notes_until(notes, None)
     }
 
-    /// Like [`Vault::import_notes`], but commits once `budget` has passed, so a big
+    /// Like [`Vault::import_notes`], but stops inserting once `budget` has passed, so a big
     /// batch never holds the vault much longer than that. Returns the outcomes of the
     /// notes it got to (at least one); the rest are for the next call.
     pub fn import_notes_within(&mut self, notes: &[NewNote], budget: Duration) -> Result<Vec<Result<i64>>> {

@@ -317,7 +317,7 @@ fn write_only(prepared: &[Prepared]) {
         let mut written = 0;
         while written < notes.len() {
             let s = Instant::now();
-            written += vault.import_notes_within(&notes[written..], import::WRITE_BUDGET).unwrap().len();
+            written += vault.import_notes_within(&notes[written..], import::INSERT_BUDGET).unwrap().len();
             holds.push(s.elapsed());
         }
     }

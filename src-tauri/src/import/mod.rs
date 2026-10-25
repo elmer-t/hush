@@ -33,11 +33,12 @@ use rules::{AUTHOR_EMAIL_KEY, CompiledRule, RuleInput};
 pub use dates::parse_loose_date;
 
 /// Files read and converted per round. Their notes are written in as many
-/// transactions as [`WRITE_BUDGET`] takes.
+/// transactions as [`INSERT_BUDGET`] takes.
 pub const BATCH_SIZE: usize = 2_000;
-/// How long one write transaction may hold the vault. The UI waits that long at most
-/// for anything else it asks of the vault during an import.
-pub const WRITE_BUDGET: Duration = Duration::from_secs(1);
+/// How long a write transaction keeps inserting. Committing then takes about as long
+/// again (the full-text index writes out what it buffered), so a transaction holds the
+/// vault about 1 s: the longest the UI waits for it during an import.
+pub const INSERT_BUDGET: Duration = Duration::from_millis(500);
 /// Gap between write transactions. The vault mutex isn't fair: without a gap the import
 /// takes it back before a waiting UI command wakes.
 const WRITE_PAUSE: Duration = Duration::from_millis(5);
@@ -375,7 +376,7 @@ pub fn target_folder(target: &str, relative: &str) -> String {
 
 /// Imports (or, with `dry_run`, previews importing) the files under `source` into the
 /// open vault under the folder `target` (`""` for the root), using the vault's rules.
-/// Writes happen in transactions of at most [`BATCH_SIZE`] notes or [`WRITE_BUDGET`],
+/// Writes happen in transactions of at most [`BATCH_SIZE`] notes or [`INSERT_BUDGET`],
 /// with the vault set up for bulk writes meanwhile; `cancel` is checked between
 /// transactions.
 pub fn run(
@@ -474,7 +475,7 @@ pub fn run(
                         }
                     }
                     let rest = &notes[outcomes.len()..];
-                    outcomes.extend(on_vault(session, &vault_path, |v| v.import_notes_within(rest, WRITE_BUDGET))?);
+                    outcomes.extend(on_vault(session, &vault_path, |v| v.import_notes_within(rest, INSERT_BUDGET))?);
                 }
                 outcomes
             };
