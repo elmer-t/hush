@@ -159,6 +159,33 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - **Accept** (a row, or the selection: multi-select as in the note list) is the bulk *Add tag* edit plus an accepted `tag_feedback` row for every note that now has the tag, in one transaction, all or nothing; notes whose frontmatter can't be read are skipped and get no feedback. Open-note handling as for bulk edits: flush, edit, reload (nothing happens if the open note's pending edit couldn't be saved). **Reject** records rejected feedback only; the notes don't change.
 - **Retraining:** after every 10 decisions (each note counts; a bulk accept of 15 is 15) the view asks for a training pass at once (`retrain_tags`) rather than waiting for the job: the job trains only after 30 s without changes, and someone answering suggestions changes the vault every few seconds. Passes run one at a time (a pass on demand and the job's own never train side by side). Then the list reloads and re-sorts, keeping the row under the mouse (else the focused row) at the same place on screen. `tags-trained` from the job also reloads it.
 
+## Scale
+**Target** (2026-10-25): a vault of **50,000 folders and 1,000,000 notes** must stay fast to read, write and search, with the AI still local. Every earlier timing in this file was measured at 10k notes.
+
+**Benchmark** (`src-tauri/tests/scale.rs`, ignored test): `cargo test --release --manifest-path src-tauri/Cargo.toml --test scale -- --ignored --nocapture`. `HUSH_SCALE_NOTES` sets the size (default 1,000,000; 100,000 for a quicker run); `HUSH_SCALE_VAULT=<path>` keeps the generated vault and reuses it next time (it is checked against the generator version and size).
+- **Synthetic vault**, deterministic (fixed seeds, no dependency): an encrypted temp vault, notes over `notes / 20` folders (50,000 at 1M) up to 5 levels deep; bodies of 100–1,500 words, skewed short (mean ≈ 300), Zipf-distributed words with the 250 most common English words on top (so `t`/`th`/`the` hit frequent terms as in real text) and a quarter of each note from one of 500 topics; frontmatter with 0–3 tags; imported through `import_notes` in batches of 500. Nothing is written outside the temp dir and nothing is committed.
+- **Fake embedder** (384 dimensions, words hashed into buckets), so the numbers are the job's bookkeeping; the real model's throughput is measured on the first 1,000 notes when `npm run fetch-model` has been run (skipped otherwise).
+- **Measured:** (1) save-to-vector latency with the job running as in the app (1 s poll); (2) full passes per save and the time of a pass with nothing to do; (3) unlock (open + KDF) to the first `related_notes` answer; (4) `related_notes` median and worst over 50 random notes; (5) peak RSS during unlock and index load (Linux: `VmHWM` after resetting it); (6) real-model notes/s; (7) search for `t`, `th`, `the` and a two-word query (median of 5); (8) *Discover tags* end to end with the default group count, and its peak RSS.
+
+**Baseline** (main @ af6e9a9, 2026-10-25; shared 4-core Intel Xeon 2.1 GHz Linux cloud container, 15.7 GB RAM; release build with `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` to shorten the build; real model not available there):
+
+| | 100,000 notes | 1,000,000 notes |
+|---|---|---|
+| vault file | 0.71 GB | 7.17 GB |
+| generate + import | 78 s | 18.4 min |
+| first indexing, fake embedder | 15 s | 194 s |
+| 1. save-to-vector latency | 3.6 s | **34 s** |
+| 2. full passes per save / idle pass | 2 / 3.3 s | **2 / 34.6 s** |
+| 3. unlock-to-related | 5.6 s | **59 s** |
+| 4. `related_notes` median / worst | 55 / 60 ms | **542 / 626 ms** |
+| 5. peak RSS above baseline, unlock + index | 359 MB | **3.1 GB** |
+| 6. real model | skipped | skipped |
+| 7. search `t` / `th` / `the` (median) | 1.96 / 1.02 / 1.00 s | **18.7 / 9.1 / 8.0 s** |
+| 7. search, two words | 50 ms | 284 ms |
+| 8. discover tags (50 groups) / peak RSS | 36 s / 148 MB | **6.0 min / 1.6 GB** |
+
+Findings: every save costs two full rescans of the vault (#46); related notes are 5× over the 100 ms goal and the index peaks at 3 GB (#47); search as you type takes seconds per keystroke already at 100k and 8–19 s at 1M, far worse than the review guessed (#51); discover tags takes 6 minutes (#50). Search holds the vault mutex, so during a slow search saves and the job wait too.
+
 ## Extensibility
 - **No plugins or third-party code** (2026-10-24). Features that would otherwise be plugins (templates, daily notes, custom CSS, …) are built into Hush and requested as separate issues.
 - Why: a plugin runs after unlock and sees every decrypted note, and loading one would need the strict CSP relaxed.

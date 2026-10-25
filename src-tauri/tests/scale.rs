@@ -1,0 +1,542 @@
+//! Scale benchmark (issue #45): a synthetic vault of up to 1M notes over 50,000 folders,
+//! measuring what the scale fixes are judged by. Ignored, so it only runs on request:
+//!
+//! ```text
+//! cargo test --release --manifest-path src-tauri/Cargo.toml --test scale -- --ignored --nocapture
+//! ```
+//!
+//! - `HUSH_SCALE_NOTES`: notes to generate (default 1,000,000; 100,000 for a CI-sized run).
+//!   Folders are `notes / 20`, capped at 50,000.
+//! - `HUSH_SCALE_VAULT`: keep the generated, indexed vault at this path and reuse it on the
+//!   next run (generation takes a while at 1M). Without it, a temp dir is used.
+//!
+//! Embedding uses a fake 384-dimension embedder (words hashed into buckets), so the
+//! numbers are the job's bookkeeping, not inference; the real model's throughput is
+//! measured separately on 1,000 notes when `npm run fetch-model` has been run.
+
+mod common;
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use hush_lib::db::{NewNote, SearchQuery, Vault};
+use hush_lib::discover::{self, Options};
+use hush_lib::embed::job::{self, EmbedderSource};
+use hush_lib::embed::onnx::OnnxEmbedder;
+use hush_lib::embed::{self, EmbedError, Embedder, related};
+use hush_lib::session::Session;
+
+const MODEL: &str = "fake-384";
+const DIMS: usize = 384;
+/// Bumped when the generator changes, so a kept vault from an older one isn't reused.
+const GENERATOR: &str = "scale-v1";
+const GENERATOR_SETTING: &str = "scale_benchmark";
+const IMPORT_BATCH: usize = 500;
+const MAX_FOLDERS: usize = 50_000;
+const MAX_DEPTH: usize = 5;
+const TOPICS: usize = 500;
+const TOPIC_WORDS: usize = 40;
+/// Share of a body's words drawn from its topic, so notes form groups by meaning.
+const TOPIC_SHARE: f64 = 0.25;
+/// The job's poll interval in the app (`commands/embeddings.rs`).
+const POLL: Duration = Duration::from_secs(1);
+const SAVES: usize = 3;
+const LOOKUPS: usize = 50;
+const SEARCH_RUNS: usize = 5;
+const MODEL_SAMPLE: usize = 1_000;
+
+/// SplitMix64: small, deterministic, no dependency.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in [0, 1).
+    fn unit(&mut self) -> f64 {
+        (self.next() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    /// Rank in `0..n` with probability roughly proportional to `1 / (rank + 1)` (Zipf, s = 1),
+    /// like word frequencies in text.
+    fn zipf(&mut self, n: usize) -> usize {
+        (((n as f64 + 1.0).powf(self.unit())) as usize).saturating_sub(1).min(n - 1)
+    }
+}
+
+/// The most common English words first, so short prefixes (`t`, `th`, `the`) hit
+/// frequent terms as they would in a real archive; then made-up words.
+const COMMON: &[&str] = &[
+    "the", "of", "and", "to", "a", "in", "is", "it", "you", "that", "he", "was", "for", "on", "are", "with", "as",
+    "his", "they", "be", "at", "one", "have", "this", "from", "or", "had", "by", "not", "word", "but", "what", "some",
+    "we", "can", "out", "other", "were", "all", "there", "when", "up", "use", "your", "how", "said", "an", "each",
+    "she", "which", "do", "their", "time", "if", "will", "way", "about", "many", "then", "them", "would", "write",
+    "like", "so", "these", "her", "long", "make", "thing", "see", "him", "two", "has", "look", "more", "day", "could",
+    "go", "come", "did", "number", "sound", "no", "most", "people", "my", "over", "know", "water", "than", "call",
+    "first", "who", "may", "down", "side", "been", "now", "find", "any", "new", "work", "part", "take", "get", "place",
+    "made", "live", "where", "after", "back", "little", "only", "round", "man", "year", "came", "show", "every",
+    "good", "me", "give", "our", "under", "name", "very", "through", "just", "form", "sentence", "great", "think",
+    "say", "help", "low", "line", "differ", "turn", "cause", "much", "mean", "before", "move", "right", "boy", "old",
+    "too", "same", "tell", "does", "set", "three", "want", "air", "well", "also", "play", "small", "end", "put",
+    "home", "read", "hand", "port", "large", "spell", "add", "even", "land", "here", "must", "big", "high", "such",
+    "follow", "act", "why", "ask", "men", "change", "went", "light", "kind", "off", "need", "house", "picture", "try",
+    "again", "animal", "point", "mother", "world", "near", "build", "self", "earth", "father", "head", "stand", "own",
+    "page", "should", "country", "found", "answer", "school", "grow", "study", "still", "learn", "plant", "cover",
+    "food", "sun", "four", "between", "state", "keep", "eye", "never", "last", "let", "thought", "city", "tree",
+    "cross", "farm", "hard", "start", "might", "story", "saw", "far", "sea", "draw", "left", "late", "run", "while",
+    "press", "close", "night", "real", "life", "few", "north",
+];
+const VOCABULARY: usize = 30_000;
+
+fn vocabulary() -> Vec<String> {
+    const ONSETS: &[&str] = &["b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z", "br", "st", "tr", "pl", "gr", "sh"];
+    const VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ai", "ou", "ee"];
+    const CODAS: &[&str] = &["", "n", "r", "s", "t", "l", "nd", "st"];
+    let mut words: Vec<String> = COMMON.iter().map(|w| w.to_string()).collect();
+    let mut seen: std::collections::HashSet<String> = words.iter().cloned().collect();
+    let mut rng = Rng(7);
+    while words.len() < VOCABULARY {
+        let syllables = 2 + rng.below(3);
+        let word: String = (0..syllables)
+            .map(|_| {
+                format!("{}{}{}", ONSETS[rng.below(ONSETS.len())], VOWELS[rng.below(VOWELS.len())], CODAS[rng.below(CODAS.len())])
+            })
+            .collect();
+        if seen.insert(word.clone()) {
+            words.push(word);
+        }
+    }
+    words
+}
+
+/// 50,000 folder paths (fewer for small vaults), up to 5 levels deep: each folder hangs
+/// off the root or off an earlier folder that isn't at the maximum depth yet.
+fn folders(count: usize, words: &[String], rng: &mut Rng) -> Vec<String> {
+    let mut folders: Vec<(String, usize)> = Vec::with_capacity(count);
+    for i in 0..count {
+        let name = format!("{} {i}", words[COMMON.len() + rng.below(2_000)]);
+        let parent = if folders.is_empty() || rng.unit() < 0.02 { None } else { Some(rng.below(folders.len())) };
+        match parent.map(|p| &folders[p]) {
+            Some((path, depth)) if *depth < MAX_DEPTH => {
+                let entry = (format!("{path}/{name}"), depth + 1);
+                folders.push(entry);
+            }
+            _ => folders.push((name, 1)),
+        }
+    }
+    folders.into_iter().map(|(p, _)| p).collect()
+}
+
+struct Generator {
+    words: Vec<String>,
+    topics: Vec<Vec<usize>>,
+    folders: Vec<String>,
+    rng: Rng,
+}
+
+struct Generated {
+    folder: usize,
+    title: String,
+    body: String,
+    created: i64,
+    updated: i64,
+}
+
+impl Generator {
+    fn new(notes: usize) -> Self {
+        let words = vocabulary();
+        let mut rng = Rng(45);
+        let topics = (0..TOPICS)
+            .map(|_| (0..TOPIC_WORDS).map(|_| 1_000 + rng.below(VOCABULARY - 1_000)).collect())
+            .collect();
+        let folders = folders((notes / 20).clamp(1, MAX_FOLDERS), &words, &mut rng);
+        Self { words, topics, folders, rng }
+    }
+
+    /// Note `i`: 100–1,500 words, skewed short (mean ≈ 300), a quarter of them from the
+    /// note's topic; frontmatter with 0–3 tags.
+    fn note(&mut self, i: usize) -> Generated {
+        let rng = &mut self.rng;
+        let topic = rng.below(TOPICS);
+        let count = 100 + (1_400.0 * rng.unit().powi(6)) as usize;
+        let mut body = String::with_capacity(count * 7 + 64);
+        let tags = rng.below(4);
+        if tags > 0 {
+            let names: Vec<String> = (0..tags).map(|t| format!("t{}", (topic + t * 97) % 200)).collect();
+            body.push_str(&format!("---\ntags: [{}]\n---\n", names.join(", ")));
+        }
+        for w in 0..count {
+            let word = if rng.unit() < TOPIC_SHARE {
+                &self.words[self.topics[topic][rng.below(TOPIC_WORDS)]]
+            } else {
+                &self.words[rng.zipf(VOCABULARY)]
+            };
+            body.push_str(word);
+            body.push_str(match w % 60 {
+                59 => ".\n",
+                n if n % 12 == 11 => ". ",
+                _ => " ",
+            });
+        }
+        let title = format!("{} {} {i}", self.words[self.topics[topic][0]], self.words[COMMON.len() + rng.below(5_000)]);
+        // 2005–2026, in ms.
+        let created = 1_104_537_600_000 + (rng.unit() * 6.6e11) as i64;
+        let updated = created + (rng.unit() * 3e10) as i64;
+        let folder = rng.below(self.folders.len());
+        Generated { folder, title, body, created, updated }
+    }
+}
+
+/// Fast, deterministic: words hashed into `DIMS` buckets.
+struct Fake;
+
+impl Embedder for Fake {
+    fn model_id(&self) -> &str {
+        MODEL
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        let mut v = vec![0.0; DIMS];
+        for word in text.split_whitespace() {
+            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
+            v[h as usize % DIMS] += 1.0;
+        }
+        v[0] += 0.01;
+        embed::normalize(&mut v);
+        Ok(v)
+    }
+}
+
+/// The fake, counting passes: the job asks for its embedder once at the start of each.
+#[derive(Default)]
+struct Counting {
+    passes: AtomicUsize,
+    started: Mutex<Option<Instant>>,
+}
+
+impl Counting {
+    fn passes(&self) -> usize {
+        self.passes.load(Ordering::SeqCst)
+    }
+
+    fn last_start(&self) -> Option<Instant> {
+        *self.started.lock().unwrap()
+    }
+}
+
+impl EmbedderSource for Counting {
+    fn embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        self.passes.fetch_add(1, Ordering::SeqCst);
+        *self.started.lock().unwrap() = Some(Instant::now());
+        Ok(Arc::new(Fake))
+    }
+}
+
+/// Resident memory from `/proc/self/status` in kB (`VmRSS` now, `VmHWM` peak). Linux only.
+fn memory_kb(field: &str) -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with(field))?;
+    line.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Resets the peak (`VmHWM`) to the current RSS. Linux only.
+fn reset_peak() -> bool {
+    std::fs::write("/proc/self/clear_refs", "5").is_ok()
+}
+
+fn mb(kb: u64) -> String {
+    format!("{:.0} MB", kb as f64 / 1024.0)
+}
+
+fn ms(d: Duration) -> String {
+    format!("{:.1} ms", d.as_secs_f64() * 1000.0)
+}
+
+fn secs(d: Duration) -> String {
+    format!("{:.2} s", d.as_secs_f64())
+}
+
+fn median(mut v: Vec<Duration>) -> Duration {
+    v.sort();
+    v[v.len() / 2]
+}
+
+fn machine() -> String {
+    let cpu = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|c| c.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
+        .unwrap_or_else(|| "unknown CPU".into());
+    let ram = memory_from_meminfo().map_or("unknown RAM".into(), |kb| format!("{:.1} GB RAM", kb as f64 / 1024.0 / 1024.0));
+    let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
+    format!("{} {}, {cpu}, {cores} cores available, {ram}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn memory_from_meminfo() -> Option<u64> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    info.lines().find(|l| l.starts_with("MemTotal"))?.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Waits until `f` holds, checking every 10 ms.
+fn wait_until(limit: Duration, mut f: impl FnMut() -> bool) -> Duration {
+    let start = Instant::now();
+    while !f() {
+        assert!(start.elapsed() < limit, "gave up after {limit:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    start.elapsed()
+}
+
+/// Waits until the running job has started no pass for `quiet`.
+fn wait_idle(source: &Counting, quiet: Duration) {
+    loop {
+        let since = source.last_start().map_or(quiet, |t| t.elapsed());
+        if since >= quiet {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Creates (or reuses) the vault and fills it with `notes` synthetic notes.
+fn prepare(path: &Path, notes: usize) -> Vault {
+    let marker = format!("{GENERATOR}:{notes}");
+    if path.exists() {
+        let vault = Vault::open(path, common::PASS).unwrap();
+        assert_eq!(
+            vault.setting(GENERATOR_SETTING).unwrap().as_deref(),
+            Some(marker.as_str()),
+            "{} was made by another generator or size; delete it",
+            path.display()
+        );
+        println!("reusing {}", path.display());
+        return vault;
+    }
+    let mut vault = Vault::create(path, common::PASS).unwrap();
+    vault.set_embedding_model(MODEL).unwrap();
+    let mut generator = Generator::new(notes);
+    println!("generating {notes} notes in {} folders", generator.folders.len());
+    let start = Instant::now();
+    let mut words = 0usize;
+    let mut i = 0;
+    while i < notes {
+        let batch: Vec<Generated> = (i..(i + IMPORT_BATCH).min(notes)).map(|n| generator.note(n)).collect();
+        words += batch.iter().map(|g| g.body.split_whitespace().count()).sum::<usize>();
+        let new: Vec<NewNote> = batch
+            .iter()
+            .map(|g| NewNote {
+                folder: &generator.folders[g.folder],
+                title: &g.title,
+                body: &g.body,
+                created_at: g.created,
+                updated_at: g.updated,
+            })
+            .collect();
+        for outcome in vault.import_notes(&new).unwrap() {
+            outcome.unwrap();
+        }
+        i += batch.len();
+        if i % 100_000 == 0 || i == notes {
+            println!("  {i} notes, {}", secs(start.elapsed()));
+        }
+    }
+    println!("generated: {} ({} words per note on average)", secs(start.elapsed()), words / notes);
+    vault.set_setting(GENERATOR_SETTING, &marker).unwrap();
+    vault
+}
+
+#[test]
+#[ignore = "scale benchmark: minutes to hours; run with --ignored --nocapture"]
+fn scale_benchmark() {
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
+    let temp = tempfile::tempdir().unwrap();
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    println!("machine: {}", machine());
+
+    let vault = prepare(&path, notes);
+    let session = Session::default();
+    let g = session.unlock(vault, path.clone()).unwrap();
+    let ids = session.with_vault(|v| v.count_in_folder("")).unwrap();
+    assert_eq!(ids, notes);
+
+    // Index the whole vault (or check a kept one), as the job's first passes after unlock do.
+    let source = Counting::default();
+    let start = Instant::now();
+    loop {
+        let pass = job::pass(&session, g, &source, &mut |_| {}).unwrap();
+        if pass.stale == 0 {
+            break;
+        }
+        println!("  pass embedded {} notes", pass.stale);
+    }
+    println!("indexing with the fake embedder: {}", secs(start.elapsed()));
+    let file = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    println!("vault file: {:.2} GB", file as f64 / 1e9);
+
+    // 2. A pass that finds nothing to do: what every change costs the idle job.
+    let mut idle = Vec::new();
+    for _ in 0..3 {
+        let start = Instant::now();
+        assert_eq!(job::pass(&session, g, &source, &mut |_| {}).unwrap().stale, 0);
+        idle.push(start.elapsed());
+    }
+    let idle_pass = median(idle);
+
+    // 1, 2. Saves with the job running as in the app.
+    let quiet = idle_pass * 3 + POLL * 3;
+    let mut rng = Rng(46);
+    let mut latencies = Vec::new();
+    let mut passes_per_save = Vec::new();
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
+        wait_idle(&source, quiet);
+        for n in 0..SAVES {
+            let id = 1 + rng.below(notes) as i64;
+            let before = session.with_vault(|v| v.note_embedding(id)).unwrap();
+            let passes = source.passes();
+            session.with_vault(|v| v.update_body(id, &format!("A new text for the benchmark, save {n}, about lighthouses."))).unwrap();
+            latencies.push(wait_until(Duration::from_secs(3_600), || {
+                session.with_vault_quiet(g, |v| v.note_embedding(id)).unwrap() != before
+            }));
+            wait_idle(&source, quiet);
+            passes_per_save.push(source.passes() - passes);
+        }
+        session.lock();
+    });
+
+    // 3, 5. Unlock to related notes, and peak memory on the way.
+    let probe = 1 + rng.below(notes) as i64;
+    let baseline = memory_kb("VmRSS:");
+    let peak_reset = reset_peak();
+    let start = Instant::now();
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    let g = session.unlock(vault, path.clone()).unwrap();
+    let source = Counting::default();
+    let mut unlock_to_related = Duration::ZERO;
+    let mut lookups = Vec::new();
+    let mut searches: Vec<(String, Duration, Duration, usize)> = Vec::new();
+    let mut discover_time = Duration::ZERO;
+    let mut discover_peak = None;
+    let mut discovered = (0, 0);
+    let mut peak = None;
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
+        wait_until(Duration::from_secs(3_600), || matches!(related::related_notes(&session, probe, 10), Ok(Some(_))));
+        unlock_to_related = start.elapsed();
+        peak = memory_kb("VmHWM:");
+        wait_idle(&source, quiet);
+
+        // 4. Related notes for notes picked at random.
+        for _ in 0..LOOKUPS {
+            let id = 1 + rng.below(notes) as i64;
+            let start = Instant::now();
+            related::related_notes(&session, id, 10).unwrap();
+            lookups.push(start.elapsed());
+        }
+
+        // 7. Search as the user types: 1-, 2- and 3-character prefixes and two words.
+        let words = vocabulary();
+        let two = format!("{} {}", words[30], words[1_200]);
+        for text in ["t", "th", "the", two.as_str()] {
+            let query = SearchQuery { text: text.into(), ..Default::default() };
+            let mut runs = Vec::new();
+            let mut hits = 0;
+            for _ in 0..SEARCH_RUNS {
+                let start = Instant::now();
+                hits = session.with_vault(|v| v.search(&query)).unwrap().len();
+                runs.push(start.elapsed());
+            }
+            let worst = *runs.iter().max().unwrap();
+            searches.push((text.to_string(), median(runs), worst, hits));
+        }
+
+        // 8. Discover tags with the default number of groups.
+        let before = memory_kb("VmRSS:");
+        reset_peak();
+        let start = Instant::now();
+        let d = discover::run(&session, g, &Options::default(), &|| false).unwrap();
+        discover_time = start.elapsed();
+        discover_peak = memory_kb("VmHWM:").zip(before).map(|(p, b)| p.saturating_sub(b));
+        discovered = (d.notes, d.groups.len());
+        session.lock();
+    });
+
+    // 6. The real model, if its files are there.
+    let throughput = real_model_throughput(&path, notes);
+
+    lookups.sort();
+    println!();
+    println!("== Hush scale benchmark: {notes} notes, {} folders ==", (notes / 20).clamp(1, MAX_FOLDERS));
+    println!("machine: {}", machine());
+    println!("1. save-to-vector latency: {} (each: {})", secs(median(latencies.clone())), latencies.iter().map(|d| secs(*d)).collect::<Vec<_>>().join(", "));
+    println!("2. idle job: {} full passes per save ({passes_per_save:?}); a pass with nothing to do takes {}", passes_per_save.iter().max().unwrap(), secs(idle_pass));
+    println!("3. unlock-to-related latency: {} (open + KDF + first pass + index load)", secs(unlock_to_related));
+    println!("4. related_notes: median {}, worst {} over {LOOKUPS} lookups", ms(lookups[LOOKUPS / 2]), ms(lookups[LOOKUPS - 1]));
+    match (peak_reset, peak, baseline) {
+        (true, Some(p), Some(b)) => println!("5. peak RSS during unlock + index load: {} ({} above the {} before unlock)", mb(p), mb(p.saturating_sub(b)), mb(b)),
+        _ => println!("5. peak RSS: not measured on this OS (needs /proc/self/clear_refs)"),
+    }
+    match throughput {
+        Some((n, d)) => println!("6. real model: {:.1} notes/s ({n} notes in {})", n as f64 / d.as_secs_f64(), secs(d)),
+        None => println!("6. real model: SKIPPED (model files missing; run `npm run fetch-model`)"),
+    }
+    for (text, median, worst, hits) in &searches {
+        println!("7. search {text:?}: median {}, worst {} ({hits} hits shown)", ms(*median), ms(*worst));
+    }
+    println!(
+        "8. discover tags: {} for {} notes into {} groups{}",
+        secs(discover_time),
+        discovered.0,
+        discovered.1,
+        discover_peak.map_or(String::new(), |p| format!(", peak RSS {} above the start", mb(p)))
+    );
+}
+
+/// Notes per second of the bundled model on the first 1,000 notes; `None` without the files.
+fn real_model_throughput(path: &Path, notes: usize) -> Option<(usize, Duration)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+    let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
+    if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
+        return None;
+    }
+    let model = OnnxEmbedder::load(&dir, d).unwrap();
+    let vault = Vault::open(path, common::PASS).unwrap();
+    let ids: Vec<i64> = (1..=MODEL_SAMPLE.min(notes) as i64).collect();
+    let texts = vault.embedding_texts(&ids).unwrap();
+    drop(vault);
+    let start = Instant::now();
+    for note in &texts {
+        model.embed(&note.text).unwrap();
+    }
+    Some((texts.len(), start.elapsed()))
+}
+
+/// The generator itself, so a change to it shows up without running the benchmark.
+#[test]
+fn generator_is_deterministic_and_shaped_as_specified() {
+    let mut a = Generator::new(20_000);
+    let mut b = Generator::new(20_000);
+    assert_eq!(a.folders.len(), 1_000);
+    assert!(a.folders.iter().all(|f| f.matches('/').count() < MAX_DEPTH));
+    assert!(a.folders.iter().any(|f| f.matches('/').count() == MAX_DEPTH - 1), "some folders are 5 levels deep");
+    let mut words = 0;
+    for i in 0..2_000 {
+        let (x, y) = (a.note(i), b.note(i));
+        assert_eq!((&x.title, &x.body, x.folder), (&y.title, &y.body, y.folder));
+        let n = x.body.lines().filter(|l| !l.starts_with("---") && !l.starts_with("tags:")).map(|l| l.split_whitespace().count()).sum::<usize>();
+        assert!((100..=1_500).contains(&n), "{n} words");
+        words += n;
+    }
+    let mean = words / 2_000;
+    assert!((250..=350).contains(&mean), "mean {mean} words");
+}
