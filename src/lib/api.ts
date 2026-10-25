@@ -252,7 +252,7 @@ export const api = {
   setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),
   /** The recently opened notes, most recent first, without trashed ones. */
   recentOpenedNotes: () => invoke<NoteSummary[]>("recent_opened_notes"),
-  /** How many recently opened notes are kept, 0–50; 0 turns the list off. */
+  /** How many recently opened notes are kept, 0–1000; 0 turns the list off. */
   recentOpenedCount: () => invoke<number>("recent_opened_count"),
   setRecentOpenedCount: (count: number) => invoke<void>("set_recent_opened_count", { count }),
   clearRecentOpened: () => invoke<void>("clear_recent_opened"),

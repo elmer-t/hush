@@ -209,7 +209,7 @@
     <h2>Recently opened notes</h2>
     <label>
       How many notes the "Recently opened" list keeps (0 = off)
-      <input type="number" min="0" max="50" step="1" bind:value={recentCount} required />
+      <input type="number" min="0" max="1000" step="1" bind:value={recentCount} required />
     </label>
     <p class="muted">Kept inside the vault, per vault. Turning it off clears the list.</p>
     {#if recentError}<p class="error" role="alert">{recentError}</p>{/if}

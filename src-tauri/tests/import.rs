@@ -117,6 +117,31 @@ fn fixture_files_are_cleaned() {
 }
 
 #[test]
+fn page_folders_with_documents_are_imported() {
+    let source = tempfile::tempdir().unwrap();
+    for file in [
+        "Arc.htm",
+        "Arc_files/sitter.html",
+        "Arc_files/PandP.jpg",
+        "Arc_files/more/jamie.html",
+        "page.html",
+        "page_files/style.css",
+        "page_files/logo.gif",
+    ] {
+        let path = source.path().join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "<html><body>text</body></html>").unwrap();
+    }
+    let scan = import::scan(source.path()).unwrap();
+    let files: Vec<String> = scan.files.iter().map(|f| f.to_string_lossy().replace('\\', "/")).collect();
+    assert_eq!(
+        files,
+        ["Arc.htm", "Arc_files/PandP.jpg", "Arc_files/more/jamie.html", "Arc_files/sitter.html", "page.html"]
+    );
+    assert_eq!(scan.page_assets, 2, "page_files/ only holds the page's styles and images");
+}
+
+#[test]
 fn import_into_vault() {
     let source = fixture();
     let (_dir, session) = unlocked();
