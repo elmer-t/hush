@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
-pub use embeddings::{EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText};
+pub use embeddings::{EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, StoredVector};
 pub use links::{Backlink, OutgoingLink, Resolution};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};

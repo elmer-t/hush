@@ -4,10 +4,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::db::{self, Vault};
+use crate::embed::related::RelatedIndex;
 
 pub const AUTO_LOCK_SETTING: &str = "auto_lock_minutes";
 pub const DEFAULT_AUTO_LOCK_MINUTES: u32 = 10;
@@ -31,6 +32,9 @@ pub struct Session {
     unlocks: AtomicU64,
     /// The generation of the open vault, 0 while locked. Readable without the mutex.
     current: AtomicU64,
+    /// The related-notes index of the open vault, kept apart from the vault so a lookup
+    /// never waits for it. Dropped (and zeroed) on lock.
+    related: RwLock<Option<RelatedIndex>>,
 }
 
 struct Unlocked {
@@ -81,6 +85,7 @@ impl Session {
         });
         self.current.store(generation, Ordering::SeqCst);
         drop(guard);
+        self.drop_related_index();
         if let Some(previous) = previous {
             let _ = previous.vault.close();
         }
@@ -110,13 +115,50 @@ impl Session {
         if let Some(unlocked) = guard.take() {
             let _ = unlocked.vault.close();
         }
+        drop(guard);
+        self.drop_related_index();
         true
     }
 
     fn take(&self) -> Option<Unlocked> {
         let mut guard = self.guard();
         self.current.store(0, Ordering::SeqCst);
-        guard.take()
+        let unlocked = guard.take();
+        drop(guard);
+        self.drop_related_index();
+        unlocked
+    }
+
+    /// Called after `current` changed, so a job of the old unlock can't put its index
+    /// back (see [`Session::update_related_index`]). The buffers zero themselves on drop.
+    fn drop_related_index(&self) {
+        *self.related.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// The related-notes index of the open vault; `None` while locked or until the
+    /// embedding job first builds it.
+    pub fn related_index(&self) -> RwLockReadGuard<'_, Option<RelatedIndex>> {
+        self.related.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Changes the related-notes index, unless the vault of unlock `generation` is no
+    /// longer open (then returns `None`). Checked under the index lock, which lock and
+    /// unlock take after changing the generation, so a stale job can't write.
+    pub fn update_related_index<T>(
+        &self,
+        generation: u64,
+        f: impl FnOnce(&mut Option<RelatedIndex>) -> T,
+    ) -> Option<T> {
+        let mut index = self.related.write().unwrap_or_else(|e| e.into_inner());
+        if generation == 0 || !self.is_open(generation) {
+            return None;
+        }
+        Some(f(&mut index))
+    }
+
+    /// The generation of the open vault, 0 while locked.
+    pub fn generation(&self) -> u64 {
+        self.current.load(Ordering::SeqCst)
     }
 
     pub fn touch(&self) {

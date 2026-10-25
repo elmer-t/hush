@@ -109,6 +109,7 @@ pub fn run() {
             commands::import::default_import_rules,
             commands::import::test_import_rules,
             commands::embeddings::index_status,
+            commands::embeddings::related_notes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
