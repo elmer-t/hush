@@ -66,6 +66,7 @@
         <span class="text">
           <span class="head">
             <span class="title">{note.title}</span>
+            {#if note.rating}<span class="rating" aria-label="{note.rating} of 5 stars">★{note.rating}</span>{/if}
             <span class="date">{shortDate(note.updatedAt)}</span>
           </span>
           <span class="folder">{note.folder || "vault root"}</span>
@@ -173,6 +174,13 @@
     flex: 1;
     min-width: 0;
     font-weight: 500;
+  }
+
+  .rating {
+    flex: none;
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
   }
 
   .date {

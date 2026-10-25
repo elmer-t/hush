@@ -72,6 +72,8 @@ pub enum Error {
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
     InvalidTrashDays,
+    #[error("a rating must be a whole number from 1 to 5")]
+    InvalidRating,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
     #[error(transparent)]
