@@ -1,8 +1,9 @@
 //! The background job that keeps every tag's head up to date. It runs a pass on unlock,
 //! then again whenever the vault has changed and been quiet for a while (30 s in the
-//! app), so an import or a burst of edits trains once. Same rules as the embedding job:
-//! it reaches the vault only through [`Session::with_vault_quiet`] (no activity, so it
-//! never postpones auto-lock), never while it computes, and it stops on lock.
+//! app), so an import or a burst of edits trains once; it doesn't start while an import
+//! runs. Same rules as the embedding job: it reaches the vault only through
+//! [`Session::with_vault_quiet`] (no activity, so it never postpones auto-lock), never
+//! while it computes, and it stops on lock.
 //!
 //! A head is retrained only when its inputs changed: a SHA-256 over the training
 //! version, the ready model, every note vector's id and content hash, and the tag's
@@ -80,6 +81,10 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
             changed_at = Some(Instant::now());
         }
         seen = Some(changes);
+        // The notes an import brings have no vectors yet: wait until it is over.
+        if session.import_running() {
+            changed_at = Some(Instant::now());
+        }
         if changed_at.is_some_and(|t| t.elapsed() >= quiet) {
             changed_at = None;
             match pass(session, generation) {

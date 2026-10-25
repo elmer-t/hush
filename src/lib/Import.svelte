@@ -53,9 +53,9 @@
     const all: { id: Tab; label: string; count: number | null; warn?: boolean }[] = [
       { id: "samples", label: "Samples", count: null },
       { id: "warnings", label: "Warnings", count: report.warningCount, warn: true },
-      { id: "folders", label: "Folders", count: report.folders.length },
+      { id: "folders", label: "Folders", count: report.folderCount },
       { id: "links", label: "Ambiguous links", count: report.ambiguousLinks.length },
-      { id: "skipped", label: "Skipped", count: report.skipped.length },
+      { id: "skipped", label: "Skipped", count: report.skippedCount },
       { id: "unsupported", label: "Not supported", count: unsupportedCount(report) },
     ];
     return all.filter((t) => t.count === null || t.count > 0);
@@ -73,8 +73,8 @@
         sub: report.unsupported.map((u) => `${u.format} ${u.count.toLocaleString()}`).join(" · ") || "files",
         tone: "",
       },
-      { label: "Skipped", value: report.skipped.length, sub: "files", tone: "" },
-      { label: "Folders", value: report.folders.length, sub: "in the vault", tone: "" },
+      { label: "Skipped", value: report.skippedCount, sub: "files", tone: "" },
+      { label: "Folders", value: report.folderCount, sub: "in the vault", tone: "" },
       { label: "Warnings", value: report.warningCount, sub: "imported with notes", tone: "warn" },
     ];
   });
@@ -198,6 +198,12 @@
   <ul class="messages">
     {#each items as m, i (i)}<li><span class="file">{m.file}</span> {m.text}</li>{/each}
   </ul>
+{/snippet}
+
+{#snippet more(total: number, listed: number)}
+  {#if total > listed}
+    <p class="muted">And {(total - listed).toLocaleString()} more.</p>
+  {/if}
 {/snippet}
 
 <div class="import">
@@ -370,16 +376,16 @@
             {/if}
           {:else if tab === "warnings"}
             {@render messages(report.warnings.map((m) => ({ file: m.path, text: m.message })))}
-            {#if report.warningCount > report.warnings.length}
-              <p class="muted">And {(report.warningCount - report.warnings.length).toLocaleString()} more.</p>
-            {/if}
+            {@render more(report.warningCount, report.warnings.length)}
           {:else if tab === "folders"}
             {@render messages(report.folders.map((f) => ({ file: f.folder || "(vault root)", text: plural(f.count, "note") })))}
+            {@render more(report.folderCount, report.folders.length)}
           {:else if tab === "links"}
             <p class="muted">These links match more than one note. Open the note and pick the one meant.</p>
             {@render messages(report.ambiguousLinks.map((l) => ({ file: l.note, text: `[[${l.target}]]` })))}
           {:else if tab === "skipped"}
             {@render messages(report.skipped.map((m) => ({ file: m.path, text: m.message })))}
+            {@render more(report.skippedCount, report.skipped.length)}
           {:else}
             <p class="muted">Hush can't read these formats yet (Word documents, PDFs, images, …). The files stay in the folder.</p>
             <ul class="chips">
