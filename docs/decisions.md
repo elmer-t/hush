@@ -167,24 +167,24 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 - **Fake embedder** (384 dimensions, words hashed into buckets), so the numbers are the job's bookkeeping; the real model's throughput is measured on the first 1,000 notes when `npm run fetch-model` has been run (skipped otherwise).
 - **Measured:** (1) save-to-vector latency with the job running as in the app (1 s poll); (2) full passes per save and the time of a pass with nothing to do; (3) unlock (open + KDF) to the first `related_notes` answer; (4) `related_notes` median and worst over 50 random notes; (5) peak RSS during unlock and index load (Linux: `VmHWM` after resetting it); (6) real-model notes/s; (7) search for `t`, `th`, `the` and a two-word query (median of 5); (8) *Discover tags* end to end with the default group count, and its peak RSS.
 
-**Baseline** (main @ af6e9a9, 2026-10-25; shared 4-core Intel Xeon 2.1 GHz Linux cloud container, 15.7 GB RAM; release build with `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` to shorten the build; real model not available there):
+**Baseline** (main @ af6e9a9, 2026-10-25). Linux: shared 4-core Intel Xeon 2.1 GHz cloud container, 15.7 GB RAM, release build with `CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` to shorten the build, real model not available there. Windows: the dev machine, 16 cores, real model present (CPU and RAM weren't printed by that version of the test; peak RSS is measured on Linux only).
 
-| | 100,000 notes | 1,000,000 notes |
-|---|---|---|
-| vault file | 0.71 GB | 7.17 GB |
-| generate + import | 78 s | 18.4 min |
-| first indexing, fake embedder | 15 s | 194 s |
-| 1. save-to-vector latency | 3.6 s | **34 s** |
-| 2. full passes per save / idle pass | 2 / 3.3 s | **2 / 34.6 s** |
-| 3. unlock-to-related | 5.6 s | **59 s** |
-| 4. `related_notes` median / worst | 55 / 60 ms | **542 / 626 ms** |
-| 5. peak RSS above baseline, unlock + index | 359 MB | **3.1 GB** |
-| 6. real model | skipped | skipped |
-| 7. search `t` / `th` / `the` (median) | 1.96 / 1.02 / 1.00 s | **18.7 / 9.1 / 8.0 s** |
-| 7. search, two words | 50 ms | 284 ms |
-| 8. discover tags (50 groups) / peak RSS | 36 s / 148 MB | **6.0 min / 1.6 GB** |
+| | Linux 100,000 | Linux 1,000,000 | Windows 1,000,000 |
+|---|---|---|---|
+| vault file | 0.71 GB | 7.17 GB | 7.17 GB |
+| generate + import | 78 s | 18.4 min | 23.9 min |
+| first indexing, fake embedder | 15 s | 194 s | 233 s |
+| 1. save-to-vector latency | 3.6 s | **34 s** | **47 s** |
+| 2. full passes per save / idle pass | 2 / 3.3 s | **2 / 34.6 s** | **2 / 47.9 s** |
+| 3. unlock-to-related | 5.6 s | **59 s** | **77 s** |
+| 4. `related_notes` median / worst | 55 / 60 ms | **542 / 626 ms** | **279 / 287 ms** |
+| 5. peak RSS above baseline, unlock + index | 359 MB | **3.1 GB** | not measured |
+| 6. real model, 1,000 notes | skipped | skipped | **2.5 notes/s** (402 s) |
+| 7. search `t` / `th` / `the` (median) | 1.96 / 1.02 / 1.00 s | **18.7 / 9.1 / 8.0 s** | **20.5 / 12.3 / 11.7 s** |
+| 7. search, two words | 50 ms | 284 ms | 453 ms |
+| 8. discover tags (50 groups) / peak RSS | 36 s / 148 MB | **6.0 min / 1.6 GB** | **3.5 min** / not measured |
 
-Findings: every save costs two full rescans of the vault (#46); related notes are 5× over the 100 ms goal and the index peaks at 3 GB (#47); search as you type takes seconds per keystroke already at 100k and 8–19 s at 1M, far worse than the review guessed (#51); discover tags takes 6 minutes (#50). Search holds the vault mutex, so during a slow search saves and the job wait too.
+Findings: every save costs two full rescans of the vault (#46); related notes are 5× over the 100 ms goal and the index peaks at 3 GB (#47); search as you type takes seconds per keystroke already at 100k and 8–19 s at 1M, far worse than the review guessed (#51); discover tags takes 3.5–6 minutes (#50). The real model's 2.5 notes/s on Windows means about **4.6 days of CPU** to index 1M notes for the first time (1M ÷ 2.5/s ≈ 400,000 s), far above the review's 6–21 h estimate (#49); it is also much slower than the 13 notes/s measured earlier with the fp32 model on 2 Linux cores, which is worth explaining before #49 picks its fixes. Search holds the vault mutex, so during a slow search saves and the job wait too.
 
 ## Extensibility
 - **No plugins or third-party code** (2026-10-24). Features that would otherwise be plugins (templates, daily notes, custom CSS, …) are built into Hush and requested as separate issues.

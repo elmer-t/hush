@@ -276,6 +276,7 @@ fn machine() -> String {
     let cpu = std::fs::read_to_string("/proc/cpuinfo")
         .ok()
         .and_then(|c| c.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
+        .or_else(|| std::env::var("PROCESSOR_IDENTIFIER").ok())
         .unwrap_or_else(|| "unknown CPU".into());
     let ram = memory_from_meminfo().map_or("unknown RAM".into(), |kb| format!("{:.1} GB RAM", kb as f64 / 1024.0 / 1024.0));
     let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
@@ -285,6 +286,16 @@ fn machine() -> String {
 fn memory_from_meminfo() -> Option<u64> {
     let info = std::fs::read_to_string("/proc/meminfo").ok()?;
     info.lines().find(|l| l.starts_with("MemTotal"))?.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Locks the session when dropped, so a failed measurement stops the job thread
+/// instead of leaving the test hanging.
+struct LockOnDrop<'a>(&'a Session);
+
+impl Drop for LockOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.lock();
+    }
 }
 
 /// Waits until `f` holds, checking every 10 ms.
@@ -395,16 +406,20 @@ fn scale_benchmark() {
     // 1, 2. Saves with the job running as in the app.
     let quiet = idle_pass * 3 + POLL * 3;
     let mut rng = Rng(46);
+    let run = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let mut latencies = Vec::new();
     let mut passes_per_save = Vec::new();
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
+        let _stop = LockOnDrop(&session);
         wait_idle(&source, quiet);
         for n in 0..SAVES {
             let id = 1 + rng.below(notes) as i64;
             let before = session.with_vault(|v| v.note_embedding(id)).unwrap();
             let passes = source.passes();
-            session.with_vault(|v| v.update_body(id, &format!("A new text for the benchmark, save {n}, about lighthouses."))).unwrap();
+            // Unique per run, so a kept vault saved by an earlier run still changes.
+            let text = format!("A new text for the benchmark, save {n} of run {run}, about lighthouses.");
+            session.with_vault(|v| v.update_body(id, &text)).unwrap();
             latencies.push(wait_until(Duration::from_secs(3_600), || {
                 session.with_vault_quiet(g, |v| v.note_embedding(id)).unwrap() != before
             }));
@@ -431,6 +446,7 @@ fn scale_benchmark() {
     let mut peak = None;
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
+        let _stop = LockOnDrop(&session);
         wait_until(Duration::from_secs(3_600), || matches!(related::related_notes(&session, probe, 10), Ok(Some(_))));
         unlock_to_related = start.elapsed();
         peak = memory_kb("VmHWM:");
