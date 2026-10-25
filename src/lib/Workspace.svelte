@@ -121,8 +121,29 @@
     await editor?.flush();
     // The auto-lock time may have been changed there.
     if (view === "settings") void loadAutoLock();
-    view = view === next ? "note" : next;
+    if (view === next) await showNote();
+    else view = next;
     if (next === "import") importOpened = true;
+  }
+
+  /**
+   * Back to the note view. The editor remounts from `opened`, which autosaves don't
+   * update, so the open note is read again first: otherwise the editor would show the
+   * text from when it was opened, and its next autosave would write that back.
+   */
+  async function showNote() {
+    if (opened) {
+      try {
+        const fresh = await api.openNote(opened.note.id);
+        opened = fresh;
+        summary = fresh.note;
+        meta = fresh.meta;
+      } catch (e) {
+        opened = summary = meta = null;
+        error = errorMessage(e);
+      }
+    }
+    view = "note";
   }
 
   async function lock() {
@@ -283,6 +304,55 @@
     }
   }
 
+  // Bumped to reload the open note's suggestions after a reject elsewhere.
+  let suggestionRevision = $state(0);
+
+  /** Accepts a tag on notes from the Suggestions view. Like a bulk edit: flush first, reload after. */
+  async function acceptTag(ids: number[], tag: string, sources: string[]): Promise<MetadataEditReport | null> {
+    const open = await flushIfIn(ids);
+    // Reloading would drop edits that couldn't be saved; the editor shows why.
+    if (open !== null && editor?.unsaved()) return null;
+    let report: MetadataEditReport;
+    try {
+      report = await api.acceptTagSuggestions(tag, ids);
+    } catch (e) {
+      error = errorMessage(e);
+      return null;
+    }
+    error = "";
+    if (report.changed.length === 0) return report;
+    await sidebar?.refresh(sources);
+    if (open !== null && report.changed.includes(open)) {
+      try {
+        show(await api.openNote(open), false);
+        editorRevision++;
+      } catch (e) {
+        error = errorMessage(e);
+      }
+    }
+    return report;
+  }
+
+  async function rejectTag(ids: number[], tag: string): Promise<boolean> {
+    try {
+      await api.rejectTagSuggestions(tag, ids);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    if (opened && ids.includes(opened.note.id)) suggestionRevision++;
+    return true;
+  }
+
+  /** Settings → Tags → Review suggestions: back to the note, with the Suggestions view for `tag`. */
+  async function reviewTag(tag: string) {
+    await showNote();
+    showLeft = true;
+    await tick();
+    sidebar?.reviewTag(tag);
+  }
+
   async function deleteNotes(ids: number[], sources: string[]): Promise<boolean> {
     const title = ids.length === 1 ? (summary?.id === ids[0] ? summary.title : findNote(ids[0])?.title) : undefined;
     try {
@@ -381,6 +451,8 @@
         onmovefolder={moveFolder}
         ondelete={deleteNotes}
         onedit={editNotes}
+        onaccepttag={acceptTag}
+        onrejecttag={rejectTag}
       />
     </div>
   {/if}
@@ -391,7 +463,7 @@
       <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh("all")} /></div>
     {/if}
     {#if view === "settings"}
-      <div class="page"><Settings /></div>
+      <div class="page"><Settings onreviewtag={reviewTag} /></div>
     {:else if view === "trash"}
       <Trash onrestored={restored} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
@@ -430,6 +502,7 @@
             {summary}
             onset={(key, values) => editor?.setField(key, values)}
             onaccept={acceptSuggestion}
+            revision={suggestionRevision}
           />
           <RelatedNotes id={summary.id} bind:open={showRelated} onopen={select} />
         {/if}
