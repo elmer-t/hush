@@ -144,6 +144,23 @@ CREATE TABLE tag_feedback (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (note_id, tag)
 );
+"#, r#"
+-- Per-tag classifier heads, trained on the user's own tags and feedback. Derived data:
+-- the job retrains a head whose `inputs` (SHA-256 of what it was trained on) or `model`
+-- no longer match. `weights` is little-endian f32s; `precision`/`recall` are
+-- cross-validated and NULL when undefined.
+CREATE TABLE tag_heads (
+    tag        TEXT PRIMARY KEY,
+    model      TEXT NOT NULL,
+    weights    BLOB NOT NULL,
+    bias       REAL NOT NULL,
+    n_pos      INTEGER NOT NULL,
+    n_neg      INTEGER NOT NULL,
+    precision  REAL,
+    recall     REAL,
+    trained_at INTEGER NOT NULL,
+    inputs     BLOB NOT NULL
+);
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -296,5 +313,54 @@ mod tests {
         assert_eq!(rows, 0, "tag_feedback cascades from notes");
         let rows: i64 = conn.query_row("SELECT count(*) FROM tag_descriptions", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 2, "descriptions are case-sensitive and don't depend on notes");
+    }
+
+    /// A vault from before tag classifiers (version 6) keeps its notes, vectors,
+    /// descriptions and feedback and gains an empty, case-sensitive `tag_heads` table.
+    #[test]
+    fn tag_heads_migration_keeps_descriptions_and_feedback() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..6] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 6).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES (1, 'T', 'body #jr', 1, 1);
+             INSERT INTO tags(id, name) VALUES (7, 'jr');
+             INSERT INTO note_tags VALUES (1, 7);
+             INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f');
+             INSERT INTO tag_descriptions VALUES ('jr', 'journal', x'0000803f', 'm');
+             INSERT INTO tag_feedback VALUES (1, 'dr', 0, 5);
+             INSERT INTO settings VALUES ('suggest_threshold:m', '0.5');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        assert_eq!(version, 7);
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(body, "body #jr");
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
+        assert_eq!(vectors, 1);
+        let description: (String, String) =
+            conn.query_row("SELECT description, model FROM tag_descriptions", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(description, ("journal".to_string(), "m".to_string()));
+        let feedback: (String, bool, i64) =
+            conn.query_row("SELECT tag, accepted, created_at FROM tag_feedback", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!(feedback, ("dr".to_string(), false, 5));
+        let threshold: String =
+            conn.query_row("SELECT value FROM settings WHERE key = 'suggest_threshold:m'", [], |r| r.get(0)).unwrap();
+        assert_eq!(threshold, "0.5");
+        let heads: i64 = conn.query_row("SELECT count(*) FROM tag_heads", [], |r| r.get(0)).unwrap();
+        assert_eq!(heads, 0);
+
+        let insert = "INSERT INTO tag_heads VALUES (?1, 'm', x'0000803f', 0.5, 10, 12, 0.9, NULL, 3, x'00')";
+        conn.execute(insert, ["jr"]).unwrap();
+        conn.execute(insert, ["Jr"]).unwrap();
+        assert!(conn.execute(insert, ["jr"]).is_err(), "one head per tag");
+        let recall: Option<f64> = conn.query_row("SELECT recall FROM tag_heads WHERE tag = 'jr'", [], |r| r.get(0)).unwrap();
+        assert_eq!(recall, None);
     }
 }

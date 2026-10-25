@@ -203,7 +203,7 @@ fn embed_descriptions(
 }
 
 /// Sleeps for `duration`, waking early if the vault locks. Returns whether it is still open.
-fn sleep_while_open(session: &Session, generation: u64, duration: Duration) -> bool {
+pub(crate) fn sleep_while_open(session: &Session, generation: u64, duration: Duration) -> bool {
     let mut left = duration;
     while !left.is_zero() {
         if !session.is_open(generation) {

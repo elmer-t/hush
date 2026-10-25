@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, errorMessage, type SuggestionThreshold, type TagInfo } from "$lib/api";
+  import TagTraining from "$lib/TagTraining.svelte";
 
   let tags = $state<TagInfo[]>([]);
   let loaded = $state(false);
@@ -93,8 +94,8 @@
 <section class="card tags" aria-labelledby="tags-heading">
   <h2 id="tags-heading">Tags</h2>
   <p class="muted">
-    Describe a tag in a sentence and Hush suggests it on notes whose meaning is close to it. A tag without a
-    description is never suggested. Tags are case-sensitive.
+    Describe a tag in a sentence and Hush suggests it on notes whose meaning is close to it. Until a tag has a
+    classifier (below), it is only suggested if it has a description. Tags are case-sensitive.
   </p>
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -129,6 +130,8 @@
     </div>
     {#if newError}<p class="error" role="alert">{newError}</p>{/if}
   </form>
+
+  <TagTraining {tags} />
 
   {#if threshold}
     <form class="threshold" onsubmit={saveThreshold}>

@@ -5,6 +5,7 @@ pub mod import;
 pub mod notes;
 pub mod search;
 pub mod tags;
+pub mod training;
 pub mod vault;
 
 use serde::{Serialize, Serializer};

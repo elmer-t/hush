@@ -1,3 +1,4 @@
+pub mod classify;
 pub mod commands;
 pub mod config;
 pub mod db;
@@ -116,6 +117,7 @@ pub fn run() {
             commands::tags::reject_tag_suggestion,
             commands::tags::suggestion_threshold,
             commands::tags::set_suggestion_threshold,
+            commands::training::tag_training,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
