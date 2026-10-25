@@ -16,6 +16,7 @@ pub const DEFAULT_AUTHOR_SETTING: &str = "default_author";
 pub struct NoteMeta {
     author: Option<String>,
     topic: Option<String>,
+    rating: Option<u8>,
     tags: Vec<String>,
     frontmatter_tags: Vec<String>,
     attributes: Vec<(String, String)>,
@@ -27,6 +28,7 @@ impl NoteMeta {
         Self {
             author: p.author,
             topic: p.topic,
+            rating: p.rating,
             tags: p.tags,
             frontmatter_tags: p.frontmatter_tags,
             attributes: p.attributes,

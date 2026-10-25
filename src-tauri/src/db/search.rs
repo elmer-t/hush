@@ -37,6 +37,8 @@ pub struct SearchQuery {
     /// Unix millis, exclusive.
     pub to: Option<i64>,
     pub attributes: Vec<(String, String)>,
+    /// Notes rated this many stars or more; unrated notes never match.
+    pub min_rating: Option<u8>,
     pub limit: Option<u32>,
     pub offset: u32,
 }
@@ -139,10 +141,22 @@ impl Vault {
             args.push(value.clone().into());
         }
 
+        let min_rating = q.min_rating.filter(|m| *m > 0);
+        if let Some(min) = min_rating {
+            // Implies `rating IS NOT NULL`, so the partial index on rating applies.
+            filters.push("n.rating >= ?".into());
+            args.push(i64::from(min).into());
+        }
+
         let limit = i64::from(q.limit.unwrap_or(200));
         let offset = i64::from(q.offset);
         let Some(fts) = fts_query(&q.text) else {
-            let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM notes n WHERE 1");
+            // Left to itself SQLite walks `notes_updated` newest first and checks each
+            // note's rating, which reads the whole vault when few notes are rated. Most
+            // notes are unrated, so reading the rated ones and sorting them is the
+            // cheaper bet.
+            let index = if min_rating.is_some() { " INDEXED BY notes_rating" } else { "" };
+            let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM notes n{index} WHERE 1");
             for f in &filters {
                 sql.push_str(" AND ");
                 sql.push_str(f);

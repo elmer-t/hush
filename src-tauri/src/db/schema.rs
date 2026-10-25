@@ -224,6 +224,22 @@ CREATE TABLE trash_folders (
     deleted_at INTEGER PRIMARY KEY,
     folder     TEXT NOT NULL COLLATE NOCASE
 );
+"#, r#"
+-- Star ratings: frontmatter `rating` (1–5) gets its own column, like author and topic,
+-- so "4 stars or more" is a range. Most notes are unrated, so the index only holds
+-- rated ones. Ratings written before this were generic attributes: a note with exactly
+-- one valid `rating` attribute moves it into the column; anything else (`4.5`, `five`,
+-- a list) stays an attribute, as the parser keeps it.
+ALTER TABLE notes ADD COLUMN rating INTEGER CHECK (rating BETWEEN 1 AND 5);
+CREATE INDEX notes_rating ON notes(rating) WHERE rating IS NOT NULL;
+CREATE TEMP TABLE rating_moves AS
+    SELECT note_id, CAST(min(value) AS INTEGER) AS rating FROM note_attributes
+    WHERE key = 'rating' GROUP BY note_id
+    HAVING count(*) = 1 AND min(value) IN ('1', '2', '3', '4', '5');
+UPDATE notes SET rating = (SELECT m.rating FROM rating_moves m WHERE m.note_id = notes.id)
+    WHERE id IN (SELECT note_id FROM rating_moves);
+DELETE FROM note_attributes WHERE key = 'rating' AND note_id IN (SELECT note_id FROM rating_moves);
+DROP TABLE rating_moves;
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -436,7 +452,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -572,5 +588,49 @@ mod tests {
         assert_eq!(groups, 0);
         conn.execute("INSERT INTO trash_folders VALUES (7, 'a/b')", []).unwrap();
         assert!(conn.execute("INSERT INTO trash_folders VALUES (7, 'c')", []).is_err(), "one group per deleted_at");
+    }
+
+    /// A vault from before ratings (version 10) moves valid `rating` attributes into the
+    /// new column and keeps invalid ones (and lists) as attributes.
+    #[test]
+    fn rating_migration_moves_valid_attributes_into_the_column() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..10] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 10).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES
+                 (1, 'Four', '---\nrating: 4\n---\n', 1, 1), (2, 'Half', '---\nrating: 4.5\n---\n', 1, 1),
+                 (3, 'List', '---\nrating: [3, 5]\n---\n', 1, 1), (4, 'None', '', 1, 1),
+                 (5, 'Nine', '---\nrating: 9\nmood: calm\n---\n', 1, 1);
+             INSERT INTO note_attributes VALUES (1, 'rating', '4'), (2, 'rating', '4.5'), (3, 'rating', '3'),
+                 (3, 'rating', '5'), (5, 'rating', '9'), (5, 'mood', 'calm');",
+        )
+        .unwrap();
+
+        migrate(&mut conn, &mut |_| {}).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let ratings: Vec<(i64, Option<i64>)> = conn
+            .prepare("SELECT id, rating FROM notes ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(ratings, [(1, Some(4)), (2, None), (3, None), (4, None), (5, None)]);
+        let attrs: Vec<(i64, String, String)> = conn
+            .prepare("SELECT note_id, key, value FROM note_attributes ORDER BY note_id, key, value")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let attrs: Vec<(i64, &str, &str)> = attrs.iter().map(|(n, k, v)| (*n, k.as_str(), v.as_str())).collect();
+        assert_eq!(attrs, [(2, "rating", "4.5"), (3, "rating", "3"), (3, "rating", "5"), (5, "mood", "calm"), (5, "rating", "9")]);
+        assert!(conn.execute("UPDATE notes SET rating = 6 WHERE id = 4", []).is_err(), "1 to 5 only");
+        assert!(conn.execute("UPDATE notes SET rating = 0 WHERE id = 4", []).is_err());
     }
 }

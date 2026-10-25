@@ -16,6 +16,8 @@ pub struct Note {
     pub body: String,
     pub author: Option<String>,
     pub topic: Option<String>,
+    /// 1–5 stars, from frontmatter `rating`.
+    pub rating: Option<u8>,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -29,6 +31,7 @@ pub struct NoteSummary {
     pub title: String,
     pub author: Option<String>,
     pub topic: Option<String>,
+    pub rating: Option<u8>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -41,6 +44,7 @@ impl Note {
             title: self.title.clone(),
             author: self.author.clone(),
             topic: self.topic.clone(),
+            rating: self.rating,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -58,7 +62,7 @@ pub struct NewNote<'a> {
 }
 
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
-pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at";
+pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at, n.rating";
 
 impl NoteSummary {
     pub(super) fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -70,6 +74,7 @@ impl NoteSummary {
             topic: r.get(4)?,
             created_at: r.get(5)?,
             updated_at: r.get(6)?,
+            rating: r.get(7)?,
         })
     }
 }
@@ -110,7 +115,7 @@ impl Vault {
         let mut note = self
             .conn
             .query_row(
-                "SELECT id, folder, title, body, author, topic, created_at, updated_at FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT id, folder, title, body, author, topic, created_at, updated_at, rating FROM notes WHERE id = ?1 AND deleted_at IS NULL",
                 [id],
                 |r| {
                     Ok(Note {
@@ -120,6 +125,7 @@ impl Vault {
                         body: r.get(3)?,
                         author: r.get(4)?,
                         topic: r.get(5)?,
+                        rating: r.get(8)?,
                         tags: Vec::new(),
                         created_at: r.get(6)?,
                         updated_at: r.get(7)?,
@@ -412,9 +418,9 @@ pub(super) fn subtree_params(folder: &str) -> (String, String, String) {
 pub(super) fn derive(conn: &Connection, id: i64, body: &str) -> Result<()> {
     let p = markdown::parse(body);
     conn.prepare_cached(
-        "UPDATE notes SET author = ?2, topic = ?3, created_at = COALESCE(?4, created_at) WHERE id = ?1",
+        "UPDATE notes SET author = ?2, topic = ?3, rating = ?5, created_at = COALESCE(?4, created_at) WHERE id = ?1",
     )?
-    .execute(params![id, p.author, p.topic, p.created_at])?;
+    .execute(params![id, p.author, p.topic, p.created_at, p.rating])?;
 
     for table in ["note_tags", "note_attributes"] {
         conn.prepare_cached(&format!("DELETE FROM {table} WHERE note_id = ?1"))?.execute([id])?;

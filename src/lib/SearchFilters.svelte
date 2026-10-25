@@ -79,6 +79,14 @@
         {#each facets.authors as author (author)}<option value={author}>{author}</option>{/each}
       </select>
     </label>
+    <label class:set={filters.minRating > 0}>
+      Rating
+      <select bind:value={filters.minRating}>
+        <option value={0}>Any</option>
+        {#each [1, 2, 3, 4] as n (n)}<option value={n}>★ {n}+</option>{/each}
+        <option value={5}>★ 5</option>
+      </select>
+    </label>
   </div>
 
   <div class="dates">
