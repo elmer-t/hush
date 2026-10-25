@@ -4,6 +4,7 @@ pub mod discover;
 pub mod embeddings;
 pub mod import;
 pub mod notes;
+pub mod review;
 pub mod search;
 pub mod tags;
 pub mod training;

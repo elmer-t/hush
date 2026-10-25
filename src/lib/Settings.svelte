@@ -3,6 +3,12 @@
   import { api, errorMessage } from "$lib/api";
   import TagSettings from "$lib/TagSettings.svelte";
 
+  type Props = {
+    /** Opens the Suggestions view for a tag. */
+    onreviewtag: (tag: string) => void;
+  };
+  let { onreviewtag }: Props = $props();
+
   let minutes = $state(10);
   let minutesStatus = $state("");
   let minutesError = $state("");
@@ -113,7 +119,7 @@
     </div>
   </form>
 
-  <TagSettings />
+  <TagSettings onreview={onreviewtag} />
 
   <form class="card" onsubmit={saveMinutes}>
     <h2>Auto-lock</h2>

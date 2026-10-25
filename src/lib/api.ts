@@ -82,8 +82,27 @@ export type Discovery = { model: string | null; notes: number; k: number; groups
 
 export type DateField = "created" | "updated";
 
-/** The left pane: the explorer tree, or the folder tree with a flat list by updated. */
-export type SidebarView = "tree" | "recent";
+/**
+ * The left pane: the explorer tree, the folder tree with a flat list by updated, or one
+ * tag's suggestions across the vault.
+ */
+export type SidebarView = "tree" | "recent" | "suggestions";
+
+/** Mirrors `db::ReviewOrder`. */
+export type ReviewOrder = "mostLikely" | "needsReview";
+/** A note suggested for the reviewed tag; `excerpt` is the body start without frontmatter. */
+export type ReviewNote = { id: number; folder: string; title: string; excerpt: string; score: number };
+/** One tag's suggestions across the vault (see `db::SuggestionReview`); `method` is null when it can't be scored. */
+export type SuggestionReview = {
+  tag: string;
+  method: ScoreMethod | null;
+  /** The lowest score listed. */
+  minScore: number;
+  order: ReviewOrder;
+  /** How many notes are suggested; `notes` holds the first of them. */
+  total: number;
+  notes: ReviewNote[];
+};
 
 /** Mirrors `db::SearchQuery`. Dates are Unix millis; `from` is inclusive, `to` exclusive. */
 export type SearchQuery = {
@@ -253,6 +272,16 @@ export const api = {
   suggestionThreshold: () => invoke<SuggestionThreshold>("suggestion_threshold"),
   /** `null` goes back to the model's default. */
   setSuggestionThreshold: (threshold: number | null) => invoke<void>("set_suggestion_threshold", { threshold }),
+  /** The first `limit` notes suggested for `tag` across the vault, in `order`. */
+  reviewTagSuggestions: (tag: string, order: ReviewOrder, limit: number) =>
+    invoke<SuggestionReview>("review_tag_suggestions", { tag, order, limit }),
+  /** Adds the tag to the notes and records them as accepted, all or nothing. Flush the editor first. */
+  acceptTagSuggestions: (tag: string, ids: number[]) =>
+    invoke<MetadataEditReport>("accept_tag_suggestions", { tag, ids }),
+  /** Records the tag as rejected on the notes, all or nothing; the notes don't change. */
+  rejectTagSuggestions: (tag: string, ids: number[]) => invoke<void>("reject_tag_suggestions", { tag, ids }),
+  /** A training pass now; resolves to whether a classifier changed (then `TAGS_TRAINED_EVENT` fires too). */
+  retrainTags: () => invoke<boolean>("retrain_tags"),
   /** Per-tag classifier state; `TAGS_TRAINED_EVENT` says when it changed. */
   tagTraining: () => invoke<TagTraining[]>("tag_training"),
 

@@ -4,6 +4,12 @@
   import DiscoverTags from "$lib/DiscoverTags.svelte";
   import TagTraining from "$lib/TagTraining.svelte";
 
+  type Props = {
+    /** Opens the Suggestions view for a tag. */
+    onreview: (tag: string) => void;
+  };
+  let { onreview }: Props = $props();
+
   let tags = $state<TagInfo[]>([]);
   let loaded = $state(false);
   let error = $state("");
@@ -111,6 +117,14 @@
             <span class="tag">#{info.tag}</span>
             <span class="muted count">{info.notes === 1 ? "1 note" : `${info.notes} notes`}</span>
             {#if savedTag === info.tag}<span class="muted count">Saved.</span>{/if}
+            <button
+              type="button"
+              class="ghost small review"
+              title="Review #{info.tag}'s suggestions across the vault"
+              onclick={() => onreview(info.tag)}
+            >
+              Review suggestions
+            </button>
           </div>
           <input
             value={info.description}
@@ -212,6 +226,11 @@
 
   .count {
     font-size: 12px;
+  }
+
+  .review {
+    margin-left: auto;
+    flex: none;
   }
 
   input {
