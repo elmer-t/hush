@@ -92,6 +92,11 @@
     await saving;
   }
 
+  /** Whether there are edits that aren't saved, e.g. after `flush` failed. */
+  export function unsaved(): boolean {
+    return body !== savedBody;
+  }
+
   /** Sets a frontmatter field through the editor, so the change is undoable and autosaved. */
   export async function setField(key: string, values: string[]) {
     try {

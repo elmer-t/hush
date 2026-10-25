@@ -3,10 +3,11 @@
 //! note's body and re-derives its index rows, the same as a save. Inline `#tags` in
 //! the body text are never touched.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::notes::derive;
+use super::tags;
 use super::{Error, Result, Vault, now_ms};
 use crate::markdown;
 
@@ -48,8 +49,15 @@ impl Vault {
     /// nothing, so an unknown (or trashed) id changes nothing. Title and folder don't
     /// change, so no other note's links change meaning.
     pub fn edit_notes_metadata(&mut self, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
-        let edit = normalize(edit)?;
         let tx = self.conn.transaction()?;
+        let report = Self::edit_notes_metadata_in(&tx, ids, edit)?;
+        tx.commit()?;
+        Ok(report)
+    }
+
+    /// [`Vault::edit_notes_metadata`] inside the caller's transaction.
+    pub(super) fn edit_notes_metadata_in(tx: &Connection, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
+        let edit = normalize(edit)?;
         let now = now_ms();
         let mut report = MetadataEditReport::default();
         let mut seen: Vec<i64> = Vec::with_capacity(ids.len());
@@ -80,11 +88,12 @@ impl Vault {
                 report.unchanged += 1;
                 continue;
             }
+            let before = tags::note_tag_names(&tx, id)?;
             tx.execute("UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1", params![id, new_body, now])?;
             derive(&tx, id, &new_body)?;
+            tags::record_hand_edits(&tx, id, &before, now)?;
             report.changed.push(id);
         }
-        tx.commit()?;
         Ok(report)
     }
 }
@@ -92,22 +101,26 @@ impl Vault {
 /// Trims the value; a tag also loses its leading `#` and must be one word, because
 /// frontmatter tags are split on commas and spaces.
 fn normalize(edit: &MetadataEdit) -> Result<MetadataEdit> {
-    let tag = |t: &str| {
-        let t = t.trim().trim_start_matches('#').trim();
-        if t.is_empty() {
-            Err(Error::InvalidTag("tag is empty".into()))
-        } else if t.contains(|c: char| c == ',' || c.is_whitespace()) {
-            Err(Error::InvalidTag("tag must not contain spaces or commas".into()))
-        } else {
-            Ok(t.to_string())
-        }
-    };
+    let tag = normalize_tag;
     Ok(match edit {
         MetadataEdit::AddTag(t) => MetadataEdit::AddTag(tag(t)?),
         MetadataEdit::RemoveTag(t) => MetadataEdit::RemoveTag(tag(t)?),
         MetadataEdit::SetTopic(v) => MetadataEdit::SetTopic(v.trim().to_string()),
         MetadataEdit::SetAuthor(v) => MetadataEdit::SetAuthor(v.trim().to_string()),
     })
+}
+
+/// Trims a tag and drops its leading `#`; it must be one word, because frontmatter tags
+/// are split on commas and spaces.
+pub(super) fn normalize_tag(t: &str) -> Result<String> {
+    let t = t.trim().trim_start_matches('#').trim();
+    if t.is_empty() {
+        Err(Error::InvalidTag("tag is empty".into()))
+    } else if t.contains(|c: char| c == ',' || c.is_whitespace()) {
+        Err(Error::InvalidTag("tag must not contain spaces or commas".into()))
+    } else {
+        Ok(t.to_string())
+    }
 }
 
 /// The new body; equal to `body` when the edit changes nothing.
@@ -136,7 +149,7 @@ fn apply(body: &str, edit: &MetadataEdit) -> String {
 
 /// Writes the frontmatter tags as one `tags` list. A singular `tag` key, which is read
 /// the same way, is folded into it so the list isn't split over two keys.
-fn write_tags(body: &str, tags: &[String]) -> String {
+pub(super) fn write_tags(body: &str, tags: &[String]) -> String {
     let body = markdown::set_frontmatter_field(body, "tag", &[]);
     markdown::set_frontmatter_field(&body, "tags", tags)
 }

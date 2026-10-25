@@ -1,6 +1,7 @@
 //! The encrypted vault: one SQLCipher database file per vault. All database access goes
 //! through [`Vault`].
 
+mod discover;
 mod embeddings;
 mod links;
 mod lock;
@@ -9,6 +10,7 @@ mod notes;
 mod rules;
 mod schema;
 mod search;
+mod tags;
 mod trash;
 
 use std::path::Path;
@@ -16,12 +18,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
+pub use discover::NoteVector;
 pub use embeddings::{EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, StoredVector};
 pub use links::{Backlink, OutgoingLink, Resolution};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
 pub use trash::{DEFAULT_TRASH_DAYS, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashedNote};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -58,6 +62,8 @@ pub enum Error {
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
     InvalidTrashDays,
+    #[error("the suggestion threshold must be a number between -1 and 1")]
+    InvalidThreshold,
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }

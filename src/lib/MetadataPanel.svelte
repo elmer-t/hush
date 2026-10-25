@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { NoteMeta, NoteSummary } from "$lib/api";
+  import { api, errorMessage, type NoteMeta, type NoteSummary, type TagSuggestion } from "$lib/api";
   import { longDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
 
@@ -8,8 +8,55 @@
     summary: NoteSummary;
     /** Sets a frontmatter field; an empty list removes it. */
     onset: (key: string, values: string[]) => void;
+    /** Accepts a suggested tag: the parent saves pending edits, adds it and reloads the note. */
+    onaccept: (tag: string) => Promise<void>;
   };
-  let { meta, summary, onset }: Props = $props();
+  let { meta, summary, onset, onaccept }: Props = $props();
+
+  let suggestions = $state<TagSuggestion[]>([]);
+  let suggestionError = $state("");
+  // An accept or reject in flight, so a double click doesn't send it twice.
+  let deciding = $state(false);
+
+  // Reloaded for each note and after each save (its tags may have changed).
+  $effect(() => {
+    void loadSuggestions(summary.id, summary.updatedAt);
+  });
+
+  async function loadSuggestions(id: number, _updatedAt: number) {
+    try {
+      const found = await api.tagSuggestions(id);
+      if (summary.id === id) suggestions = found;
+    } catch {
+      if (summary.id === id) suggestions = [];
+    }
+  }
+
+  async function accept(tag: string) {
+    if (deciding) return;
+    deciding = true;
+    suggestionError = "";
+    try {
+      await onaccept(tag);
+    } finally {
+      deciding = false;
+    }
+  }
+
+  async function reject(tag: string) {
+    if (deciding) return;
+    deciding = true;
+    suggestionError = "";
+    const id = summary.id;
+    try {
+      await api.rejectTagSuggestion(id, tag);
+      await loadSuggestions(id, summary.updatedAt);
+    } catch (e) {
+      suggestionError = errorMessage(e);
+    } finally {
+      deciding = false;
+    }
+  }
 
   // Whether the form for a new attribute is shown.
   let adding = $state(false);
@@ -100,6 +147,25 @@
       {/each}
       <li><input class="add-chip" placeholder="Add tag" aria-label="Add tag" onkeydown={addTag} /></li>
     </ul>
+    {#if suggestions.length > 0}
+      <ul class="suggestions" aria-label="Suggested tags">
+        {#each suggestions as s (s.tag)}
+          <li title="Similarity to the tag's description: {s.score.toFixed(2)}">
+            <span class="muted">Suggested:</span>
+            <span class="suggested">#{s.tag}</span>
+            <button class="ghost small" disabled={deciding} aria-label="Accept tag {s.tag}" onclick={() => accept(s.tag)}>
+              <Icon name="check" size={12} strokeWidth={2} />
+              Accept
+            </button>
+            <button class="ghost small" disabled={deciding} aria-label="Reject tag {s.tag}" onclick={() => reject(s.tag)}>
+              <Icon name="close" size={12} strokeWidth={2} />
+              Reject
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if suggestionError}<p class="error">{suggestionError}</p>{/if}
   </div>
 
   <div class="field">
@@ -228,6 +294,31 @@
 
   .add-attribute .mono {
     font-size: 12px;
+  }
+
+  .suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .suggestions li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .suggested {
+    color: var(--accent);
+  }
+
+  .suggestions button {
+    padding: 0 6px;
   }
 
   .add {

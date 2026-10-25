@@ -2,8 +2,9 @@
 //! unlock, embeds notes with no vector for the active model (or a stale one), then
 //! waits for the vault to change. It reaches the vault only through
 //! [`Session::with_vault_quiet`], so it never postpones auto-lock, and only to read a
-//! batch or write its results: never while the model runs. After each pass it brings
-//! the related-notes index ([`super::related`]) up to date.
+//! batch or write its results: never while the model runs. Once a model is ready it
+//! also embeds the tag descriptions that zero-shot suggestions compare notes with, and
+//! after each pass it brings the related-notes index ([`super::related`]) up to date.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,6 +66,8 @@ pub struct Pass {
     pub stale: usize,
     /// Notes with text to embed.
     pub total: usize,
+    /// Tag descriptions embedded during the pass.
+    pub descriptions: usize,
     /// Whether the related-notes index changed.
     pub related_changed: bool,
 }
@@ -157,9 +160,10 @@ pub fn pass(
         if ready.as_deref() != Some(model.as_str()) {
             session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
         }
+        let descriptions = embed_descriptions(session, generation, &model, embedder.as_ref())?;
         report(IndexStatus::Idle);
         let related_changed = related::sync(session, generation)?;
-        return Ok(Pass { stale: 0, total, related_changed });
+        return Ok(Pass { stale: 0, total, descriptions, related_changed });
     }
 
     let show = stale.len() >= PROGRESS_MIN;
@@ -183,8 +187,38 @@ pub fn pass(
     if show {
         report(IndexStatus::Indexing { done: total, total });
     }
+    // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
+    let descriptions = if ready.as_deref() == Some(model.as_str()) {
+        embed_descriptions(session, generation, &model, embedder.as_ref())?
+    } else {
+        0
+    };
     let related_changed = related::sync(session, generation)?;
-    Ok(Pass { stale: stale.len(), total, related_changed })
+    Ok(Pass { stale: stale.len(), total, descriptions, related_changed })
+}
+
+/// Embeds the tag descriptions that have no `model` vector yet. Only called while
+/// `model` is the ready model, so descriptions and the note vectors they are compared
+/// with always come from the same model. Returns how many were embedded.
+fn embed_descriptions(
+    session: &Session,
+    generation: u64,
+    model: &str,
+    embedder: &dyn Embedder,
+) -> Result<usize, JobError> {
+    let stale = session.with_vault_quiet(generation, |v| v.stale_tag_descriptions(model))?;
+    let mut vectors = Vec::with_capacity(stale.len());
+    for (tag, description) in stale {
+        if !session.is_open(generation) {
+            return Err(JobError::Locked);
+        }
+        let vector = embedder.embed_query(&description)?;
+        vectors.push((tag, description, vector));
+    }
+    if !vectors.is_empty() {
+        session.with_vault_quiet(generation, |v| v.write_tag_description_vectors(model, &vectors))?;
+    }
+    Ok(vectors.len())
 }
 
 /// Sleeps for `duration`, waking early if the vault locks. Returns whether it is still open.

@@ -125,6 +125,25 @@ CREATE TABLE note_embeddings (
     PRIMARY KEY (note_id, model)
 );
 CREATE INDEX note_embeddings_model ON note_embeddings(model);
+"#, r#"
+-- Zero-shot tag suggestions. A description may name a tag no note uses yet; `tag` is
+-- case-sensitive like `tags.name`. `vector` is the description embedded with `model`,
+-- NULL until the job gets to it.
+CREATE TABLE tag_descriptions (
+    tag         TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    vector      BLOB,
+    model       TEXT
+);
+-- The user's decisions on suggested tags; the latest one per note and tag wins. User
+-- input, not derived: kept while the note is in the trash, deleted with the note.
+CREATE TABLE tag_feedback (
+    note_id    INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    tag        TEXT NOT NULL,
+    accepted   INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (note_id, tag)
+);
 "#];
 
 /// Vaults created before this version get the default import rules.
@@ -235,5 +254,47 @@ mod tests {
         conn.execute("DELETE FROM notes", []).unwrap();
         let rows: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0, "note_embeddings cascades from notes");
+    }
+
+    /// A vault from before tag suggestions (version 5) keeps its notes, vectors and
+    /// settings and gains the two new tables; feedback cascades from notes.
+    #[test]
+    fn tag_suggestions_migration_keeps_notes_and_embeddings() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..5] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES (1, 'T', 'body #jr', 1, 1);
+             INSERT INTO tags(id, name) VALUES (7, 'jr');
+             INSERT INTO note_tags VALUES (1, 7);
+             INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f');
+             INSERT INTO settings VALUES ('embedding_model_ready', 'm');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(body, "body #jr");
+        let tag: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(tag, 7);
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
+        assert_eq!(vectors, 1);
+        let ready: String =
+            conn.query_row("SELECT value FROM settings WHERE key = 'embedding_model_ready'", [], |r| r.get(0)).unwrap();
+        assert_eq!(ready, "m");
+
+        conn.execute("INSERT INTO tag_descriptions(tag, description) VALUES ('jr', 'journal'), ('Jr', 'junior')", [])
+            .unwrap();
+        conn.execute("INSERT INTO tag_feedback VALUES (1, 'jr', 0, 1), (1, 'Jr', 1, 1)", []).unwrap();
+        conn.execute("DELETE FROM notes", []).unwrap();
+        let rows: i64 = conn.query_row("SELECT count(*) FROM tag_feedback", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0, "tag_feedback cascades from notes");
+        let rows: i64 = conn.query_row("SELECT count(*) FROM tag_descriptions", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 2, "descriptions are case-sensitive and don't depend on notes");
     }
 }

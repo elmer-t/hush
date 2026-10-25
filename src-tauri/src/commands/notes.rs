@@ -46,7 +46,7 @@ pub struct SavedNote {
     meta: NoteMeta,
 }
 
-fn opened(vault: &Vault, id: i64) -> crate::db::Result<OpenedNote> {
+pub(super) fn opened(vault: &Vault, id: i64) -> crate::db::Result<OpenedNote> {
     let note = vault.note(id)?;
     let meta = NoteMeta::of(&note.body);
     Ok(OpenedNote { note, meta })

@@ -49,6 +49,19 @@ export type MetadataEditReport = {
   unreadable: TitledNote[];
 };
 
+/** A tag used on notes, described, or both (see `db::TagInfo`). */
+export type TagInfo = { tag: string; notes: number; description: string };
+/** A tag suggested for a note; `score` is the similarity to its description. */
+export type TagSuggestion = { tag: string; score: number };
+/** The threshold of the model suggestions use; `threshold` is null for an unknown model without one. */
+export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
+/** A note in a discovered group; `score` is its similarity to the group's centre. */
+export type GroupNote = { id: number; folder: string; title: string; score: number };
+/** Notes grouped by meaning (see `discover::Group`): nearest the centre first. */
+export type DiscoverGroup = { words: string[]; notes: GroupNote[] };
+/** `model` is `null` while no model is ready; `k` is the number of groups asked for. */
+export type Discovery = { model: string | null; notes: number; k: number; groups: DiscoverGroup[] };
+
 export type DateField = "created" | "updated";
 
 /** The left pane: the explorer tree, or the folder tree with a flat list by updated. */
@@ -209,6 +222,27 @@ export const api = {
   defaultImportRules: () => invoke<Rule[]>("default_import_rules"),
   testImportRules: (rules: Rule[], fileName: string, sample: string) =>
     invoke<RuleOutput>("test_import_rules", { rules, fileName, sample }),
+
+  /** Every tag used on a note or described, sorted by name. */
+  tagList: () => invoke<TagInfo[]>("tag_list"),
+  /** An empty description removes it, and the tag is no longer suggested. */
+  setTagDescription: (tag: string, description: string) =>
+    invoke<void>("set_tag_description", { tag, description }),
+  tagSuggestions: (id: number) => invoke<TagSuggestion[]>("tag_suggestions", { id }),
+  /** Adds the tag to the note's frontmatter; resolves to the note fresh. Flush the editor first. */
+  acceptTagSuggestion: (id: number, tag: string) => invoke<OpenedNote>("accept_tag_suggestion", { id, tag }),
+  rejectTagSuggestion: (id: number, tag: string) => invoke<void>("reject_tag_suggestion", { id, tag }),
+  suggestionThreshold: () => invoke<SuggestionThreshold>("suggestion_threshold"),
+  /** `null` goes back to the model's default. */
+  setSuggestionThreshold: (threshold: number | null) => invoke<void>("set_suggestion_threshold", { threshold }),
+
+  /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
+  discoverTags: (groups: number | null, untaggedOnly: boolean) =>
+    invoke<Discovery | null>("discover_tags", { options: { groups, untaggedOnly } }),
+  cancelDiscoverTags: () => invoke<void>("cancel_discover_tags"),
+  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, all or nothing. */
+  createTagFromGroup: (tag: string, description: string, ids: number[]) =>
+    invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids }),
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),
