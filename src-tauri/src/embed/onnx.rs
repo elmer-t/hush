@@ -15,8 +15,8 @@ use super::{EmbedError, Embedder, ModelDescriptor, TokenPooling, normalize, pool
 /// A note longer than this many chunks is embedded from its start only, so one huge
 /// note can't keep the job busy for minutes.
 const MAX_CHUNKS: usize = 64;
-/// Most chunks run through the model together, from one note or several.
-pub const CHUNK_BATCH: usize = 32;
+/// Chunks of one note run through the model together.
+const CHUNK_BATCH: usize = 8;
 
 pub struct OnnxEmbedder {
     descriptor: &'static ModelDescriptor,
@@ -164,32 +164,24 @@ impl OnnxEmbedder {
         Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
     }
 
-    /// Embeds several texts together: every chunk of every text, sorted by length and
-    /// run [`CHUNK_BATCH`] at a time, each run padded only to its longest chunk (the
-    /// attention mask hides the padding, so a chunk's vector doesn't depend on what it
-    /// ran with). The chunk vectors are then pooled per text as one at a time would.
+    /// Embeds each text on its own, its chunks run [`CHUNK_BATCH`] at a time, asking
+    /// `stop` before each run. Texts are not batched together: the bundled int8 model
+    /// quantises each run with one scale for the whole run, so a text's vector would
+    /// depend on the texts it ran with (up to 0.04 per element, measured).
     fn batch_with(&self, texts: &[&str], prefix: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
-        // (text, place within the text, chunk)
-        let mut chunks: Vec<(usize, usize, Encoding)> = Vec::new();
-        let mut counts = Vec::with_capacity(texts.len());
-        for (t, text) in texts.iter().enumerate() {
-            let encoded = self.chunks(text, prefix)?;
-            counts.push(encoded.len());
-            chunks.extend(encoded.into_iter().enumerate().map(|(i, c)| (t, i, c)));
-        }
-        // Stable, so equal lengths keep their order.
-        chunks.sort_by_key(|(_, _, c)| c.len());
-        let mut per_text: Vec<Vec<Vec<f32>>> = counts.iter().map(|&n| vec![Vec::new(); n]).collect();
-        for run in chunks.chunks(CHUNK_BATCH) {
-            if stop() {
-                return Err(EmbedError::Stopped);
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            let chunks = self.chunks(text, prefix)?;
+            let mut vectors = Vec::with_capacity(chunks.len());
+            for run in chunks.chunks(CHUNK_BATCH) {
+                if stop() {
+                    return Err(EmbedError::Stopped);
+                }
+                vectors.extend(self.run(run)?);
             }
-            let encodings: Vec<Encoding> = run.iter().map(|(_, _, c)| c.clone()).collect();
-            for ((t, i, _), vector) in run.iter().zip(self.run(&encodings)?) {
-                per_text[*t][*i] = vector;
-            }
+            out.push(pool_chunks(self.descriptor.chunk_pooling, &vectors));
         }
-        Ok(per_text.iter().map(|vectors| pool_chunks(self.descriptor.chunk_pooling, vectors)).collect())
+        Ok(out)
     }
 }
 

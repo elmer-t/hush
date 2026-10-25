@@ -503,21 +503,14 @@ fn scale_benchmark() {
         _ => println!("5. peak RSS: not measured on this OS (needs /proc/self/clear_refs)"),
     }
     match throughput {
-        Some(t) => {
-            let rate = |d: Duration| t.notes as f64 / d.as_secs_f64();
-            println!(
-                "6. real model: {:.1} notes/s one at a time ({}), {:.1} notes/s in batches of {} ({}); {:.2} chunks and {:.0} tokens per note; batched vs one at a time: cosine at least {:.4}, largest element difference {:.4}",
-                rate(t.single),
-                secs(t.single),
-                rate(t.batched),
-                job::BATCH,
-                secs(t.batched),
-                t.chunks as f64 / t.notes as f64,
-                t.tokens as f64 / t.notes as f64,
-                t.min_cosine,
-                t.max_diff,
-            )
-        }
+        Some(t) => println!(
+            "6. real model: {:.1} notes/s ({} notes in {}); {:.2} chunks and {:.0} tokens per note",
+            t.notes as f64 / t.time.as_secs_f64(),
+            t.notes,
+            secs(t.time),
+            t.chunks as f64 / t.notes as f64,
+            t.tokens as f64 / t.notes as f64,
+        ),
         None => println!("6. real model: SKIPPED (model files missing; run `npm run fetch-model`)"),
     }
     for (text, median, worst, hits) in &searches {
@@ -534,17 +527,13 @@ fn scale_benchmark() {
 
 struct Throughput {
     notes: usize,
-    single: Duration,
-    batched: Duration,
+    time: Duration,
     chunks: usize,
     tokens: usize,
-    min_cosine: f32,
-    max_diff: f32,
 }
 
-/// The bundled model on the first 1,000 notes, one note per call and in the job's
-/// batches, and how far the batched vectors are from the single ones; `None` without
-/// the files.
+/// The bundled model on the first 1,000 notes in the job's batches, and their size in
+/// chunks and tokens; `None` without the files.
 fn real_model_throughput(path: &Path, notes: usize) -> Option<Throughput> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
@@ -564,20 +553,10 @@ fn real_model_throughput(path: &Path, notes: usize) -> Option<Throughput> {
         tokens += lengths.iter().sum::<usize>();
     }
     let start = Instant::now();
-    let single: Vec<Vec<f32>> = texts.iter().map(|t| model.embed(t).unwrap()).collect();
-    let single_time = start.elapsed();
-    let start = Instant::now();
-    let mut batched = Vec::with_capacity(texts.len());
     for batch in texts.chunks(job::BATCH) {
-        batched.extend(model.embed_batch(batch, &|| false).unwrap());
+        model.embed_batch(batch, &|| false).unwrap();
     }
-    let batched_time = start.elapsed();
-    let (mut min_cosine, mut max_diff) = (1.0f32, 0.0f32);
-    for (a, b) in single.iter().zip(&batched) {
-        min_cosine = min_cosine.min(embed::cosine(a, b));
-        max_diff = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(max_diff, f32::max);
-    }
-    Some(Throughput { notes: texts.len(), single: single_time, batched: batched_time, chunks, tokens, min_cosine, max_diff })
+    Some(Throughput { notes: texts.len(), time: start.elapsed(), chunks, tokens })
 }
 
 /// The generator itself, so a change to it shows up without running the benchmark.

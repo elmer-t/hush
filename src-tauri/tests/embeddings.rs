@@ -369,8 +369,9 @@ fn bundled_model_puts_similar_notes_closer_than_unrelated_ones() {
 }
 
 /// Batched and one-at-a-time embedding give the same vectors with the real model:
-/// texts of different lengths, one longer than a chunk, run together. Needs the files
-/// from `npm run fetch-model`.
+/// texts of different lengths, one longer than a chunk. Each text runs on its own, as
+/// the int8 model's quantisation would otherwise mix texts. Needs the files from
+/// `npm run fetch-model`.
 #[test]
 fn bundled_model_gives_the_same_vectors_batched() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
@@ -386,7 +387,7 @@ fn bundled_model_gives_the_same_vectors_batched() {
     for (text, b) in texts.iter().zip(&batched) {
         let single = model.embed(text).unwrap();
         let worst = single.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
-        assert!(worst < 1e-4, "{worst} for {:?}", &text[..text.len().min(20)]);
+        assert!(worst < 1e-6, "{worst} for {:?}", &text[..text.len().min(20)]);
     }
     assert!(matches!(model.embed_batch(&texts, &|| true), Err(EmbedError::Stopped)));
 }
