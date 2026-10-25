@@ -93,11 +93,6 @@ impl Vault {
         let (filters, mut args) = filters(q);
 
         let min_rating = q.min_rating.filter(|m| *m > 0);
-        if let Some(min) = min_rating {
-            // Implies `rating IS NOT NULL`, so the partial index on rating applies.
-            filters.push("n.rating >= ?".into());
-            args.push(i64::from(min).into());
-        }
 
         let limit = i64::from(q.limit.unwrap_or(200));
         let offset = i64::from(q.offset);
@@ -302,6 +297,11 @@ fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
         );
         args.push(key.clone().into());
         args.push(value.clone().into());
+    }
+    if let Some(min) = q.min_rating.filter(|m| *m > 0) {
+        // Implies `rating IS NOT NULL`, so the partial index on rating applies.
+        filters.push("n.rating >= ?".into());
+        args.push(i64::from(min).into());
     }
     (filters, args)
 }
