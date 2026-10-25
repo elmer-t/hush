@@ -149,7 +149,7 @@ fn set_scalar(body: &str, key: &str, current: Option<&str>, value: &str) -> Stri
     markdown::set_frontmatter_field(body, key, &values)
 }
 
-/// Tags compare case-insensitively, as when they are derived.
+/// Tags are case-sensitive: `jr` and `Jr` are different tags.
 fn same_tag(a: &str, b: &str) -> bool {
-    a.to_lowercase() == b.to_lowercase()
+    a == b
 }
