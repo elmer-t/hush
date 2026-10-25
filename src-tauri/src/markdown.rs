@@ -19,6 +19,8 @@ static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`\n]+`").
 pub struct Parsed {
     pub author: Option<String>,
     pub topic: Option<String>,
+    /// Frontmatter `rating`, a whole number 1–5. Any other value is kept as an attribute.
+    pub rating: Option<u8>,
     /// Unix millis from frontmatter `created` (or `date`).
     pub created_at: Option<i64>,
     pub tags: Vec<String>,
@@ -260,6 +262,10 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
             }
             "author" => parsed.author = values.into_iter().next(),
             "topic" => parsed.topic = values.into_iter().next(),
+            "rating" => match rating(&v) {
+                Some(r) => parsed.rating = Some(r),
+                None => parsed.attributes.extend(values.into_iter().map(|v| (key.clone(), v))),
+            },
             "created" => parsed.created_at = values.first().and_then(|s| parse_date(s)).or(parsed.created_at),
             "date" => {
                 if parsed.created_at.is_none() {
@@ -269,6 +275,17 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
             _ => parsed.attributes.extend(values.into_iter().map(|v| (key.clone(), v))),
         }
     }
+}
+
+/// A rating is a single whole number from 1 to 5 (`4` or `"4"`); `4.5`, `five`, `0`,
+/// `6` or a list are not.
+fn rating(y: &Yaml) -> Option<u8> {
+    match y {
+        Yaml::Integer(i) => u8::try_from(*i).ok(),
+        Yaml::String(s) if s.trim().chars().all(|c| c.is_ascii_digit()) => s.trim().parse().ok(),
+        _ => None,
+    }
+    .filter(|r| (1..=5).contains(r))
 }
 
 fn scalar(y: &Yaml) -> Option<String> {
@@ -350,6 +367,23 @@ mod tests {
                 ("mood".into(), "tired".into())
             ]
         );
+    }
+
+    #[test]
+    fn rating_is_a_whole_number_from_1_to_5() {
+        for (yaml, want) in [("4", Some(4)), ("1", Some(1)), ("5", Some(5)), ("\"3\"", Some(3)), (" 2 ", Some(2))] {
+            let p = parse(&format!("---\nrating: {yaml}\n---\n"));
+            assert_eq!(p.rating, want, "{yaml}");
+            assert!(p.attributes.is_empty(), "{yaml}: a valid rating isn't also an attribute");
+        }
+        for (yaml, kept) in [("4.5", vec!["4.5"]), ("five", vec!["five"]), ("0", vec!["0"]), ("6", vec!["6"]), ("-3", vec!["-3"]), ("[4]", vec!["4"]), ("[4, 5]", vec!["4", "5"])] {
+            let p = parse(&format!("---\nrating: {yaml}\n---\n"));
+            assert_eq!(p.rating, None, "{yaml}");
+            let attrs: Vec<&str> = p.attributes.iter().filter(|(k, _)| k == "rating").map(|(_, v)| v.as_str()).collect();
+            assert_eq!(attrs, kept, "{yaml}: kept as an attribute");
+        }
+        assert_eq!(parse("---\nRating: 3\n---\n").rating, Some(3), "keys are case-insensitive");
+        assert_eq!(parse("no frontmatter").rating, None);
     }
 
     #[test]

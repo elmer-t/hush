@@ -78,6 +78,8 @@ pub enum Error {
     InvalidTrashDays,
     #[error("the number of recently opened notes must be between 0 and {}", recent::MAX_RECENT_OPENED_COUNT)]
     InvalidRecentOpenedCount,
+    #[error("a rating must be a whole number from 1 to 5")]
+    InvalidRating,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
     #[error(transparent)]

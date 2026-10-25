@@ -75,6 +75,7 @@ impl CommandError {
                 D::InvalidTrashDays => "invalidTrashDays",
                 D::InvalidThreshold => "invalidThreshold",
                 D::InvalidRecentOpenedCount => "invalidRecentOpenedCount",
+                D::InvalidRating => "invalidRating",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",

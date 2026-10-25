@@ -482,6 +482,7 @@
           <span class="twisty"></span>
           <span class="glyph note-glyph"><Icon name="note" /></span>
           <span class="name">{row.note.title}</span>
+          {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
         </div>
       {:else}
         <div
@@ -616,6 +617,18 @@
   .note-glyph {
     color: inherit;
     opacity: 0.7;
+  }
+
+  .rating {
+    flex: none;
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.selected .rating,
+  .row.picked .rating {
+    color: inherit;
   }
 
   .name {

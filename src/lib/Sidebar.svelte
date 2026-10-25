@@ -501,6 +501,7 @@
     { kind: "removeTag", label: "Remove tag" },
     { kind: "setTopic", label: "Set topic" },
     { kind: "setAuthor", label: "Set author" },
+    { kind: "setRating", label: "Set rating" },
   ];
   const editSuggestions = $derived(
     editKind === "setTopic" ? facets.topics : editKind === "setAuthor" ? facets.authors : facets.tags,
@@ -520,7 +521,9 @@
     if (tagEdit && value.replace(/^#+/, "") === "") return;
     busy = true;
     const ids = [...picked];
-    const report = await onedit(ids, { kind: editKind, value }, pickedNotes().map((n) => n.folder));
+    const edit: MetadataEdit =
+      editKind === "setRating" ? { kind: editKind, value: value ? Number(value) : null } : { kind: editKind, value };
+    const report = await onedit(ids, edit, pickedNotes().map((n) => n.folder));
     busy = false;
     if (!report) return;
     editNotice = describeEdit(editKind, value.replace(/^#+/, ""), report);
@@ -535,17 +538,18 @@
   function describeEdit(kind: MetadataEdit["kind"], value: string, r: MetadataEditReport) {
     const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
     const n = notes(r.changed.length);
+    const field = kind === "setTopic" ? "topic" : kind === "setRating" ? "rating" : "author";
+    const shown = kind === "setRating" ? `★ ${value}` : `“${value}”`;
     const parts = [
       kind === "addTag"
         ? `Added “${value}” to ${n}`
         : kind === "removeTag"
           ? `Removed “${value}” from ${n}`
           : value === ""
-            ? `Removed the ${kind === "setTopic" ? "topic" : "author"} from ${n}`
-            : `Set the ${kind === "setTopic" ? "topic" : "author"} to “${value}” on ${n}`,
+            ? `Removed the ${field} from ${n}`
+            : `Set the ${field} to ${shown} on ${n}`,
     ];
     if (r.unchanged > 0) {
-      const field = kind === "setTopic" ? "topic" : "author";
       const why =
         kind === "addTag"
           ? "already had it"
@@ -725,22 +729,34 @@
       {/if}
       {#if editing}
         <form class="edit" onsubmit={editSelection}>
-          <select aria-label="Edit" bind:value={editKind} disabled={busy}>
+          <select
+            aria-label="Edit"
+            bind:value={editKind}
+            onchange={(e) => (editValue = e.currentTarget.value === "setRating" ? "5" : "")}
+            disabled={busy}
+          >
             {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
           </select>
-          <input
-            list="edit-values"
-            placeholder={tagEdit ? "Tag" : "Empty = remove"}
-            aria-label={EDITS.find((e) => e.kind === editKind)?.label}
-            spellcheck="false"
-            bind:value={editValue}
-            onkeydown={(e) => e.key === "Escape" && (editing = false)}
-            disabled={busy}
-            {@attach (el) => el.focus()}
-          />
-          <datalist id="edit-values">
-            {#each editSuggestions as v (v)}<option value={v}></option>{/each}
-          </datalist>
+          {#if editKind === "setRating"}
+            <select aria-label="Rating" bind:value={editValue} disabled={busy}>
+              {#each [1, 2, 3, 4, 5] as n (n)}<option value={String(n)}>{"★".repeat(n)} {n}</option>{/each}
+              <option value="">No rating</option>
+            </select>
+          {:else}
+            <input
+              list="edit-values"
+              placeholder={tagEdit ? "Tag" : "Empty = remove"}
+              aria-label={EDITS.find((e) => e.kind === editKind)?.label}
+              spellcheck="false"
+              bind:value={editValue}
+              onkeydown={(e) => e.key === "Escape" && (editing = false)}
+              disabled={busy}
+              {@attach (el) => el.focus()}
+            />
+            <datalist id="edit-values">
+              {#each editSuggestions as v (v)}<option value={v}></option>{/each}
+            </datalist>
+          {/if}
           <button type="submit" class="primary" disabled={busy || (tagEdit && editValue.trim() === "")}>Apply</button>
         </form>
       {/if}
