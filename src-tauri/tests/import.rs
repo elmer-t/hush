@@ -203,6 +203,8 @@ fn reimport_skips_existing_notes() {
     let second = run(&session, source.path(), false);
     assert_eq!(second.imported, 0);
     assert_eq!(second.skipped.len(), first.imported + first.skipped.len());
+    assert_eq!(second.skipped_count, second.skipped.len());
+    assert_eq!(second.folder_count, second.folders.len());
     let dry = run(&session, source.path(), true);
     assert_eq!(dry.skipped, second.skipped);
 }
