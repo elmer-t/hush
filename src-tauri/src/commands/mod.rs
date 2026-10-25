@@ -32,6 +32,8 @@ pub enum CommandError {
     ImportSource(std::io::Error),
     #[error("an import is already running")]
     ImportRunning,
+    #[error("the groups are out of date; group the notes again")]
+    StaleGroups,
 }
 
 impl From<crate::import::ImportError> for CommandError {
@@ -78,6 +80,7 @@ impl CommandError {
             Self::Config(_) => "config",
             Self::ImportSource(_) => "importSource",
             Self::ImportRunning => "importRunning",
+            Self::StaleGroups => "staleGroups",
         }
     }
 }

@@ -88,56 +88,7 @@ impl Vault {
     /// [`Vault::search_page`], giving up (`None`) as soon as `stop` says so; it is asked
     /// between the steps of the search, so a superseded search ends early.
     pub fn search_page_until(&self, q: &SearchQuery, stop: &dyn Fn() -> bool) -> Result<Option<SearchPage>> {
-        let mut args: Vec<Value> = Vec::new();
-        let mut filters: Vec<String> = vec!["n.deleted_at IS NULL".into()];
-
-        for tag in &q.tags {
-            filters.push(
-                "EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
-                 WHERE nt.note_id = n.id AND (t.name = ? OR (t.name >= ? AND t.name < ?)))"
-                    .into(),
-            );
-            // Tags are case-sensitive, so nested tags are a binary range ('0' follows '/'), not LIKE.
-            args.push(tag.trim().to_string().into());
-            args.push(format!("{}/", tag.trim()).into());
-            args.push(format!("{}0", tag.trim()).into());
-        }
-        if let Some(topic) = &q.topic {
-            filters.push("n.topic = ?".into());
-            args.push(topic.clone().into());
-        }
-        if let Some(author) = &q.author {
-            filters.push("n.author = ?".into());
-            args.push(author.clone().into());
-        }
-        if let Some(folder) = &q.folder {
-            let folder = markdown::normalize_folder(folder);
-            if !folder.is_empty() {
-                filters.push("(n.folder = ? OR n.folder LIKE ? ESCAPE '\\')".into());
-                let pattern = format!("{}/%", escape_like(&folder));
-                args.push(folder.into());
-                args.push(pattern.into());
-            }
-        }
-        let date_col = match q.date_field {
-            DateField::Created => "n.created_at",
-            DateField::Updated => "n.updated_at",
-        };
-        if let Some(from) = q.from {
-            filters.push(format!("{date_col} >= ?"));
-            args.push(from.into());
-        }
-        if let Some(to) = q.to {
-            filters.push(format!("{date_col} < ?"));
-            args.push(to.into());
-        }
-        for (key, value) in &q.attributes {
-            filters.push(
-                "EXISTS (SELECT 1 FROM note_attributes a WHERE a.note_id = n.id AND a.key = ? AND a.value = ?)".into(),
-            );
-            args.push(key.clone().into());
-            args.push(value.clone().into());
-        }
+        let (filters, mut args) = filters(q);
 
         let limit = i64::from(q.limit.unwrap_or(200));
         let offset = i64::from(q.offset);
@@ -217,6 +168,35 @@ impl Vault {
         Ok(Some(SearchPage { hits, newest_first }))
     }
 
+    /// Up to `limit` ids of notes matching `q` (text and filters; paging and order are
+    /// ignored) above `after`, in id order: every match, unranked, for tag discovery's
+    /// *Current search results* scope.
+    pub fn search_ids(&self, q: &SearchQuery, after: i64, limit: u32) -> Result<Vec<i64>> {
+        let (filters, filter_args) = filters(q);
+        let mut args: Vec<Value> = Vec::new();
+        // The full-text index hands out matches in rowid order and seeks to `after`.
+        let mut sql = match fts_query(&q.text) {
+            Some(fts) => {
+                args.push(fts.into());
+                "SELECT n.id FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid
+                 WHERE notes_fts MATCH ? AND notes_fts.rowid > ?"
+                    .to_string()
+            }
+            None => "SELECT n.id FROM notes n WHERE n.id > ?".to_string(),
+        };
+        args.push(after.into());
+        args.extend(filter_args);
+        for f in &filters {
+            sql.push_str(" AND ");
+            sql.push_str(f);
+        }
+        sql.push_str(" ORDER BY n.id LIMIT ?");
+        args.push(i64::from(limit).into());
+        let mut stmt = self.conn.prepare(&sql)?;
+        let ids = stmt.query_map(params_from_iter(args), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
     /// The number of notes in `folder` and its subfolders; every note for the root.
     pub fn count_in_folder(&self, folder: &str) -> Result<usize> {
         let folder = markdown::normalize_folder(folder);
@@ -254,6 +234,62 @@ impl Vault {
         let rows = stmt.query_map(params, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
+}
+
+/// The WHERE conditions of `q`'s filters (on `notes n`, live notes only) and their
+/// arguments, in order.
+fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
+    let mut args: Vec<Value> = Vec::new();
+    let mut filters: Vec<String> = vec!["n.deleted_at IS NULL".into()];
+
+    for tag in &q.tags {
+        filters.push(
+            "EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+             WHERE nt.note_id = n.id AND (t.name = ? OR (t.name >= ? AND t.name < ?)))"
+                .into(),
+        );
+        // Tags are case-sensitive, so nested tags are a binary range ('0' follows '/'), not LIKE.
+        args.push(tag.trim().to_string().into());
+        args.push(format!("{}/", tag.trim()).into());
+        args.push(format!("{}0", tag.trim()).into());
+    }
+    if let Some(topic) = &q.topic {
+        filters.push("n.topic = ?".into());
+        args.push(topic.clone().into());
+    }
+    if let Some(author) = &q.author {
+        filters.push("n.author = ?".into());
+        args.push(author.clone().into());
+    }
+    if let Some(folder) = &q.folder {
+        let folder = markdown::normalize_folder(folder);
+        if !folder.is_empty() {
+            filters.push("(n.folder = ? OR n.folder LIKE ? ESCAPE '\\')".into());
+            let pattern = format!("{}/%", escape_like(&folder));
+            args.push(folder.into());
+            args.push(pattern.into());
+        }
+    }
+    let date_col = match q.date_field {
+        DateField::Created => "n.created_at",
+        DateField::Updated => "n.updated_at",
+    };
+    if let Some(from) = q.from {
+        filters.push(format!("{date_col} >= ?"));
+        args.push(from.into());
+    }
+    if let Some(to) = q.to {
+        filters.push(format!("{date_col} < ?"));
+        args.push(to.into());
+    }
+    for (key, value) in &q.attributes {
+        filters.push(
+            "EXISTS (SELECT 1 FROM note_attributes a WHERE a.note_id = n.id AND a.key = ? AND a.value = ?)".into(),
+        );
+        args.push(key.clone().into());
+        args.push(value.clone().into());
+    }
+    (filters, args)
 }
 
 /// Turns user input into a safe FTS5 query: every word is a quoted phrase (so FTS

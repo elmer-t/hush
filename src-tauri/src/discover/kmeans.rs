@@ -109,7 +109,7 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// The nearest centre of every point, and its similarity to it. Split over half the
 /// cores (like the embedding model), so the UI keeps its share; each point is
 /// independent, so the result doesn't depend on the split.
-fn assign(points: &[f32], dims: usize, centroids: &[f32]) -> (Vec<usize>, Vec<f32>) {
+pub fn assign(points: &[f32], dims: usize, centroids: &[f32]) -> (Vec<usize>, Vec<f32>) {
     let n = points.len() / dims;
     let nearest = |chunk: &[f32]| -> Vec<(usize, f32)> {
         chunk
@@ -168,7 +168,7 @@ fn recentre(points: &[f32], dims: usize, k: usize, assignments: &mut [usize], be
 }
 
 /// A small, fast, seedable generator (SplitMix64); plenty for picking seeds.
-struct SplitMix64(u64);
+pub(crate) struct SplitMix64(pub(crate) u64);
 
 impl SplitMix64 {
     fn next(&mut self) -> u64 {
@@ -184,7 +184,7 @@ impl SplitMix64 {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         ((self.unit() * n as f64) as usize).min(n - 1)
     }
 }

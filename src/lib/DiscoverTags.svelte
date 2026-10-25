@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, errorMessage, type DiscoverGroup, type Discovery, type TagInfo } from "$lib/api";
+  import { api, errorMessage, type DiscoverGroup, type DiscoverScope, type Discovery, type TagInfo } from "$lib/api";
+  import { currentSearch } from "$lib/currentSearch.svelte";
 
   // Settings → Tags → Discover tags: groups notes by meaning so the user can see which
   // tags the archive needs, and turns a group into a tag. Results live only in this
@@ -7,10 +8,16 @@
   let { tags, oncreated }: { tags: TagInfo[]; oncreated: () => void } = $props();
 
   const SAMPLE = 8;
+  // Folder suggestions shown while typing a folder.
+  const FOLDER_SUGGESTIONS = 50;
 
   let dialog = $state<HTMLDialogElement>();
   let groups = $state<number | null>(null);
-  let untaggedOnly = $state(false);
+  let scopeKind = $state<DiscoverScope["kind"]>("all");
+  let folder = $state("");
+  let folders = $state<string[]>([]);
+  // The scope of the shown result, for its empty message.
+  let resultScope = $state<DiscoverScope["kind"]>("all");
   let running = $state(false);
   // Counts runs, so only the latest one's result is shown.
   let run = 0;
@@ -22,22 +29,48 @@
   let tagName = $state("");
   let description = $state("");
   let chosen = $state<Set<number>>(new Set());
+  // Every note in the group, not only the listed ones.
+  let wholeGroup = $state(false);
   let saving = $state(false);
   let formError = $state("");
   // Tags created from groups in this run, by group.
   let created = $state(new Map<DiscoverGroup, string>());
 
   let existing = $derived(tags.find((t) => t.tag === tagName.trim().replace(/^#/, "")));
+  let folderSuggestions = $derived.by(() => {
+    const typed = folder.trim().toLowerCase();
+    return folders.filter((f) => f.toLowerCase().includes(typed)).slice(0, FOLDER_SUGGESTIONS);
+  });
+  // The search the sidebar shows now, described for the scope picker.
+  let searchLabel = $derived.by(() => {
+    const q = currentSearch.query;
+    if (!q) return "";
+    return q.text.trim() ? `“${q.text.trim()}”` : "the filtered list";
+  });
 
   function open() {
     dialog?.showModal();
+    if (scopeKind === "search" && !currentSearch.query) scopeKind = "all";
+    api.folders().then((f) => (folders = f), () => {});
     void group();
+  }
+
+  function scope(): DiscoverScope | null {
+    switch (scopeKind) {
+      case "folder":
+        return { kind: "folder", folder: folder.trim() };
+      case "search":
+        return currentSearch.query ? { kind: "search", query: { ...currentSearch.query } } : null;
+      default:
+        return { kind: scopeKind };
+    }
   }
 
   // Closing (button or Escape) cancels a running grouping and drops the results, so
   // nothing about the groups outlives the dialog.
   function closed() {
-    if (running) void api.cancelDiscoverTags();
+    // Also drops the backend's copy of the groups' members.
+    void api.cancelDiscoverTags();
     run++;
     running = false;
     result = creating = null;
@@ -47,16 +80,22 @@
 
   async function group(e?: SubmitEvent) {
     e?.preventDefault();
+    const chosenScope = scope();
+    if (!chosenScope) {
+      error = "There is no search to group; search in the sidebar first.";
+      return;
+    }
     const mine = ++run;
     running = true;
     error = "";
     creating = null;
     try {
-      const found = await api.discoverTags(groups || null, untaggedOnly);
+      const found = await api.discoverTags(groups || null, chosenScope);
       // `null`: a newer run or closing the dialog cancelled this one. A run that
       // finished just before it was cancelled is dropped here.
       if (found && mine === run) {
         result = found;
+        resultScope = chosenScope.kind;
         created = new Map();
         if (found.k) groups = found.k;
       }
@@ -72,6 +111,7 @@
     tagName = g.words[0] ?? "";
     description = g.words.length ? `Notes about ${g.words.slice(0, 5).join(", ")}` : "";
     chosen = new Set(g.notes.map((n) => n.id));
+    wholeGroup = g.size > g.notes.length;
     formError = "";
   }
 
@@ -87,7 +127,8 @@
     if (!creating) return;
     const g = creating;
     const tag = tagName.trim().replace(/^#/, "");
-    if (!description.trim() && chosen.size === 0) {
+    const all = wholeGroup && g.size > g.notes.length;
+    if (!description.trim() && !all && chosen.size === 0) {
       formError = "Describe the tag or choose notes to add it to.";
       return;
     }
@@ -95,13 +136,19 @@
     formError = "";
     try {
       // Nearest first, like the list.
-      const ids = g.notes.filter((n) => chosen.has(n.id)).map((n) => n.id);
-      const report = await api.createTagFromGroup(tag, description, ids);
+      const report =
+        all && result
+          ? await api.createTagFromGroup(tag, description, [], { run: result.run, group: result.groups.indexOf(g) })
+          : await api.createTagFromGroup(
+              tag,
+              description,
+              g.notes.filter((n) => chosen.has(n.id)).map((n) => n.id),
+            );
       const added = report.changed.length;
       const skipped = report.unreadable.length;
-      let summary = added === 1 ? `#${tag} added to 1 note` : `#${tag} added to ${added} notes`;
-      if (report.unchanged) summary += `, ${report.unchanged} already had it`;
-      if (skipped) summary += `; ${skipped} skipped (frontmatter can't be read)`;
+      let summary = `#${tag} added to ${count(added)}`;
+      if (report.unchanged) summary += `, ${report.unchanged.toLocaleString()} already had it`;
+      if (skipped) summary += `; ${skipped.toLocaleString()} skipped (frontmatter can't be read)`;
       created = new Map(created).set(g, summary);
       creating = null;
       oncreated();
@@ -131,10 +178,26 @@
       Groups
       <input type="number" min="1" max="200" step="1" bind:value={groups} placeholder="auto" />
     </label>
-    <label class="check">
-      <input type="checkbox" bind:checked={untaggedOnly} />
-      Only notes without tags
+    <label>
+      Notes
+      <select bind:value={scopeKind}>
+        <option value="all">All notes</option>
+        <option value="untagged">Notes without tags</option>
+        <option value="folder">A folder and its subfolders</option>
+        <option value="search" disabled={!currentSearch.query}>
+          {currentSearch.query ? `Search results for ${searchLabel}` : "Search results (search in the sidebar first)"}
+        </option>
+      </select>
     </label>
+    {#if scopeKind === "folder"}
+      <label>
+        Folder
+        <input list="discover-folders" bind:value={folder} placeholder="All folders" />
+        <datalist id="discover-folders">
+          {#each folderSuggestions as f (f)}<option value={f}></option>{/each}
+        </datalist>
+      </label>
+    {/if}
     <button type="submit" disabled={running}>{running ? "Grouping…" : "Group notes"}</button>
   </form>
 
@@ -146,18 +209,27 @@
     {:else if result && result.model === null}
       <p class="muted">Notes are still being indexed. Try again once indexing has finished.</p>
     {:else if result && result.notes === 0}
-      <p class="muted">{untaggedOnly ? "Every indexed note has a tag." : "No indexed notes to group yet."}</p>
+      <p class="muted">
+        {resultScope === "untagged"
+          ? "Every indexed note has a tag."
+          : resultScope === "all"
+            ? "No indexed notes to group yet."
+            : "No indexed notes here to group."}
+      </p>
     {:else if result}
       <p class="muted summary">
-        {count(result.notes)} in {result.groups.length} groups, largest first. Groups are recomputed each time and not
-        saved.
+        {count(result.notes)} in {result.groups.length} groups, largest first.
+        {#if result.sampled < result.notes}
+          The groups were formed from a sample of {count(result.sampled)}; every other note joined the nearest group.
+        {/if}
+        Groups are recomputed each time and not saved.
       </p>
       <ol class="groups">
         {#each result.groups as g, i (g)}
           <li class="group">
             <div class="head">
               <h3>Group {i + 1}</h3>
-              <span class="muted">{count(g.notes.length)}</span>
+              <span class="muted">{count(g.size)}</span>
               {#if creating !== g}
                 <button type="button" class="create" onclick={() => startCreate(g)} disabled={saving}>
                   Create tag…
@@ -189,10 +261,24 @@
                       its description will be replaced{/if}.
                   </p>
                 {/if}
+                {#if g.size > g.notes.length}
+                  <label class="check whole">
+                    <input type="checkbox" bind:checked={wholeGroup} />
+                    Select all {count(g.size)} in this group
+                  </label>
+                {/if}
                 <div class="pick">
-                  <span class="muted">Add it to {chosen.size} of {count(g.notes.length)}, nearest the centre first:</span>
-                  <button type="button" class="ghost" onclick={() => (chosen = new Set(g.notes.map((n) => n.id)))}>All</button>
-                  <button type="button" class="ghost" onclick={() => (chosen = new Set())}>None</button>
+                  {#if wholeGroup && g.size > g.notes.length}
+                    <span class="muted">Adds it to every note in the group. The {g.notes.length} nearest the centre:</span>
+                  {:else}
+                    <span class="muted">
+                      Add it to {chosen.size} of {g.size > g.notes.length
+                        ? `the ${g.notes.length} nearest the centre`
+                        : count(g.notes.length)}, nearest first:
+                    </span>
+                    <button type="button" class="ghost" onclick={() => (chosen = new Set(g.notes.map((n) => n.id)))}>All</button>
+                    <button type="button" class="ghost" onclick={() => (chosen = new Set())}>None</button>
+                  {/if}
                 </div>
                 <ul class="notes">
                   {#each g.notes as n (n.id)}
@@ -200,7 +286,8 @@
                       <label class="check">
                         <input
                           type="checkbox"
-                          checked={chosen.has(n.id)}
+                          disabled={wholeGroup && g.size > g.notes.length}
+                          checked={(wholeGroup && g.size > g.notes.length) || chosen.has(n.id)}
                           onchange={(e) => toggle(n.id, e.currentTarget.checked)}
                         />
                         <span class="title">{n.title}</span>
@@ -213,7 +300,11 @@
                 <div class="actions">
                   <button type="button" class="ghost" onclick={() => (creating = null)} disabled={saving}>Cancel</button>
                   <button type="submit" class="primary" disabled={saving}>
-                    {chosen.size ? `Create tag and add to ${count(chosen.size)}` : "Save description"}
+                    {wholeGroup && g.size > g.notes.length
+                      ? `Create tag and add to ${count(g.size)}`
+                      : chosen.size
+                        ? `Create tag and add to ${count(chosen.size)}`
+                        : "Save description"}
                   </button>
                 </div>
               </form>
@@ -225,7 +316,7 @@
                     {#if n.folder}<span class="muted folder">{n.folder}</span>{/if}
                   </li>
                 {/each}
-                {#if g.notes.length > SAMPLE}<li class="muted">and {count(g.notes.length - SAMPLE)} more</li>{/if}
+                {#if g.size > SAMPLE}<li class="muted">and {count(g.size - SAMPLE)} more</li>{/if}
               </ul>
             {/if}
           </li>
@@ -295,6 +386,7 @@
 
   .controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: 16px;
     padding: 16px 24px;
@@ -316,10 +408,6 @@
     flex-direction: row;
     align-items: center;
     gap: 8px;
-  }
-
-  .controls label.check {
-    min-height: 32px;
   }
 
   .controls button {
@@ -436,6 +524,11 @@
 
   .hint {
     font-size: 12px;
+  }
+
+  label.whole {
+    display: flex;
+    font-size: 13px;
   }
 
   .pick {

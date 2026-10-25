@@ -60,12 +60,11 @@ impl Vault {
         let edit = normalize(edit)?;
         let now = now_ms();
         let mut report = MetadataEditReport::default();
-        let mut seen: Vec<i64> = Vec::with_capacity(ids.len());
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
         for &id in ids {
-            if seen.contains(&id) {
+            if !seen.insert(id) {
                 continue;
             }
-            seen.push(id);
             let (folder, title, body): (String, String, String) = tx
                 .query_row("SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL", [id], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
