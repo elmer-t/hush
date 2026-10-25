@@ -83,6 +83,8 @@
   let showFilters = $state(false);
   let facets = $state<Facets>({ tags: [], topics: [], authors: [], attributeKeys: [] });
   let hits = $state<SearchHit[]>([]);
+  // Too many matches to rank: the list shows the newest ones.
+  let newestFirst = $state(false);
   let hasMore = $state(false);
   let error = $state("");
   // Bumped when the query changes, so the list starts again at the top.
@@ -232,10 +234,12 @@
     loading = true;
     try {
       const query = toQuery(text, selectedFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
-      const page = await api.searchNotes(query);
-      if (run !== generation) return;
+      const result = await api.searchNotes(query);
+      if (run !== generation || result.cancelled) return;
+      const page = result.hits;
       if (reset) {
         hits = page;
+        newestFirst = result.newestFirst;
       } else {
         const seen = new Set(hits.map((h) => h.note.id));
         hits = [...hits, ...page.filter((h) => !seen.has(h.note.id))];
@@ -585,6 +589,9 @@
           oncreate={addFolder}
         />
       </div>
+    {/if}
+    {#if newestFirst && searching}
+      <p class="broad muted" role="status">Many matches, newest first. Type more to sort by relevance.</p>
     {/if}
     <div class="results">
       {#key queryVersion}
@@ -955,5 +962,10 @@
 
   .index.failed {
     color: var(--warn);
+  }
+  .broad {
+    margin: 0;
+    padding: 4px 12px;
+    font-size: 0.85em;
   }
 </style>

@@ -121,6 +121,13 @@ export type SearchQuery = {
 
 /** `snippet` marks matches with the control characters below. */
 export type SearchHit = { note: NoteSummary; snippet: string | null };
+/** `newestFirst`: too many notes matched to rank them, so these are the newest matches.
+ * `cancelled`: a newer search replaced this one; drop the result. */
+export type SearchResult = { hits: SearchHit[]; newestFirst: boolean; cancelled: boolean };
+
+/** Emitted while opening a vault runs a schema upgrade that rebuilds derived data. */
+export const VAULT_UPGRADE_EVENT = "vault-upgrade";
+export type VaultUpgrade = { done: number; total: number };
 export const HIGHLIGHT_START = "\u0002";
 export const HIGHLIGHT_END = "\u0003";
 
@@ -244,7 +251,7 @@ export const api = {
   defaultAuthor: () => invoke<string | null>("default_author"),
   setDefaultAuthor: (author: string) => invoke<void>("set_default_author", { author }),
 
-  searchNotes: (query: SearchQuery) => invoke<SearchHit[]>("search_notes", { query }),
+  searchNotes: (query: SearchQuery) => invoke<SearchResult>("search_notes", { query }),
   searchFacets: () => invoke<Facets>("search_facets"),
   attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
 

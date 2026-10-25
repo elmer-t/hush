@@ -35,6 +35,11 @@ pub struct Session {
     /// The related-notes index of the open vault, kept apart from the vault so a lookup
     /// never waits for it. Dropped (and zeroed) on lock.
     related: RwLock<Option<RelatedIndex>>,
+    /// Numbers searches, so a newer one can cancel an older one (see [`Session::search`]).
+    searches: AtomicU64,
+    /// Interrupts the open vault's connection; `Some` only while a search runs on it,
+    /// so an interrupt can never hit a save or the background jobs.
+    running_search: Mutex<Option<rusqlite::InterruptHandle>>,
 }
 
 struct Unlocked {
@@ -176,6 +181,44 @@ impl Session {
         let unlocked = guard.as_mut().ok_or(SessionError::Locked)?;
         unlocked.activity = Activity::now();
         Ok(f(&mut unlocked.vault)?)
+    }
+
+    /// Runs search `f` on the vault, cancelling any older search still running or
+    /// waiting for the vault: a search is only worth finishing while it is the newest.
+    /// A running one is interrupted mid-statement, and `f` gets a `stop` check to ask
+    /// between statements. Returns `None` when a newer search cancelled this one (or
+    /// `f` returned `None` because `stop` said so); that is not an error.
+    pub fn search<T>(
+        &self,
+        f: impl FnOnce(&mut Vault, &dyn Fn() -> bool) -> db::Result<Option<T>>,
+    ) -> Result<Option<T>, SessionError> {
+        let ticket = self.searches.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(handle) = self.running_search.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            handle.interrupt();
+        }
+        let result = self.with_vault(|v| {
+            if self.searches.load(Ordering::SeqCst) != ticket {
+                return Ok(None);
+            }
+            *self.running_search.lock().unwrap_or_else(|e| e.into_inner()) = Some(v.interrupt_handle());
+            let stop = || self.searches.load(Ordering::SeqCst) != ticket;
+            let result = f(v, &stop);
+            // Cleared before the vault is released, so the next user of the connection
+            // can't be interrupted.
+            *self.running_search.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            result
+        });
+        match result {
+            Err(SessionError::Db(db::Error::Sql(e))) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::OperationInterrupted) => {
+                Ok(None)
+            }
+            other => other,
+        }
+    }
+
+    /// Whether a search is running on the vault right now.
+    pub fn search_running(&self) -> bool {
+        self.running_search.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 
     /// Like [`Session::with_vault`], but for background work: it does not count as

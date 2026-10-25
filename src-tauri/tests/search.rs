@@ -137,3 +137,110 @@ fn facets_list_values_in_use() {
     assert_eq!(facets.tags, strings(&["jr"]), "tags of deleted notes are not offered");
     assert_eq!(facets.authors, strings(&["Ada"]));
 }
+
+#[test]
+fn short_prefixes_use_the_prefix_index_and_one_letter_is_a_whole_word() {
+    let (_dir, mut vault) = seeded();
+    vault.create_note("", "Letters", "a b c").unwrap();
+    // Two and three characters are prefixes, as before.
+    assert_eq!(titles(&vault, &text("li")), vec!["Lighthouse", "Dream of the sea"]);
+    assert_eq!(titles(&vault, &text("lig")), vec!["Lighthouse", "Dream of the sea"]);
+    assert_eq!(titles(&vault, &text("bu")), vec!["Meeting"]);
+    // One letter matches only the word itself, not every word starting with it.
+    assert_eq!(titles(&vault, &text("l")), Vec::<String>::new());
+    assert_eq!(titles(&vault, &text("b")), vec!["Letters"]);
+    assert_eq!(titles(&vault, &text("walked t")), Vec::<String>::new());
+    assert_eq!(titles(&vault, &text("walked th")), vec!["Lighthouse"]);
+}
+
+#[test]
+fn a_very_broad_query_lists_the_newest_matches() {
+    use hush_lib::db::{NewNote, RANK_LIMIT};
+    let (_dir, mut vault) = common::vault();
+    let titles_owned: Vec<String> = (0..=RANK_LIMIT).map(|i| format!("Note {i}")).collect();
+    let notes: Vec<NewNote> = titles_owned
+        .iter()
+        .map(|t| NewNote { folder: "", title: t, body: "common words here", created_at: 1, updated_at: 1 })
+        .collect();
+    vault.import_notes(&notes).unwrap();
+    let rare = vault.create_note("", "Rare", "common and rare words").unwrap();
+
+    let page = vault.search_page(&SearchQuery { text: "common".into(), limit: Some(3), ..Default::default() }).unwrap();
+    assert!(page.newest_first);
+    let ids: Vec<i64> = page.hits.iter().map(|h| h.note.id).collect();
+    assert_eq!(ids, [rare, rare - 1, rare - 2], "newest (highest id) first");
+    assert!(page.hits[0].snippet.as_deref().unwrap().contains("\u{2}common\u{3}"));
+    // Next page continues in the same order; trashed notes stay out.
+    vault.trash_note(rare - 3).unwrap();
+    let next = vault
+        .search_page(&SearchQuery { text: "common".into(), limit: Some(2), offset: 3, ..Default::default() })
+        .unwrap();
+    assert_eq!(next.hits.iter().map(|h| h.note.id).collect::<Vec<_>>(), [rare - 4, rare - 5]);
+
+    // Narrow again: ranked.
+    let page = vault.search_page(&text("rare")).unwrap();
+    assert!(!page.newest_first);
+    assert_eq!(page.hits.len(), 1);
+}
+
+/// A search still waiting for the vault when a newer one starts doesn't run at all.
+#[test]
+fn a_search_superseded_while_waiting_returns_nothing() {
+    use hush_lib::session::Session;
+    let (dir, vault) = seeded();
+    let session = Session::default();
+    session.unlock(vault, dir.path().join("vault.hush")).unwrap();
+    let (older, newer) = std::thread::scope(|s| {
+        // Hold the vault (as a save would) while two searches queue up behind it.
+        session
+            .with_vault(|_| {
+                let older = s.spawn(|| session.search(|v, stop| v.search_page_until(&text("lighthouse"), stop)).unwrap());
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let newer = s.spawn(|| session.search(|v, stop| v.search_page_until(&text("budget"), stop)).unwrap());
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                Ok((older, newer))
+            })
+            .map(|(o, n)| (o.join().unwrap(), n.join().unwrap()))
+            .unwrap()
+    });
+    assert!(older.is_none(), "cancelled, not an error");
+    assert_eq!(newer.unwrap().hits.len(), 1);
+}
+
+/// A newer search interrupts one still running on the vault; the older one returns
+/// nothing instead of an error.
+#[test]
+fn a_newer_search_interrupts_a_running_one() {
+    use hush_lib::db::NewNote;
+    use hush_lib::session::Session;
+    let (dir, mut vault) = common::vault();
+    // Enough text that ranking a broad prefix takes a while (debug build).
+    let body: String = (0..300).map(|i| format!("word{} ", i % 97)).collect();
+    let titles: Vec<String> = (0..5_000).map(|i| format!("N{i}")).collect();
+    let notes: Vec<NewNote> =
+        titles.iter().map(|t| NewNote { folder: "", title: t, body: &body, created_at: 1, updated_at: 1 }).collect();
+    vault.import_notes(&notes).unwrap();
+    let session = Session::default();
+    session.unlock(vault, dir.path().join("vault.hush")).unwrap();
+
+    let mut interrupted = false;
+    for _ in 0..5 {
+        let (older, newer) = std::thread::scope(|s| {
+            let older = s.spawn(|| session.search(|v, stop| v.search_page_until(&text("wo"), stop)));
+            while !session.search_running() && !older.is_finished() {
+                std::thread::yield_now();
+            }
+            let newer = session.search(|v, stop| v.search_page_until(&text("word5"), stop));
+            (older.join().unwrap(), newer)
+        });
+        assert!(older.is_ok(), "an interrupted search is not an error");
+        assert_eq!(newer.unwrap().unwrap().hits.len(), 200);
+        if older.unwrap().is_none() {
+            interrupted = true;
+            break;
+        }
+    }
+    assert!(interrupted, "the running search was never interrupted");
+    // The connection works normally afterwards.
+    assert_eq!(session.with_vault(|v| v.search(&text("word7"))).unwrap().len(), 200);
+}
