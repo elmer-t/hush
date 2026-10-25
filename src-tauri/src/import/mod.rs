@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -32,7 +32,16 @@ use rules::{AUTHOR_EMAIL_KEY, CompiledRule, RuleInput};
 
 pub use dates::parse_loose_date;
 
-pub const BATCH_SIZE: usize = 500;
+/// Files read and converted per round. Their notes are written in as many
+/// transactions as [`INSERT_BUDGET`] takes.
+pub const BATCH_SIZE: usize = 2_000;
+/// How long a write transaction keeps inserting. Committing then takes about as long
+/// again (the full-text index writes out what it buffered), so a transaction holds the
+/// vault about 1 s: the longest the UI waits for it during an import.
+pub const INSERT_BUDGET: Duration = Duration::from_millis(500);
+/// Gap between write transactions. The vault mutex isn't fair: without a gap the import
+/// takes it back before a waiting UI command wakes.
+const WRITE_PAUSE: Duration = Duration::from_millis(5);
 /// Bigger "text" files are almost certainly not notes (logs, data dumps).
 pub const MAX_TEXT_BYTES: u64 = 10 * 1024 * 1024;
 /// The report's name for the `<page>_files` folders browsers save next to a web page.
@@ -375,8 +384,9 @@ pub fn target_folder(target: &str, relative: &str) -> String {
 
 /// Imports (or, with `dry_run`, previews importing) the files under `source` into the
 /// open vault under the folder `target` (`""` for the root), using the vault's rules.
-/// Writes happen in transactions of [`BATCH_SIZE`] notes; `cancel` is checked between
-/// batches.
+/// Writes happen in transactions of at most [`BATCH_SIZE`] notes or [`INSERT_BUDGET`],
+/// with the vault set up for bulk writes meanwhile; `cancel` is checked between
+/// transactions.
 pub fn run(
     session: &Session,
     source: &Path,
@@ -414,94 +424,122 @@ pub fn run(
     let mut planned: HashSet<(String, String)> = HashSet::new();
     progress(Progress { done: 0, total });
 
-    for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            report.cancelled = true;
-            break;
-        }
-        let mut batch = Vec::with_capacity(chunk.len());
-        for rel in chunk {
-            match prepare(source, rel, &rules) {
-                Ok(mut p) => {
-                    // After `prepare`, so the default topic stays the source-relative top folder.
-                    p.folder = target_folder(&target, &p.folder);
-                    give_unique_title(&mut p, &mut planned);
-                    batch.push(p);
-                }
-                Err(PrepareError::Unsupported) => {
-                    let ext = formats::extension(rel);
-                    let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
-                    *unsupported.entry(format).or_default() += 1;
-                }
-                Err(e) => skipped.push(false, FileMessage {
-                    path: rel.to_string_lossy().replace('\\', "/"),
-                    message: e.to_string(),
-                }),
+    if !dry_run {
+        on_vault(session, &vault_path, |v| v.set_bulk_writes(true))?;
+    }
+    let mut write_all = || -> Result<(), ImportError> {
+        for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                report.cancelled = true;
+                break;
             }
-        }
-        for p in &batch {
-            for w in &p.warnings {
-                report.warning_count += 1;
-                if report.warnings.len() < MAX_REPORTED {
-                    report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
+            let mut batch = Vec::with_capacity(chunk.len());
+            for rel in chunk {
+                match prepare(source, rel, &rules) {
+                    Ok(mut p) => {
+                        // After `prepare`, so the default topic stays the source-relative top folder.
+                        p.folder = target_folder(&target, &p.folder);
+                        give_unique_title(&mut p, &mut planned);
+                        batch.push(p);
+                    }
+                    Err(PrepareError::Unsupported) => {
+                        let ext = formats::extension(rel);
+                        let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
+                        *unsupported.entry(format).or_default() += 1;
+                    }
+                    Err(e) => skipped.push(false, FileMessage {
+                        path: rel.to_string_lossy().replace('\\', "/"),
+                        message: e.to_string(),
+                    }),
                 }
             }
-        }
 
-        let outcomes: Vec<db::Result<i64>> = if dry_run {
-            on_vault(session, &vault_path, |v| {
-                let mut outcomes = Vec::with_capacity(batch.len());
-                for p in &batch {
-                    let taken = v.note_exists(&p.folder, &p.title)?;
-                    outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
+            let outcomes: Vec<db::Result<i64>> = if dry_run {
+                on_vault(session, &vault_path, |v| {
+                    let mut outcomes = Vec::with_capacity(batch.len());
+                    for p in &batch {
+                        let taken = v.note_exists(&p.folder, &p.title)?;
+                        outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
+                    }
+                    Ok(outcomes)
+                })?
+            } else {
+                let notes: Vec<NewNote> = batch
+                    .iter()
+                    .map(|p| NewNote {
+                        folder: &p.folder,
+                        title: &p.title,
+                        body: &p.body,
+                        created_at: p.created_at,
+                        updated_at: p.updated_at,
+                    })
+                    .collect();
+                let mut outcomes = Vec::with_capacity(notes.len());
+                while outcomes.len() < notes.len() {
+                    if !outcomes.is_empty() {
+                        std::thread::sleep(WRITE_PAUSE);
+                        if cancel.load(Ordering::Relaxed) {
+                            report.cancelled = true;
+                            break;
+                        }
+                    }
+                    let rest = &notes[outcomes.len()..];
+                    outcomes.extend(on_vault(session, &vault_path, |v| v.import_notes_within(rest, INSERT_BUDGET))?);
                 }
-                Ok(outcomes)
-            })?
-        } else {
-            let notes: Vec<NewNote> = batch
-                .iter()
-                .map(|p| NewNote {
-                    folder: &p.folder,
-                    title: &p.title,
-                    body: &p.body,
-                    created_at: p.created_at,
-                    updated_at: p.updated_at,
-                })
-                .collect();
-            on_vault(session, &vault_path, |v| v.import_notes(&notes))?
-        };
+                outcomes
+            };
 
-        for (p, outcome) in batch.iter().zip(outcomes) {
-            match outcome {
-                Ok(id) => {
-                    report.imported += 1;
-                    *folders.entry(p.folder.clone()).or_default() += 1;
-                    imported_ids.push(id);
-                    if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
-                        report.samples.push(Sample {
-                            path: p.path.clone(),
-                            folder: p.folder.clone(),
-                            before: truncate(&p.original),
-                            after: truncate(&p.body),
-                        });
+            // Only the files written: a cancel can stop partway through a batch.
+            for p in &batch[..outcomes.len()] {
+                for w in &p.warnings {
+                    report.warning_count += 1;
+                    if report.warnings.len() < MAX_REPORTED {
+                        report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
                     }
                 }
-                Err(e) => {
-                    let exists = matches!(e, db::Error::TitleTaken);
-                    let message = match e {
-                        db::Error::TitleTaken => {
-                            report.already_exist += 1;
-                            let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
-                            format!("a note titled '{}' already exists in {folder}", p.title)
+            }
+            for (p, outcome) in batch.iter().zip(outcomes) {
+                match outcome {
+                    Ok(id) => {
+                        report.imported += 1;
+                        *folders.entry(p.folder.clone()).or_default() += 1;
+                        imported_ids.push(id);
+                        if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
+                            report.samples.push(Sample {
+                                path: p.path.clone(),
+                                folder: p.folder.clone(),
+                                before: truncate(&p.original),
+                                after: truncate(&p.body),
+                            });
                         }
-                        e => e.to_string(),
-                    };
-                    skipped.push(exists, FileMessage { path: p.path.clone(), message });
+                    }
+                    Err(e) => {
+                        let exists = matches!(e, db::Error::TitleTaken);
+                        let message = match e {
+                            db::Error::TitleTaken => {
+                                report.already_exist += 1;
+                                let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
+                                format!("a note titled '{}' already exists in {folder}", p.title)
+                            }
+                            e => e.to_string(),
+                        };
+                        skipped.push(exists, FileMessage { path: p.path.clone(), message });
+                    }
                 }
             }
+            if report.cancelled {
+                break;
+            }
+            progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
         }
-        progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
+        Ok(())
+    };
+    let written = write_all();
+    if !dry_run {
+        // Also after a failure; if the vault locked meanwhile, opening it again resets it.
+        let _ = on_vault(session, &vault_path, |v| v.set_bulk_writes(false));
     }
+    written?;
 
     let mut unsupported: Vec<FormatCount> =
         unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();

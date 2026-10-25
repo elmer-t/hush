@@ -121,6 +121,7 @@ impl Vault {
 
     fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
         schema::migrate(&mut conn, progress)?;
+        notes::reset_bulk_writes(&conn)?;
         Ok(Self { conn, lock })
     }
 

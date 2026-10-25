@@ -3,15 +3,19 @@
 //! `cargo test --release --test import_scale -- --ignored --nocapture`
 //! - `HUSH_IMPORT_FILES`: files to generate (default 100,000).
 //! - `HUSH_IMPORT_SOURCE`: keep the generated folder here and reuse it.
+//! - `HUSH_IMPORT_BASE`: notes already in the vault the import runs into (default 0),
+//!   copies of the generated notes under `Base <n>` folders.
+//! - `HUSH_IMPORT_BASE_VAULT`: keep that vault here and reuse it (each run imports
+//!   into a copy).
 
 mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use hush_lib::db::NewNote;
+use hush_lib::db::{NewNote, Vault};
 use hush_lib::import::rules::Rule;
 use hush_lib::import::{self, Prepared, clean, formats};
 use hush_lib::session::Session;
@@ -98,6 +102,61 @@ fn rss_mb() -> String {
     format!("rss {} MB, peak {} MB", field("VmRSS:") / 1024, field("VmHWM:") / 1024)
 }
 
+fn ms(d: Duration) -> u128 {
+    d.as_millis()
+}
+
+/// Median, 99th percentile and max, in ms.
+fn spread(mut times: Vec<Duration>) -> String {
+    if times.is_empty() {
+        return "none".into();
+    }
+    times.sort();
+    format!("median {} ms, p99 {} ms, max {} ms", ms(times[times.len() / 2]), ms(times[times.len() * 99 / 100]), ms(times[times.len() - 1]))
+}
+
+/// A vault holding `notes` copies of `prepared` (under `Base <n>/…`), kept at `keep`
+/// when given. Returns the temp dir holding the copy to import into, and its path.
+fn base_vault(prepared: &[Prepared], notes: usize, keep: Option<PathBuf>) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = keep.unwrap_or_else(|| dir.path().join("base.hush"));
+    if !path.exists() {
+        let start = Instant::now();
+        let mut vault = Vault::create(&path, common::PASS).unwrap();
+        let mut done = 0;
+        for round in 1.. {
+            let folders: Vec<String> = prepared.iter().map(|p| format!("Base {round}/{}", p.folder)).collect();
+            for (chunk, folders) in prepared.chunks(import::BATCH_SIZE).zip(folders.chunks(import::BATCH_SIZE)) {
+                let take = chunk.len().min(notes - done);
+                let new: Vec<NewNote> = chunk[..take]
+                    .iter()
+                    .zip(folders)
+                    .map(|(p, f)| NewNote { folder: f, title: &p.title, body: &p.body, created_at: p.created_at, updated_at: p.updated_at })
+                    .collect();
+                for outcome in vault.import_notes(&new).unwrap() {
+                    outcome.unwrap();
+                }
+                done += take;
+                if done == notes {
+                    break;
+                }
+            }
+            println!("  base vault: {done} notes, {}", secs(start.elapsed()));
+            if done == notes {
+                break;
+            }
+        }
+        vault.close().unwrap();
+    }
+    let copy = dir.path().join("vault.hush");
+    if copy != path {
+        fs::copy(&path, &copy).unwrap();
+    }
+    let size = fs::metadata(&copy).map(|m| m.len()).unwrap_or(0);
+    println!("base vault: {notes} notes, {:.2} GB", size as f64 / 1e9);
+    (dir, copy)
+}
+
 fn drop_caches() -> bool {
     unsafe { libc_sync() };
     fs::write("/proc/sys/vm/drop_caches", "3").is_ok()
@@ -181,41 +240,23 @@ fn import_benchmark() {
         println!("prepare, {threads} threads ({}): {}", if cold { "cold" } else { "warm" }, secs(start.elapsed()));
     }
 
-    // Writes alone, on prepared notes, by batch of 500.
-    {
-        let (_dir, mut vault) = common::vault();
-        let start = Instant::now();
-        let mut times = Vec::new();
-        for chunk in prepared.chunks(import::BATCH_SIZE) {
-            let s = Instant::now();
-            let notes: Vec<NewNote> = chunk
-                .iter()
-                .map(|p| NewNote { folder: &p.folder, title: &p.title, body: &p.body, created_at: p.created_at, updated_at: p.updated_at })
-                .collect();
-            for outcome in vault.import_notes(&notes).unwrap() {
-                let _ = outcome;
-            }
-            times.push(s.elapsed());
-        }
-        let n = times.len();
-        println!(
-            "write {} notes: {} (first batch {} ms, last batch {} ms)",
-            prepared.len(),
-            secs(start.elapsed()),
-            times[0].as_millis(),
-            times[n - 1].as_millis()
-        );
-        let ids: Vec<i64> = (1..=prepared.len() as i64).collect();
-        let s = Instant::now();
-        let ambiguous = vault.ambiguous_links(&ids).unwrap();
-        println!("ambiguous_links over imported ids: {} ({} found)", secs(s.elapsed()), ambiguous.len());
-    }
+    // Writes alone, on prepared notes, as `import::run` does them.
+    write_only(&prepared);
+
+    let base: usize = std::env::var("HUSH_IMPORT_BASE").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(0);
+    let (_dir, vault_path) = if base > 0 {
+        base_vault(&prepared, base, std::env::var_os("HUSH_IMPORT_BASE_VAULT").map(PathBuf::from))
+    } else {
+        let (dir, vault) = common::vault();
+        vault.close().unwrap();
+        let path = dir.path().join("vault.hush");
+        (dir, path)
+    };
     drop(prepared);
 
     // The whole flow as the app runs it: preview, then import, then preview again.
-    let (dir, vault) = common::vault();
     let session = Session::default();
-    session.unlock(vault, dir.path().join("vault.hush")).unwrap();
+    session.unlock(Vault::open(&vault_path, common::PASS).unwrap(), vault_path.clone()).unwrap();
     let cold = drop_caches();
     let start = Instant::now();
     let preview = import::run(&session, &source, "Import", true, &AtomicBool::new(false), |_| {}).unwrap();
@@ -229,9 +270,27 @@ fn import_benchmark() {
     );
     let json = serde_json::to_string(&preview).unwrap();
     println!("preview report JSON: {} KB", json.len() >> 10);
+    // Meanwhile a stand-in for the UI asks for the vault every 20 ms, as typing in
+    // search would, and records how long it waited.
     let start = Instant::now();
-    let report = import::run(&session, &source, "Import", false, &AtomicBool::new(false), |_| {}).unwrap();
+    let finished = AtomicBool::new(false);
+    let (report, waits) = std::thread::scope(|s| {
+        let probe = s.spawn(|| {
+            let mut waits = Vec::new();
+            while !finished.load(Ordering::Relaxed) {
+                let s = Instant::now();
+                session.with_vault(|_| Ok(())).unwrap();
+                waits.push(s.elapsed());
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            waits
+        });
+        let report = import::run(&session, &source, "Import", false, &AtomicBool::new(false), |_| {}).unwrap();
+        finished.store(true, Ordering::Relaxed);
+        (report, probe.join().unwrap())
+    });
     println!("run: import {}, {} imported, {}", secs(start.elapsed()), report.imported, rss_mb());
+    println!("UI wait for the vault during import: {}", spread(waits));
     let dirty = session.with_vault(|v| v.embedding_queue_len()).unwrap();
     println!("embedding queue after import: {dirty}");
     let start = Instant::now();
@@ -243,4 +302,29 @@ fn import_benchmark() {
         again.already_exist,
         json.len() >> 10
     );
+}
+
+fn write_only(prepared: &[Prepared]) {
+    let (_dir, mut vault) = common::vault();
+    vault.set_bulk_writes(true).unwrap();
+    let start = Instant::now();
+    let mut holds = Vec::new();
+    for chunk in prepared.chunks(import::BATCH_SIZE) {
+        let notes: Vec<NewNote> = chunk
+            .iter()
+            .map(|p| NewNote { folder: &p.folder, title: &p.title, body: &p.body, created_at: p.created_at, updated_at: p.updated_at })
+            .collect();
+        let mut written = 0;
+        while written < notes.len() {
+            let s = Instant::now();
+            written += vault.import_notes_within(&notes[written..], import::INSERT_BUDGET).unwrap().len();
+            holds.push(s.elapsed());
+        }
+    }
+    println!("write {} notes: {} in {} transactions ({})", prepared.len(), secs(start.elapsed()), holds.len(), spread(holds));
+    vault.set_bulk_writes(false).unwrap();
+    let ids: Vec<i64> = (1..=prepared.len() as i64).collect();
+    let s = Instant::now();
+    let ambiguous = vault.ambiguous_links(&ids).unwrap();
+    println!("ambiguous_links over imported ids: {} ({} found)", secs(s.elapsed()), ambiguous.len());
 }

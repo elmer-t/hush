@@ -1,11 +1,20 @@
 //! Note CRUD. Every write re-derives the note's index rows (tags, attributes, links,
 //! author, topic, created date) from its body.
 
+use std::time::{Duration, Instant};
+
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
 use serde::Serialize;
 
 use super::{Error, Result, Vault, links, now_ms, tags};
 use crate::markdown;
+
+/// SQLite's default page cache, in KB.
+const DEFAULT_CACHE_KB: i64 = 2_000;
+const BULK_CACHE_KB: i64 = 256 * 1024;
+/// FTS5's default for how much new index data it buffers before writing it out.
+const DEFAULT_FTS_BYTES: i64 = 1024 * 1024;
+const BULK_FTS_BYTES: i64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -329,9 +338,23 @@ impl Vault {
     /// was not inserted. Unlike [`Vault::create_note`], links in other notes are not
     /// rewritten: an import reports ambiguous links instead.
     pub fn import_notes(&mut self, notes: &[NewNote]) -> Result<Vec<Result<i64>>> {
+        self.import_notes_until(notes, None)
+    }
+
+    /// Like [`Vault::import_notes`], but stops inserting once `budget` has passed, so a big
+    /// batch never holds the vault much longer than that. Returns the outcomes of the
+    /// notes it got to (at least one); the rest are for the next call.
+    pub fn import_notes_within(&mut self, notes: &[NewNote], budget: Duration) -> Result<Vec<Result<i64>>> {
+        self.import_notes_until(notes, Some(Instant::now() + budget))
+    }
+
+    fn import_notes_until(&mut self, notes: &[NewNote], deadline: Option<Instant>) -> Result<Vec<Result<i64>>> {
         let tx = self.conn.transaction()?;
         let mut outcomes = Vec::with_capacity(notes.len());
         for note in notes {
+            if !outcomes.is_empty() && deadline.is_some_and(|d| Instant::now() >= d) {
+                break;
+            }
             let outcome = (|| {
                 let title = validate_title(note.title)?;
                 tx.prepare_cached(
@@ -350,6 +373,16 @@ impl Vault {
         }
         tx.commit()?;
         Ok(outcomes)
+    }
+
+    /// Settings for writing many notes at once, as an import does: a 256 MB page cache
+    /// and a 64 MB full-text buffer, which halve the write time into a large vault.
+    /// `false` puts back the defaults. The buffer size is stored in the vault, so
+    /// opening a vault also puts it back after a crash mid-import.
+    pub fn set_bulk_writes(&self, on: bool) -> Result<()> {
+        let (cache_kb, fts_bytes) = if on { (BULK_CACHE_KB, BULK_FTS_BYTES) } else { (DEFAULT_CACHE_KB, DEFAULT_FTS_BYTES) };
+        self.conn.pragma_update(None, "cache_size", -cache_kb)?;
+        set_fts_hashsize(&self.conn, fts_bytes)
     }
 
     pub fn note_exists(&self, folder: &str, title: &str) -> Result<bool> {
@@ -463,5 +496,66 @@ pub(super) fn title_taken(e: rusqlite::Error) -> Error {
         Error::TitleTaken
     } else {
         e.into()
+    }
+}
+
+fn set_fts_hashsize(conn: &Connection, bytes: i64) -> Result<()> {
+    conn.execute("INSERT INTO notes_fts(notes_fts, rank) VALUES ('hashsize', ?1)", [bytes])?;
+    Ok(())
+}
+
+/// Puts back the full-text buffer size an import left behind (it crashed, or the vault
+/// locked mid-import). Writes nothing when it is already the default.
+pub(super) fn reset_bulk_writes(conn: &Connection) -> Result<()> {
+    let stored: Option<i64> =
+        conn.query_row("SELECT v FROM notes_fts_config WHERE k = 'hashsize'", [], |r| r.get(0)).optional()?;
+    if stored.is_some_and(|b| b != DEFAULT_FTS_BYTES) {
+        set_fts_hashsize(conn, DEFAULT_FTS_BYTES)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stored_hashsize(vault: &Vault) -> Option<i64> {
+        vault.conn.query_row("SELECT v FROM notes_fts_config WHERE k = 'hashsize'", [], |r| r.get(0)).optional().unwrap()
+    }
+
+    #[test]
+    fn a_spent_budget_still_writes_one_note_per_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let titles = ["a", "b", "c"];
+        let notes: Vec<NewNote> =
+            titles.iter().map(|t| NewNote { folder: "", title: t, body: "x", created_at: 1, updated_at: 1 }).collect();
+        let mut written = 0;
+        let mut calls = 0;
+        while written < notes.len() {
+            written += vault.import_notes_within(&notes[written..], Duration::ZERO).unwrap().len();
+            calls += 1;
+        }
+        assert_eq!(calls, 3);
+        assert_eq!(vault.import_notes_within(&notes, Duration::from_secs(60)).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn bulk_write_settings_are_undone_and_reset_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.hush");
+        let vault = Vault::create(&path, "pass").unwrap();
+        vault.set_bulk_writes(true).unwrap();
+        assert_eq!(stored_hashsize(&vault), Some(BULK_FTS_BYTES));
+        let cache: i64 = vault.conn.query_row("PRAGMA cache_size", [], |r| r.get(0)).unwrap();
+        assert_eq!(cache, -BULK_CACHE_KB);
+        vault.set_bulk_writes(false).unwrap();
+        assert_eq!(stored_hashsize(&vault), Some(DEFAULT_FTS_BYTES));
+
+        // An import that never finished (crash, or the vault locked) leaves the big buffer.
+        vault.set_bulk_writes(true).unwrap();
+        vault.close().unwrap();
+        let vault = Vault::open(&path, "pass").unwrap();
+        assert_eq!(stored_hashsize(&vault), Some(DEFAULT_FTS_BYTES));
     }
 }
