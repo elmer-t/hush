@@ -17,9 +17,11 @@ mod rtf;
 pub mod rules;
 
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -39,6 +41,8 @@ pub const BATCH_SIZE: usize = 2_000;
 /// again (the full-text index writes out what it buffered), so a transaction holds the
 /// vault about 1 s: the longest the UI waits for it during an import.
 pub const INSERT_BUDGET: Duration = Duration::from_millis(500);
+/// Batches read ahead of the one being written. Bounds memory at any import size.
+const QUEUED_BATCHES: usize = 2;
 /// Gap between write transactions. The vault mutex isn't fair: without a gap the import
 /// takes it back before a waiting UI command wakes.
 const WRITE_PAUSE: Duration = Duration::from_millis(5);
@@ -241,18 +245,29 @@ fn is_page_assets(dir: &str, siblings: &HashSet<String>) -> bool {
 
 /// Reads and converts one file. Pure apart from reading the file.
 pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepared, PrepareError> {
-    let full = root.join(rel);
-    let format = formats::detect(&full)?.ok_or(PrepareError::Unsupported)?;
-    let meta = fs::metadata(&full)?;
+    if formats::never_text(rel) {
+        return Err(PrepareError::Unsupported);
+    }
+    // Opened once: on Windows every open also waits for the virus scanner.
+    let mut file = File::open(root.join(rel))?;
+    let meta = file.metadata()?;
     if meta.len() > MAX_TEXT_BYTES {
+        // Only the start, to tell a big text file from a binary one.
+        let mut head = Vec::with_capacity(formats::SNIFF_BYTES);
+        (&mut file).take(formats::SNIFF_BYTES as u64).read_to_end(&mut head)?;
+        formats::sniff(rel, &head).ok_or(PrepareError::Unsupported)?;
         return Err(PrepareError::TooLarge(meta.len()));
     }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    file.read_to_end(&mut bytes)?;
+    drop(file);
+    let format = formats::sniff(rel, &bytes).ok_or(PrepareError::Unsupported)?;
     let modified = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or_else(db::now_ms, |d| d.as_millis() as i64);
-    let (original, encoding_warning) = formats::decode(fs::read(&full)?);
+    let (original, encoding_warning) = formats::decode(bytes);
     let mut warnings: Vec<String> = encoding_warning.into_iter().collect();
     let text = match format {
         Format::Markdown | Format::Text | Format::Code(_) => original.clone(),
@@ -427,15 +442,27 @@ pub fn run(
     if !dry_run {
         on_vault(session, &vault_path, |v| v.set_bulk_writes(true))?;
     }
-    let mut write_all = || -> Result<(), ImportError> {
+    // Files are read and converted on worker threads, a few batches ahead of the
+    // writes; results come back in file order, so the report is the same as reading
+    // them one by one.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let stop = AtomicBool::new(false);
+    let stopped = || cancel.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed);
+    let (ready, prepared) = mpsc::sync_channel(QUEUED_BATCHES);
+    let mut write_all = |prepared: mpsc::Receiver<Vec<Result<Prepared, PrepareError>>>| -> Result<(), ImportError> {
         for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 report.cancelled = true;
                 break;
             }
+            // The workers only stop early when cancelled.
+            let Ok(results) = prepared.recv() else {
+                report.cancelled = true;
+                break;
+            };
             let mut batch = Vec::with_capacity(chunk.len());
-            for rel in chunk {
-                match prepare(source, rel, &rules) {
+            for (rel, result) in chunk.iter().zip(results) {
+                match result {
                     Ok(mut p) => {
                         // After `prepare`, so the default topic stays the source-relative top folder.
                         p.folder = target_folder(&target, &p.folder);
@@ -534,7 +561,20 @@ pub fn run(
         }
         Ok(())
     };
-    let written = write_all();
+    let written = std::thread::scope(|s| {
+        s.spawn(|| {
+            let ready = ready;
+            for chunk in scan.files.chunks(BATCH_SIZE) {
+                let Some(results) = prepare_batch(source, chunk, &rules, threads, &stopped) else { break };
+                if ready.send(results).is_err() {
+                    break;
+                }
+            }
+        });
+        let written = write_all(prepared);
+        stop.store(true, Ordering::Relaxed);
+        written
+    });
     if !dry_run {
         // Also after a failure; if the vault locked meanwhile, opening it again resets it.
         let _ = on_vault(session, &vault_path, |v| v.set_bulk_writes(false));
@@ -596,6 +636,39 @@ fn largest_folders(folders: BTreeMap<String, usize>) -> Vec<FolderCount> {
         all.sort_by(|a, b| a.folder.cmp(&b.folder));
     }
     all
+}
+
+/// [`prepare`] on `threads` threads, in file order. `None` when `stopped` said so first.
+fn prepare_batch(
+    source: &Path,
+    files: &[PathBuf],
+    rules: &[CompiledRule],
+    threads: usize,
+    stopped: &(dyn Fn() -> bool + Sync),
+) -> Option<Vec<Result<Prepared, PrepareError>>> {
+    let next = AtomicUsize::new(0);
+    let mut results: Vec<(usize, Result<Prepared, PrepareError>)> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads.min(files.len()))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= files.len() || stopped() {
+                            return done;
+                        }
+                        done.push((i, prepare(source, &files[i], rules)));
+                    }
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+    });
+    if results.len() < files.len() {
+        return None;
+    }
+    results.sort_unstable_by_key(|(i, _)| *i);
+    Some(results.into_iter().map(|(_, r)| r).collect())
 }
 
 /// Files with the same name in one folder (`letter.txt`, `letter.rtf`) would get the

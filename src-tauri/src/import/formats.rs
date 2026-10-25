@@ -78,7 +78,7 @@ const MAGIC: &[&[u8]] = &[
 ];
 
 /// How many bytes are looked at to tell text from binary.
-const SNIFF_BYTES: usize = 8192;
+pub const SNIFF_BYTES: usize = 8192;
 
 /// The lowercased extension, or `""`.
 pub fn extension(path: &Path) -> String {
@@ -93,16 +93,31 @@ pub fn is_document(path: &Path) -> bool {
 
 /// Sniffs a file. `None` means it is not text (or not a format we can read yet).
 pub fn detect(path: &Path) -> std::io::Result<Option<Format>> {
-    let ext = extension(path);
-    if BINARY.contains(&ext.as_str()) {
+    if never_text(path) {
         return Ok(None);
     }
     let mut head = Vec::with_capacity(SNIFF_BYTES);
     File::open(path)?.take(SNIFF_BYTES as u64).read_to_end(&mut head)?;
-    if !looks_like_text(&head) {
-        return Ok(None);
+    Ok(sniff(path, &head))
+}
+
+/// Whether the extension is a format that is never text, so the file needn't be opened.
+pub fn never_text(path: &Path) -> bool {
+    BINARY.contains(&extension(path).as_str())
+}
+
+/// [`detect`] on bytes already read: the start of the file (at least [`SNIFF_BYTES`]
+/// of it when it is that long; more is ignored). `path` gives the extension.
+pub fn sniff(path: &Path, bytes: &[u8]) -> Option<Format> {
+    if never_text(path) {
+        return None;
     }
-    Ok(Some(match ext.as_str() {
+    let head = &bytes[..bytes.len().min(SNIFF_BYTES)];
+    if !looks_like_text(head) {
+        return None;
+    }
+    let ext = extension(path);
+    Some(match ext.as_str() {
         e if MARKDOWN.contains(&e) => Format::Markdown,
         e if HTML.contains(&e) => Format::Html,
         "rtf" => Format::Rtf,
@@ -110,9 +125,9 @@ pub fn detect(path: &Path) -> std::io::Result<Option<Format>> {
             Some((_, lang)) => Format::Code(lang),
             None if TEXT.contains(&e) => Format::Text,
             // Unknown or no extension: go by the content.
-            None => sniff_content(&head),
+            None => sniff_content(head),
         },
-    }))
+    })
 }
 
 fn sniff_content(head: &[u8]) -> Format {
