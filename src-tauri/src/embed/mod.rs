@@ -117,6 +117,9 @@ pub enum EmbedError {
     Load(String),
     #[error("could not embed a note: {0}")]
     Inference(String),
+    /// `stop` said so (the vault locked) partway through a batch.
+    #[error("stopped")]
+    Stopped,
 }
 
 /// Turns note text into a vector. The real model sits behind this so DB and job tests
@@ -129,6 +132,15 @@ pub trait Embedder: Send + Sync {
     /// A vector for a short query (a tag description) to compare with note vectors.
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
         self.embed(text)
+    }
+    /// One vector per text, as [`Embedder::embed`] gives it; a model may run several
+    /// texts at once. `stop` is asked between model runs; once it says so, the batch
+    /// ends with [`EmbedError::Stopped`].
+    fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        texts
+            .iter()
+            .map(|t| if stop() { Err(EmbedError::Stopped) } else { self.embed(t) })
+            .collect()
     }
 }
 

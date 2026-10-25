@@ -368,6 +368,81 @@ fn bundled_model_puts_similar_notes_closer_than_unrelated_ones() {
     assert!((v.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
 }
 
+/// Batched and one-at-a-time embedding give the same vectors with the real model:
+/// texts of different lengths, one longer than a chunk, run together. Needs the files
+/// from `npm run fetch-model`.
+#[test]
+fn bundled_model_gives_the_same_vectors_batched() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+    let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
+    if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
+        eprintln!("SKIPPED: model files missing in {}; run `npm run fetch-model`", dir.display());
+        return;
+    }
+    let model = OnnxEmbedder::load(&dir, d).unwrap();
+    let long = "The quick brown fox jumps over the lazy dog. ".repeat(150);
+    let texts = ["Short note.", "Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.", long.as_str(), "A", "Kernel panic after the driver update; roll back the firmware."];
+    let batched = model.embed_batch(&texts, &|| false).unwrap();
+    for (text, b) in texts.iter().zip(&batched) {
+        let single = model.embed(text).unwrap();
+        let worst = single.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "{worst} for {:?}", &text[..text.len().min(20)]);
+    }
+    assert!(matches!(model.embed_batch(&texts, &|| true), Err(EmbedError::Stopped)));
+}
+
+/// Records the order notes are embedded in, by the first word of their text (title).
+struct Recorder {
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl Embedder for Recorder {
+    fn model_id(&self) -> &str {
+        "fake-4"
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.seen.lock().unwrap().push(text.split_whitespace().next().unwrap_or("").to_string());
+        Ok(vec![1.0, 0.0, 0.0, 0.0])
+    }
+}
+
+/// Imports notes titled `n<updated_at>` with the given `updated_at`s.
+fn import_dated(session: &Session, dates: &[i64]) {
+    let titles: Vec<String> = dates.iter().map(|d| format!("n{d}")).collect();
+    let notes: Vec<NewNote> = dates
+        .iter()
+        .zip(&titles)
+        .map(|(&d, t)| NewNote { folder: "", title: t, body: "words", created_at: 0, updated_at: d })
+        .collect();
+    for r in session.with_vault(|v| v.import_notes(&notes)).unwrap() {
+        r.unwrap();
+    }
+}
+
+#[test]
+fn the_queue_drains_most_recently_updated_first() {
+    struct Shared(Arc<Recorder>);
+    impl EmbedderSource for Shared {
+        fn embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+            Ok(self.0.clone())
+        }
+    }
+    // A short queue (sorted) and one long enough to be read through the index on
+    // `updated_at` instead, across several pages.
+    for n in [6usize, 5_100] {
+        let (_dir, _path, session, g) = session("fake-4");
+        let dates: Vec<i64> = (0..n as i64).map(|i| (i * 7919) % n as i64 + 1).collect();
+        import_dated(&session, &dates);
+        let recorder = Arc::new(Recorder { seen: std::sync::Mutex::new(Vec::new()) });
+        index(&session, g, &Shared(recorder.clone()));
+        let seen: Vec<i64> = recorder.seen.lock().unwrap().iter().map(|t| t[1..].parse().unwrap()).collect();
+        let expected: Vec<i64> = (1..=n as i64).rev().collect();
+        assert_eq!(seen.len(), n);
+        assert!(seen == expected, "{n} notes: embedded out of order, starting {:?}", &seen[..seen.len().min(10)]);
+    }
+}
+
 fn queued(session: &Session) -> usize {
     session.with_vault(|v| v.embedding_queue_len()).unwrap()
 }
@@ -422,7 +497,7 @@ fn a_save_during_embedding_is_not_lost() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
     let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
-    let page = session.with_vault(|v| v.queued_embeddings("fake-4", 0, 10)).unwrap();
+    let page = session.with_vault(|v| v.queued_embeddings("fake-4", &Default::default(), 10)).unwrap();
     assert_eq!(page.stale.len(), 1);
     // Saved after the job read the text, before it wrote the vector.
     session.with_vault(|v| v.update_body(id, "second text")).unwrap();

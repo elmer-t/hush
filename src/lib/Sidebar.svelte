@@ -71,6 +71,16 @@
 
   const PAGE_SIZE = 500;
   const SEARCH_DEBOUNCE_MS = 150;
+  // From this many notes left, the footer says indexing stops while locked.
+  const PAUSE_NOTICE_MIN = 10_000;
+
+  /** `~5 h left`, `~12 min left`, `under a minute left`. */
+  function timeLeft(secs: number): string {
+    if (secs < 60) return "under a minute left";
+    if (secs < 3600) return `~${Math.round(secs / 60)} min left`;
+    if (secs < 48 * 3600) return `~${Math.round(secs / 3600)} h left`;
+    return `~${Math.round(secs / 86400)} days left`;
+  }
 
   // Tree until the vault's stored choice has loaded.
   let view = $state<SidebarView>("tree");
@@ -683,7 +693,11 @@
   <div class="footer">
     {#if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
       <div class="index" role="status">
-        Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}
+        Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}{#if indexStatus.etaSecs != null},
+          {timeLeft(indexStatus.etaSecs)}{/if}
+        {#if indexStatus.total - indexStatus.done >= PAUSE_NOTICE_MIN}
+          <span class="pause">Indexing pauses when the vault locks.</span>
+        {/if}
       </div>
     {:else if indexStatus.state === "failed"}
       <div class="index failed" role="status" title={indexStatus.message}>
@@ -941,6 +955,10 @@
 
   .trash.open .n {
     color: inherit;
+  }
+
+  .index .pause {
+    display: block;
   }
 
   .index {

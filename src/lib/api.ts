@@ -295,6 +295,9 @@ export const api = {
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),
+  /** Whether indexing uses every core on this machine (else half). */
+  indexAllCores: () => invoke<boolean>("index_all_cores"),
+  setIndexAllCores: (on: boolean) => invoke<void>("set_index_all_cores", { on }),
   /** Notes closest in meaning, most similar first; `null` if the note isn't indexed yet. */
   relatedNotes: (id: number, limit: number) => invoke<NoteSummary[] | null>("related_notes", { id, limit }),
 };
@@ -302,7 +305,7 @@ export const api = {
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
 export type IndexStatus =
   | { state: "idle" }
-  | { state: "indexing"; done: number; total: number }
+  | { state: "indexing"; done: number; total: number; etaSecs: number | null }
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";

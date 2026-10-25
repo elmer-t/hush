@@ -22,7 +22,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use discover::NoteVector;
 pub use embeddings::{
-    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueuePage, QueuedText, QueuedVector,
+    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCursor, QueuePage, QueuedText, QueuedVector,
     StoredVector,
 };
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};

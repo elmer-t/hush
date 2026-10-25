@@ -15,8 +15,8 @@ use super::{EmbedError, Embedder, ModelDescriptor, TokenPooling, normalize, pool
 /// A note longer than this many chunks is embedded from its start only, so one huge
 /// note can't keep the job busy for minutes.
 const MAX_CHUNKS: usize = 64;
-/// Chunks run through the model together.
-const CHUNK_BATCH: usize = 8;
+/// Most chunks run through the model together, from one note or several.
+pub const CHUNK_BATCH: usize = 32;
 
 pub struct OnnxEmbedder {
     descriptor: &'static ModelDescriptor,
@@ -28,7 +28,14 @@ pub struct OnnxEmbedder {
 
 impl OnnxEmbedder {
     /// Loads `descriptor`'s files from `dir`, refusing any whose checksum doesn't match.
+    /// The model runs on half the cores.
     pub fn load(dir: &Path, descriptor: &'static ModelDescriptor) -> Result<Self, EmbedError> {
+        let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
+        Self::load_with_threads(dir, descriptor, threads)
+    }
+
+    /// [`OnnxEmbedder::load`], running the model on `threads` cores.
+    pub fn load_with_threads(dir: &Path, descriptor: &'static ModelDescriptor, threads: usize) -> Result<Self, EmbedError> {
         let tokenizer_bytes = read_verified(dir, &descriptor.tokenizer)?;
         let model_bytes = read_verified(dir, &descriptor.model)?;
 
@@ -36,10 +43,9 @@ impl OnnxEmbedder {
         tokenizer.with_truncation(None).map_err(|e| EmbedError::Load(e.to_string()))?;
         tokenizer.with_padding(None);
 
-        let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
         let session = Session::builder(environment()?)
             .and_then(|b| Ok(b.with_optimization_level(GraphOptimizationLevel::Level3)?))
-            .and_then(|b| Ok(b.with_intra_threads(threads)?))
+            .and_then(|b| Ok(b.with_intra_threads(threads.max(1))?))
             .and_then(|b| Ok(b.with_inter_threads(1)?))
             .and_then(|mut b| b.commit_from_memory(&model_bytes))
             .map_err(|e| EmbedError::Load(e.to_string()))?;
@@ -140,16 +146,43 @@ impl Embedder for OnnxEmbedder {
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
         self.embed_with(text, self.descriptor.query_prefix)
     }
+
+    fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.batch_with(texts, self.descriptor.prefix, stop)
+    }
 }
 
 impl OnnxEmbedder {
     fn embed_with(&self, text: &str, prefix: &str) -> Result<Vec<f32>, EmbedError> {
-        let chunks = self.chunks(text, prefix)?;
-        let mut vectors = Vec::with_capacity(chunks.len());
-        for batch in chunks.chunks(CHUNK_BATCH) {
-            vectors.extend(self.run(batch)?);
+        Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
+    }
+
+    /// Embeds several texts together: every chunk of every text, sorted by length and
+    /// run [`CHUNK_BATCH`] at a time, each run padded only to its longest chunk (the
+    /// attention mask hides the padding, so a chunk's vector doesn't depend on what it
+    /// ran with). The chunk vectors are then pooled per text as one at a time would.
+    fn batch_with(&self, texts: &[&str], prefix: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        // (text, place within the text, chunk)
+        let mut chunks: Vec<(usize, usize, Encoding)> = Vec::new();
+        let mut counts = Vec::with_capacity(texts.len());
+        for (t, text) in texts.iter().enumerate() {
+            let encoded = self.chunks(text, prefix)?;
+            counts.push(encoded.len());
+            chunks.extend(encoded.into_iter().enumerate().map(|(i, c)| (t, i, c)));
         }
-        Ok(pool_chunks(self.descriptor.chunk_pooling, &vectors))
+        // Stable, so equal lengths keep their order.
+        chunks.sort_by_key(|(_, _, c)| c.len());
+        let mut per_text: Vec<Vec<Vec<f32>>> = counts.iter().map(|&n| vec![Vec::new(); n]).collect();
+        for run in chunks.chunks(CHUNK_BATCH) {
+            if stop() {
+                return Err(EmbedError::Stopped);
+            }
+            let encodings: Vec<Encoding> = run.iter().map(|(_, _, c)| c.clone()).collect();
+            for ((t, i, _), vector) in run.iter().zip(self.run(&encodings)?) {
+                per_text[*t][*i] = vector;
+            }
+        }
+        Ok(per_text.iter().map(|vectors| pool_chunks(self.descriptor.chunk_pooling, vectors)).collect())
     }
 }
 

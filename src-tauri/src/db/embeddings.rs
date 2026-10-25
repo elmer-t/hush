@@ -57,9 +57,28 @@ pub struct QueuePage {
     pub settled: usize,
     /// Of those, the ones without a vector now (emptied or trashed).
     pub dropped: Vec<i64>,
-    /// The id to continue after, or `None` when this was the last page.
-    pub next: Option<i64>,
+    /// Where to continue, or `None` when this was the last page.
+    pub next: Option<QueueCursor>,
 }
+
+/// Where [`Vault::queued_embeddings`] continues: the queue is read most recently
+/// updated note first, so the notes in use get their vectors first. Start from the
+/// default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueCursor {
+    updated_at: i64,
+    id: i64,
+}
+
+impl Default for QueueCursor {
+    fn default() -> Self {
+        Self { updated_at: i64::MAX, id: i64::MAX }
+    }
+}
+
+/// Up to this many queued notes are ordered by sorting them; a longer queue is read by
+/// walking `notes_updated` newest first and keeping the queued notes.
+const QUEUE_SORT_MAX: i64 = 5_000;
 
 /// One page of a scan for notes whose vector is missing or out of date.
 #[derive(Debug, Default)]
@@ -146,33 +165,50 @@ impl Vault {
         Ok(scan)
     }
 
-    /// Up to `limit` queued notes with an id above `after`, in id order. Those whose
-    /// text still matches their `model` vector, that have no text or that are trashed
-    /// leave the queue here (losing any vector they had); the rest are returned with
-    /// their text, to embed and write with [`Vault::write_queued_embeddings`].
-    pub fn queued_embeddings(&mut self, model: &str, after: i64, limit: u32) -> Result<QueuePage> {
+    /// Up to `limit` queued notes after `after`, most recently updated first. Those
+    /// whose text still matches their `model` vector, that have no text or that are
+    /// trashed leave the queue here (losing any vector they had); the rest are returned
+    /// with their text, to embed and write with [`Vault::write_queued_embeddings`].
+    pub fn queued_embeddings(&mut self, model: &str, after: &QueueCursor, limit: u32) -> Result<QueuePage> {
         let tx = self.conn.transaction()?;
         let mut page = QueuePage::default();
         let mut settled = Vec::new();
-        let mut seen = 0;
+        // The page's notes in order. A short queue is sorted; for a long one the index
+        // on `updated_at` gives the order and the queue is looked up per note.
+        let queued: i64 =
+            tx.query_row(&format!("SELECT count(*) FROM (SELECT 1 FROM embedding_dirty LIMIT {})", QUEUE_SORT_MAX + 1), [], |r| r.get(0))?;
+        let order: Vec<(i64, i64)> = {
+            let sql = if queued <= QUEUE_SORT_MAX {
+                "SELECT n.id, n.updated_at FROM embedding_dirty q CROSS JOIN notes n ON n.id = q.note_id
+                 WHERE (n.updated_at, n.id) < (?1, ?2) ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+            } else {
+                "SELECT n.id, n.updated_at FROM notes n INDEXED BY notes_updated
+                 WHERE (n.updated_at, n.id) < (?1, ?2) AND EXISTS (SELECT 1 FROM embedding_dirty q WHERE q.note_id = n.id)
+                 ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+            };
+            let mut stmt = tx.prepare_cached(sql)?;
+            stmt.query_map(params![after.updated_at, after.id, limit], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        if order.len() == limit as usize {
+            page.next = order.last().map(|&(id, updated_at)| QueueCursor { updated_at, id });
+        }
         {
             let mut stmt = tx.prepare_cached(
-                "SELECT q.note_id, q.version, n.title, n.body, n.deleted_at IS NULL, e.content_hash
+                "SELECT q.version, n.title, n.body, n.deleted_at IS NULL, e.content_hash
                  FROM embedding_dirty q JOIN notes n ON n.id = q.note_id
                  LEFT JOIN note_embeddings e ON e.note_id = q.note_id AND e.model = ?1
-                 WHERE q.note_id > ?2 ORDER BY q.note_id LIMIT ?3",
+                 WHERE q.note_id = ?2",
             )?;
-            let mut rows = stmt.query(params![model, after, limit])?;
-            while let Some(r) = rows.next()? {
-                let id: i64 = r.get(0)?;
-                let version: i64 = r.get(1)?;
-                let live: bool = r.get(4)?;
-                let stored: Option<Vec<u8>> = r.get(5)?;
-                seen += 1;
-                page.next = Some(id);
+            for &(id, _) in &order {
+                let mut rows = stmt.query(params![model, id])?;
+                let Some(r) = rows.next()? else { continue };
+                let version: i64 = r.get(0)?;
+                let live: bool = r.get(3)?;
+                let stored: Option<Vec<u8>> = r.get(4)?;
                 let text = if live {
-                    let title: String = r.get(2)?;
-                    let body = Zeroizing::new(r.get::<_, String>(3)?);
+                    let title: String = r.get(1)?;
+                    let body = Zeroizing::new(r.get::<_, String>(2)?);
                     embed::note_text(&title, &body)
                 } else {
                     None
@@ -189,9 +225,6 @@ impl Vault {
                     None => settled.push((id, version, Some(stored.is_some()))),
                 }
             }
-        }
-        if seen < limit {
-            page.next = None;
         }
         // `lost`: no vector now; `Some(true)` if it had one to delete.
         for &(id, version, lost) in &settled {
