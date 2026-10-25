@@ -12,7 +12,7 @@
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
-  import { confirmTrash } from "$lib/confirmTrash";
+  import { confirmFolderTrash, confirmTrash } from "$lib/confirmTrash";
   import { findNote, rebase } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
@@ -77,10 +77,7 @@
   }
 
   async function loadTrashCount() {
-    trashCount = await api.trashedNotes().then(
-      (notes) => notes.length,
-      () => trashCount,
-    );
+    trashCount = await api.trashCount().catch(() => trashCount);
   }
 
   function activity() {
@@ -375,6 +372,34 @@
     return true;
   }
 
+  /** Moves a folder with everything in it to the trash, after asking with its counts. */
+  async function deleteFolder(folder: string): Promise<boolean> {
+    try {
+      const contents = await api.folderContents(folder);
+      if (contents.notes > 0 && !(await confirmFolderTrash(folder, contents))) return false;
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    // The open note is closed if it is in the folder or below it, as when it is trashed.
+    const inside = summary && rebase(summary.folder, folder, folder) !== null ? summary.id : null;
+    const open = inside === null ? null : await flushIfIn([inside]);
+    try {
+      await api.trashFolder(folder);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    if (open !== null) opened = summary = meta = null;
+    void loadTrashCount();
+    return true;
+  }
+
+  async function restoredFolder() {
+    await sidebar?.refresh();
+  }
+
   async function deleted(id: number) {
     const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
@@ -450,6 +475,7 @@
         onmove={moveNotes}
         onmovefolder={moveFolder}
         ondelete={deleteNotes}
+        ondeletefolder={deleteFolder}
         onedit={editNotes}
         onaccepttag={acceptTag}
         onrejecttag={rejectTag}
@@ -465,7 +491,7 @@
     {#if view === "settings"}
       <div class="page"><Settings onreviewtag={reviewTag} /></div>
     {:else if view === "trash"}
-      <Trash onrestored={restored} oncount={(n) => (trashCount = n)} />
+      <Trash onrestored={restored} onrestoredfolder={restoredFolder} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
       {#if opened}
         {#key `${opened.note.id}:${editorRevision}`}
