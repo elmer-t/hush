@@ -31,6 +31,7 @@
   import FolderTree from "$lib/FolderTree.svelte";
   import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
+  import RecentlyOpened from "$lib/RecentlyOpened.svelte";
   import SearchFilters from "$lib/SearchFilters.svelte";
   import Suggestions from "$lib/Suggestions.svelte";
 
@@ -115,6 +116,10 @@
   // The tree's open context menu: the note or folder it was opened on and where.
   let menu = $state<{ id: number; x: number; y: number } | { folder: string; x: number; y: number } | null>(null);
 
+  // The "Recently opened" section: empty when the list is off or nothing was opened yet.
+  let recentOpened = $state<NoteSummary[]>([]);
+  let recentCollapsed = $state(false);
+
   const allFolders = $derived([...folders, ...emptyFolders]);
   const filterCount = $derived(activeFilterCount(filters));
   const searching = $derived(text.trim() !== "" || filterCount > 0);
@@ -125,10 +130,37 @@
   onMount(() => {
     void Promise.all([loadFolders(), loadFacets()]);
     api.sidebarView().then((v) => (view = v), () => {});
+    api.recentOpenedCollapsed().then((c) => (recentCollapsed = c), () => {});
     const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
     api.indexStatus().then((s) => (indexStatus = s), () => {});
     return () => void unlisten.then((stop) => stop());
   });
+
+  // Opening a note moves it to the front of the list, so reload it then.
+  $effect(() => {
+    void selectedId;
+    void refreshRecent();
+  });
+
+  /** Reloads the "Recently opened" list (after an open, a trash or restore, or a settings change). */
+  export async function refreshRecent() {
+    try {
+      recentOpened = await api.recentOpenedNotes();
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
+  function toggleRecent() {
+    recentCollapsed = !recentCollapsed;
+    api.setRecentOpenedCollapsed(recentCollapsed).catch((e) => (error = errorMessage(e)));
+  }
+
+  function openRecent(id: number) {
+    clearSelection();
+    anchor = id;
+    onselect(id);
+  }
 
   function setView(next: SidebarView) {
     if (next !== view) clearSelection();
@@ -168,6 +200,7 @@
       loadFolders(),
       loadFacets(),
       loadNotes(true),
+      refreshRecent(),
       changedFolders === "all" ? Promise.resolve() : refreshFolders(changedFolders).catch((e) => (error = errorMessage(e))),
     ]);
   }
@@ -594,6 +627,15 @@
       {hits.length.toLocaleString()}{hasMore ? "+" : ""}
       {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
     </p>
+  {/if}
+  {#if !searching && recentOpened.length > 0}
+    <RecentlyOpened
+      notes={recentOpened}
+      {selectedId}
+      collapsed={recentCollapsed}
+      ontoggle={toggleRecent}
+      onopen={openRecent}
+    />
   {/if}
   {#if view === "suggestions" && !searching}
     <Suggestions

@@ -145,10 +145,13 @@
   async function toggleView(next: "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
-    // The auto-lock time may have been changed there.
-    if (view === "settings") void loadAutoLock();
+    // The auto-lock time and the recently opened count may have been changed there.
+    const leavingSettings = view === "settings";
+    if (leavingSettings) void loadAutoLock();
     if (view === next) await showNote();
     else view = next;
+    // After showNote, whose reopen may have recorded the note.
+    if (leavingSettings) void sidebar?.refreshRecent();
     if (next === "import") importOpened = true;
   }
 
@@ -160,7 +163,7 @@
   async function showNote() {
     if (opened) {
       try {
-        const fresh = await api.openNote(opened.note.id);
+        const fresh = await api.reloadNote(opened.note.id);
         opened = fresh;
         summary = fresh.note;
         meta = fresh.meta;
@@ -255,7 +258,7 @@
     // Reopen, so its folder field and any rewritten links are current.
     if (open !== null) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -279,7 +282,7 @@
     await sidebar?.folderMoved(from, moved);
     if (open !== null) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -304,7 +307,7 @@
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -350,7 +353,7 @@
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
