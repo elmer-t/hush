@@ -31,7 +31,8 @@ pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
-pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+pub use schema::Upgrade;
+pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
 pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
 pub use trash::{DEFAULT_TRASH_DAYS, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashedNote};
 
@@ -89,22 +90,33 @@ impl Vault {
         }
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
-        Self::init(conn, lock)
+        Self::init(conn, lock, &mut |_| {})
     }
 
     pub fn open(path: &Path, passphrase: &str) -> Result<Self> {
+        Self::open_with_progress(path, passphrase, &mut |_| {})
+    }
+
+    /// [`Vault::open`], reporting the progress of a schema upgrade that rebuilds
+    /// derived data (it can take minutes on a very large vault).
+    pub fn open_with_progress(path: &Path, passphrase: &str, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
         if !path.is_file() {
             return Err(Error::VaultNotFound);
         }
         // Before the key is derived, so a vault open elsewhere fails fast.
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::empty())?;
-        Self::init(conn, lock)
+        Self::init(conn, lock, progress)
     }
 
-    fn init(mut conn: Connection, lock: lock::VaultLock) -> Result<Self> {
-        schema::migrate(&mut conn)?;
+    fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
+        schema::migrate(&mut conn, progress)?;
         Ok(Self { conn, lock })
+    }
+
+    /// Lets another thread stop the statement running on this connection.
+    pub fn interrupt_handle(&self) -> rusqlite::InterruptHandle {
+        self.conn.get_interrupt_handle()
     }
 
     /// Checks `passphrase` against the vault file on a separate, read-only connection.

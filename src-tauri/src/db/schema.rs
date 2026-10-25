@@ -1,6 +1,6 @@
 //! Schema migrations, tracked with `PRAGMA user_version`.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use super::{Error, Result, rules};
 use crate::import::rules::Rule;
@@ -191,12 +191,68 @@ BEGIN
 END;
 -- Every live note is checked once after the upgrade.
 INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE deleted_at IS NULL;
+"#, r#"
+-- Search as you type at 1M notes: the full-text index gains prefix indexes for 2 and 3
+-- characters, so a short prefix reads one list instead of merging every word that
+-- starts with it. The index is derived from `notes`, so it is dropped and refilled
+-- (by `fill_fts`, in batches, with progress); no note content is at risk.
+DROP TRIGGER notes_fts_insert;
+DROP TRIGGER notes_fts_delete;
+DROP TRIGGER notes_fts_update;
+DROP TABLE notes_fts;
+CREATE VIRTUAL TABLE notes_fts USING fts5(
+    title, body,
+    content = 'notes', content_rowid = 'id',
+    tokenize = 'unicode61 remove_diacritics 2',
+    prefix = '2 3'
+);
+CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
+CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+END;
+CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, body ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
 "#];
+
+/// The migration that recreates the full-text index; [`fill_fts`] refills it.
+const FTS_PREFIX_VERSION: usize = 9;
+/// Notes indexed per step while refilling, between progress reports.
+const FTS_FILL_BATCH: i64 = 2_000;
+
+/// How far a migration that takes a while has got, for the unlock screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Upgrade {
+    pub done: usize,
+    pub total: usize,
+}
+
+/// Indexes every note, trashed ones too (as the triggers do), in batches.
+fn fill_fts(tx: &Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
+    let total: i64 = tx.query_row("SELECT count(*) FROM notes", [], |r| r.get(0))?;
+    let mut stmt = tx.prepare(
+        "INSERT INTO notes_fts(rowid, title, body)
+         SELECT id, title, body FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2",
+    )?;
+    let mut last = tx.prepare("SELECT max(id) FROM (SELECT id FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2)")?;
+    let (mut after, mut done) = (0i64, 0usize);
+    progress(Upgrade { done, total: total as usize });
+    loop {
+        let Some(next) = last.query_row(params![after, FTS_FILL_BATCH], |r| r.get::<_, Option<i64>>(0))? else { break };
+        done += stmt.execute(params![after, FTS_FILL_BATCH])?;
+        after = next;
+        progress(Upgrade { done, total: total as usize });
+    }
+    Ok(())
+}
 
 /// Vaults created before this version get the default import rules.
 const IMPORT_RULES_VERSION: usize = 2;
 
-pub(super) fn migrate(conn: &mut Connection) -> Result<()> {
+pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let version = version as usize;
     if version > MIGRATIONS.len() {
@@ -207,6 +263,9 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<()> {
         tx.execute_batch(sql)?;
         if i + 1 == IMPORT_RULES_VERSION {
             rules::write_rules(&tx, &Rule::defaults())?;
+        }
+        if i + 1 == FTS_PREFIX_VERSION {
+            fill_fts(&tx, progress)?;
         }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
     }
@@ -229,7 +288,7 @@ mod tests {
         conn.execute("INSERT INTO notes(folder, title, body, created_at, updated_at) VALUES ('a', 'T', 'x', 1, 1)", [])
             .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         let deleted: Option<i64> = conn.query_row("SELECT deleted_at FROM notes", [], |r| r.get(0)).unwrap();
@@ -257,7 +316,7 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let tagged: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(tagged, 7);
         conn.execute("INSERT INTO tags(name) VALUES ('Jr')", []).unwrap();
@@ -285,7 +344,7 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
@@ -322,7 +381,7 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
@@ -366,10 +425,10 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -411,7 +470,7 @@ mod tests {
         )
         .unwrap();
 
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         let queued = |conn: &Connection| -> Vec<(i64, i64)> {
             let mut stmt = conn.prepare("SELECT note_id, version FROM embedding_dirty ORDER BY note_id").unwrap();
             stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
@@ -419,7 +478,7 @@ mod tests {
         assert_eq!(queued(&conn), [(1, 0), (2, 0)], "live notes, once each");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(vectors, 1);
-        migrate(&mut conn).unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
         assert_eq!(queued(&conn), [(1, 0), (2, 0)], "migrating again changes nothing");
 
         conn.execute("DELETE FROM embedding_dirty", []).unwrap();
@@ -434,5 +493,43 @@ mod tests {
         assert_eq!(queued(&conn), [(1, 1), (3, 0)], "the queue cascades from notes");
         let gone: i64 = conn.query_row("SELECT note_id FROM embedding_gone", [], |r| r.get(0)).unwrap();
         assert_eq!(gone, 4, "a deleted note is remembered for the related-notes index");
+    }
+
+    /// A vault from before the prefix index (version 8) gets its full-text index rebuilt
+    /// with every note, trashed ones too, and reports progress; search works after.
+    #[test]
+    fn fts_prefix_migration_rebuilds_the_index() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..8] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        for i in 0..4_500 {
+            conn.execute(
+                "INSERT INTO notes(title, body, created_at, updated_at, deleted_at) VALUES (?1, ?2, 1, 1, ?3)",
+                params![format!("Note {i}"), format!("lighthouse number{i}"), (i == 7).then_some(5)],
+            )
+            .unwrap();
+        }
+        let mut reports = Vec::new();
+        migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
+        assert_eq!(reports.first(), Some(&Upgrade { done: 0, total: 4_500 }));
+        assert_eq!(reports.last(), Some(&Upgrade { done: 4_500, total: 4_500 }));
+        assert_eq!(reports.len(), 4, "start + three batches of 2,000");
+
+        let count = |q: &str| -> i64 {
+            conn.query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH ?1", [q], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(count("lighthouse"), 4_500);
+        assert_eq!(count("\"number44\"*"), 111, "number44, 440–449 and 4400–4499");
+        assert_eq!(count("\"nu\"*"), 4_500);
+        // The triggers are back: edits keep the index in step.
+        conn.execute("UPDATE notes SET body = 'harbour' WHERE id = 1", []).unwrap();
+        assert_eq!(count("harbour"), 1);
+        assert_eq!(count("lighthouse"), 4_499);
+        conn.execute("DELETE FROM notes WHERE id = 2", []).unwrap();
+        assert_eq!(count("lighthouse"), 4_498);
+        conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')", []).unwrap();
     }
 }

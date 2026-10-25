@@ -11,6 +11,10 @@ use crate::config::Config;
 use crate::db::Vault;
 use crate::session::{self, Session};
 
+/// Emitted with a [`crate::db::Upgrade`] while opening a vault runs a migration that
+/// rebuilds derived data, so the unlock screen can show progress.
+pub const VAULT_UPGRADE_EVENT: &str = "vault-upgrade";
+
 #[derive(Serialize)]
 pub struct VaultInfo {
     path: PathBuf,
@@ -70,7 +74,9 @@ pub async fn open_vault(
     passphrase: String,
 ) -> Result<VaultInfo> {
     let passphrase = Zeroizing::new(passphrase);
-    let vault = Vault::open(&path, &passphrase)?;
+    let vault = Vault::open_with_progress(&path, &passphrase, &mut |progress| {
+        let _ = app.emit(VAULT_UPGRADE_EVENT, progress);
+    })?;
     unlock(&app, &session, &config, vault, path)
 }
 

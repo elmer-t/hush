@@ -64,6 +64,14 @@ Outcome of the design grilling session (2026-10-22). Refines [project-brief.md](
 
 ## Search
 - FTS5, bm25 ranking, highlighted snippets, search as you type (~150 ms debounce).
+- **At 1M notes** (2026-10-25, #51; before: `t` 18–20 s, `the` 8–12 s per keystroke):
+  - **Prefix index** `prefix='2 3'` on `notes_fts` (migration 9 drops and refills the index from `notes` in batches of 2,000, reporting progress to the unlock screen after the first second; derived data, so no note content is at risk). A 2- or 3-letter prefix reads one list instead of merging every word that starts with it. The refill took ~11.5 min at 1M notes on the 4-core Linux container (measured with FTS5 `rebuild`) and grows the vault by about a third of the old index's size.
+  - **One letter is a whole word**, not a prefix: `t` matched nearly every note. Prefixes start at two characters.
+  - **Bounded ranking:** a query first counts its matches up to `RANK_LIMIT` (10,000), from the full-text index alone (the trash filter is answered from the trashed ids, not by joining every match to `notes`). Up to 10,000 matches are ranked by bm25 as before; above that the list shows the **newest matches** (highest note id) with "Many matches, newest first. Type more to sort by relevance." The issue's default was bm25 within the first 50,000 matches, but bm25 reads each query word's whole list to weigh it, so for a common word ranking costs ~150–250 ms whatever the cap; newest-first reads only the page shown.
+  - **Snippets and summaries only for the page shown** (200 notes), not for every match.
+  - **A newer search cancels an older one**: the session interrupts the older search's running statement (`sqlite3_interrupt`; only ever while a search, never a save or a job, is running on the connection) and the older search also stops between steps; it returns `cancelled`, which the frontend drops. A search still waiting for the vault when a newer one starts doesn't run.
+  - With metadata filters the matches are still joined to `notes` (filters on tags, folders, dates and attributes at 1M notes are not covered here).
+  - **Measured** with the scale benchmark at 1M notes on the 4-core Linux container (median of 5; before → after): `t` 18.7 s → 0.1 ms (no note has the word *t*; it no longer matches every word starting with t), `th` 9.1 s → 26 ms, `the` 8.0 s → 24 ms, two words (`but monmoldaind`) 284 → 256 ms. The two-word case misses the 150 ms goal: one of its words is in nearly every note, and bm25 reads that word's whole list to weigh it.
 - Filters: tags (multi-select, AND), topic, author, folder, date range (created/updated toggle), attribute key = value.
 
 ## Import

@@ -3,13 +3,29 @@
 use tauri::State;
 
 use super::Result;
-use crate::db::{Facets, SearchHit, SearchQuery};
+use serde::Serialize;
+
+use crate::db::{Facets, SearchPage, SearchQuery};
 use crate::session::Session;
 
-/// With text: ranked by relevance. Without: newest first, so this also lists notes.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    #[serde(flatten)]
+    page: SearchPage,
+    /// A newer search started while this one ran; the frontend drops the result.
+    cancelled: bool,
+}
+
+/// With text: ranked by relevance (or newest first for very broad queries). Without:
+/// most recently updated first, so this also lists notes. A newer search cancels an
+/// older one still running.
 #[tauri::command]
-pub fn search_notes(session: State<'_, Session>, query: SearchQuery) -> Result<Vec<SearchHit>> {
-    Ok(session.with_vault(|v| v.search(&query))?)
+pub fn search_notes(session: State<'_, Session>, query: SearchQuery) -> Result<SearchResult> {
+    Ok(match session.search(|v, stop| v.search_page_until(&query, stop))? {
+        Some(page) => SearchResult { page, cancelled: false },
+        None => SearchResult { page: SearchPage { hits: Vec::new(), newest_first: false }, cancelled: true },
+    })
 }
 
 #[tauri::command]
