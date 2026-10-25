@@ -24,6 +24,10 @@
     onnotemenu: (id: number, x: number, y: number) => void;
     /** Delete on a focused note. */
     ondeletenote: (id: number) => void;
+    /** Right-click, Shift+F10 or the menu key on a folder; `x`/`y` are where the menu opens. */
+    onfoldermenu: (path: string, x: number, y: number) => void;
+    /** Delete on a focused folder. */
+    ondeletefolder: (path: string) => void;
     onerror: (e: unknown) => void;
     /** Notes dropped onto a folder (`""` is the top level). */
     ondropnotes: (ids: number[], folder: string) => void;
@@ -42,6 +46,8 @@
     oncreatefolder,
     onnotemenu,
     ondeletenote,
+    onfoldermenu,
+    ondeletefolder,
     onerror,
     ondropnotes,
     ondropfolder,
@@ -55,6 +61,11 @@
   /** Puts keyboard focus on a note's row, if it is shown. */
   export function focusNote(id: number) {
     if (rows.some((r) => r.key === `n:${id}`)) void moveFocus(`n:${id}`);
+  }
+
+  /** Puts keyboard focus on a folder's row, if it is shown. */
+  export function focusFolder(path: string) {
+    if (rows.some((r) => r.key === `f:${key(path)}`)) void moveFocus(`f:${key(path)}`);
   }
 
   type Row =
@@ -180,15 +191,17 @@
     else showMore(row.folder);
   }
 
-  function openMenu(row: Extract<Row, { kind: "note" }>, e?: MouseEvent) {
+  function openMenu(row: Extract<Row, { kind: "note" | "folder" }>, e?: MouseEvent) {
     focusKey = row.key;
+    const open = (x: number, y: number) =>
+      row.kind === "note" ? onnotemenu(row.note.id, x, y) : onfoldermenu(row.path, x, y);
     if (e) {
       e.preventDefault();
-      onnotemenu(row.note.id, e.clientX, e.clientY);
+      open(e.clientX, e.clientY);
       return;
     }
     const rect = rowElement(row.key)?.getBoundingClientRect();
-    onnotemenu(row.note.id, rect ? rect.left + 24 : 0, rect ? rect.bottom : 0);
+    open(rect ? rect.left + 24 : 0, rect ? rect.bottom : 0);
   }
 
   async function moveFocus(k: string | undefined) {
@@ -228,14 +241,15 @@
         activate(row, e);
         break;
       case "ContextMenu":
-        if (row.kind === "note") openMenu(row);
+        if (row.kind !== "more") openMenu(row);
         break;
       case "F10":
-        if (e.shiftKey && row.kind === "note") openMenu(row);
+        if (e.shiftKey && row.kind !== "more") openMenu(row);
         else handled = false;
         break;
       case "Delete":
         if (row.kind === "note") ondeletenote(row.note.id);
+        else if (row.kind === "folder") ondeletefolder(row.path);
         break;
       default:
         handled = false;
@@ -436,6 +450,7 @@
           ondragstart={(e) => dragFolderStart(row.path, e)}
           ondragend={dragEnd}
           onclick={() => clickFolder(row)}
+          oncontextmenu={(e) => openMenu(row, e)}
           onkeydown={() => {}}
           onfocus={() => (focusKey = row.key)}
         >
@@ -467,6 +482,7 @@
           <span class="twisty"></span>
           <span class="glyph note-glyph"><Icon name="note" /></span>
           <span class="name">{row.note.title}</span>
+          {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
         </div>
       {:else}
         <div
@@ -601,6 +617,18 @@
   .note-glyph {
     color: inherit;
     opacity: 0.7;
+  }
+
+  .rating {
+    flex: none;
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.selected .rating,
+  .row.picked .rating {
+    color: inherit;
   }
 
   .name {

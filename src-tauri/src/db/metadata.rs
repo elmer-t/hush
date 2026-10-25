@@ -1,4 +1,4 @@
-//! Bulk metadata edits: add or remove a tag, set the topic or the author on several
+//! Bulk metadata edits: add or remove a tag, set the topic, the author or the rating on several
 //! notes at once. The frontmatter is the source of truth, so each edit rewrites the
 //! note's body and re-derives its index rows, the same as a save. Inline `#tags` in
 //! the body text are never touched.
@@ -20,6 +20,8 @@ pub enum MetadataEdit {
     SetTopic(String),
     /// An empty value removes the key.
     SetAuthor(String),
+    /// 1–5 stars; `null` removes the key.
+    SetRating(Option<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -60,12 +62,11 @@ impl Vault {
         let edit = normalize(edit)?;
         let now = now_ms();
         let mut report = MetadataEditReport::default();
-        let mut seen: Vec<i64> = Vec::with_capacity(ids.len());
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
         for &id in ids {
-            if seen.contains(&id) {
+            if !seen.insert(id) {
                 continue;
             }
-            seen.push(id);
             let (folder, title, body): (String, String, String) = tx
                 .query_row("SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL", [id], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
@@ -107,6 +108,8 @@ fn normalize(edit: &MetadataEdit) -> Result<MetadataEdit> {
         MetadataEdit::RemoveTag(t) => MetadataEdit::RemoveTag(tag(t)?),
         MetadataEdit::SetTopic(v) => MetadataEdit::SetTopic(v.trim().to_string()),
         MetadataEdit::SetAuthor(v) => MetadataEdit::SetAuthor(v.trim().to_string()),
+        MetadataEdit::SetRating(Some(r)) if !(1..=5).contains(r) => return Err(Error::InvalidRating),
+        MetadataEdit::SetRating(r) => MetadataEdit::SetRating(*r),
     })
 }
 
@@ -144,6 +147,15 @@ fn apply(body: &str, edit: &MetadataEdit) -> String {
         }
         MetadataEdit::SetTopic(value) => set_scalar(body, "topic", parsed.topic.as_deref(), value),
         MetadataEdit::SetAuthor(value) => set_scalar(body, "author", parsed.author.as_deref(), value),
+        MetadataEdit::SetRating(rating) => {
+            // Setting or clearing also replaces a `rating` value that isn't a valid rating.
+            let has_key = parsed.rating.is_some() || parsed.attributes.iter().any(|(k, _)| k == "rating");
+            if parsed.rating == *rating && (rating.is_some() || !has_key) {
+                return body.to_string();
+            }
+            let values: Vec<String> = rating.iter().map(u8::to_string).collect();
+            markdown::set_frontmatter_field(body, "rating", &values)
+        }
     }
 }
 

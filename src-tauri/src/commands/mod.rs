@@ -32,6 +32,8 @@ pub enum CommandError {
     ImportSource(std::io::Error),
     #[error("an import is already running")]
     ImportRunning,
+    #[error("the groups are out of date; group the notes again")]
+    StaleGroups,
 }
 
 impl From<crate::import::ImportError> for CommandError {
@@ -69,15 +71,19 @@ impl CommandError {
                 D::NoteNotFound => "noteNotFound",
                 D::MoveClash(_) => "moveClash",
                 D::InvalidFolderMove(_) => "invalidFolderMove",
+                D::InvalidFolder(_) => "invalidFolder",
                 D::InvalidTag(_) => "invalidTag",
                 D::InvalidRule(_) => "invalidRule",
                 D::InvalidTrashDays => "invalidTrashDays",
                 D::InvalidThreshold => "invalidThreshold",
+                D::InvalidRecentOpenedCount => "invalidRecentOpenedCount",
+                D::InvalidRating => "invalidRating",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",
             Self::ImportSource(_) => "importSource",
             Self::ImportRunning => "importRunning",
+            Self::StaleGroups => "staleGroups",
         }
     }
 }

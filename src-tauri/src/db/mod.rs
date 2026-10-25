@@ -8,6 +8,7 @@ mod links;
 mod lock;
 mod metadata;
 mod notes;
+mod recent;
 mod review;
 mod rules;
 mod schema;
@@ -20,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
-pub use discover::NoteVector;
+pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCursor, QueuePage, QueuedText, QueuedVector,
     StoredVector,
@@ -30,10 +31,14 @@ pub use links::{Backlink, OutgoingLink, Resolution};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
+pub use recent::{
+    DEFAULT_RECENT_OPENED_COUNT, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING, RECENT_OPENED_SETTING,
+};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
-pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, SearchHit, SearchQuery};
+pub use schema::Upgrade;
+pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
 pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
-pub use trash::{DEFAULT_TRASH_DAYS, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashedNote};
+pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -63,12 +68,18 @@ pub enum Error {
     MoveClash(Vec<String>),
     #[error("{0}")]
     InvalidFolderMove(String),
+    #[error("{0}")]
+    InvalidFolder(String),
     #[error("invalid tag: {0}")]
     InvalidTag(String),
     #[error("{0}")]
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
     InvalidTrashDays,
+    #[error("the number of recently opened notes must be between 0 and {}", recent::MAX_RECENT_OPENED_COUNT)]
+    InvalidRecentOpenedCount,
+    #[error("a rating must be a whole number from 1 to 5")]
+    InvalidRating,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
     #[error(transparent)]
@@ -89,22 +100,33 @@ impl Vault {
         }
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
-        Self::init(conn, lock)
+        Self::init(conn, lock, &mut |_| {})
     }
 
     pub fn open(path: &Path, passphrase: &str) -> Result<Self> {
+        Self::open_with_progress(path, passphrase, &mut |_| {})
+    }
+
+    /// [`Vault::open`], reporting the progress of a schema upgrade that rebuilds
+    /// derived data (it can take minutes on a very large vault).
+    pub fn open_with_progress(path: &Path, passphrase: &str, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
         if !path.is_file() {
             return Err(Error::VaultNotFound);
         }
         // Before the key is derived, so a vault open elsewhere fails fast.
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::empty())?;
-        Self::init(conn, lock)
+        Self::init(conn, lock, progress)
     }
 
-    fn init(mut conn: Connection, lock: lock::VaultLock) -> Result<Self> {
-        schema::migrate(&mut conn)?;
+    fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
+        schema::migrate(&mut conn, progress)?;
         Ok(Self { conn, lock })
+    }
+
+    /// Lets another thread stop the statement running on this connection.
+    pub fn interrupt_handle(&self) -> rusqlite::InterruptHandle {
+        self.conn.get_interrupt_handle()
     }
 
     /// Checks `passphrase` against the vault file on a separate, read-only connection.

@@ -17,6 +17,7 @@
   import {
     clearLoaded,
     findNote,
+    folderDeleted as treeFolderDeleted,
     folderMoved as treeFolderMoved,
     rebase,
     refreshFolders,
@@ -27,9 +28,11 @@
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
+  import { currentSearch } from "$lib/currentSearch.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
   import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
+  import RecentlyOpened from "$lib/RecentlyOpened.svelte";
   import SearchFilters from "$lib/SearchFilters.svelte";
   import Suggestions from "$lib/Suggestions.svelte";
 
@@ -47,6 +50,8 @@
     onmovefolder: (from: string, to: string) => Promise<boolean>;
     /** Bulk delete (to the trash). Resolves to whether it worked. */
     ondelete: (ids: number[], sources: string[]) => Promise<boolean>;
+    /** Moves a folder that holds notes, with everything in it, to the trash. Resolves to whether it worked. */
+    ondeletefolder: (folder: string) => Promise<boolean>;
     /** Bulk metadata edit. Resolves to the report, or null when it failed. */
     onedit: (ids: number[], edit: MetadataEdit, sources: string[]) => Promise<MetadataEditReport | null>;
     /** Accepts a tag on notes in the Suggestions view. Resolves to the report, or null when it failed. */
@@ -63,6 +68,7 @@
     onmove,
     onmovefolder,
     ondelete,
+    ondeletefolder,
     onedit,
     onaccepttag,
     onrejecttag,
@@ -93,6 +99,8 @@
   let showFilters = $state(false);
   let facets = $state<Facets>({ tags: [], topics: [], authors: [], attributeKeys: [] });
   let hits = $state<SearchHit[]>([]);
+  // Too many matches to rank: the list shows the newest ones.
+  let newestFirst = $state(false);
   let hasMore = $state(false);
   let error = $state("");
   // Bumped when the query changes, so the list starts again at the top.
@@ -116,8 +124,12 @@
   // What the last bulk edit did.
   let editNotice = $state<{ text: string; titles: string[] } | null>(null);
   let busy = $state(false);
-  // The tree's open context menu: the note it was opened on and where.
-  let menu = $state<{ id: number; x: number; y: number } | null>(null);
+  // The tree's open context menu: the note or folder it was opened on and where.
+  let menu = $state<{ id: number; x: number; y: number } | { folder: string; x: number; y: number } | null>(null);
+
+  // The "Recently opened" section: empty when the list is off or nothing was opened yet.
+  let recentOpened = $state<NoteSummary[]>([]);
+  let recentCollapsed = $state(false);
 
   const allFolders = $derived([...folders, ...emptyFolders]);
   const filterCount = $derived(activeFilterCount(filters));
@@ -129,10 +141,37 @@
   onMount(() => {
     void Promise.all([loadFolders(), loadFacets()]);
     api.sidebarView().then((v) => (view = v), () => {});
+    api.recentOpenedCollapsed().then((c) => (recentCollapsed = c), () => {});
     const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
     api.indexStatus().then((s) => (indexStatus = s), () => {});
     return () => void unlisten.then((stop) => stop());
   });
+
+  // Opening a note moves it to the front of the list, so reload it then.
+  $effect(() => {
+    void selectedId;
+    void refreshRecent();
+  });
+
+  /** Reloads the "Recently opened" list (after an open, a trash or restore, or a settings change). */
+  export async function refreshRecent() {
+    try {
+      recentOpened = await api.recentOpenedNotes();
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
+  function toggleRecent() {
+    recentCollapsed = !recentCollapsed;
+    api.setRecentOpenedCollapsed(recentCollapsed).catch((e) => (error = errorMessage(e)));
+  }
+
+  function openRecent(id: number) {
+    clearSelection();
+    anchor = id;
+    onselect(id);
+  }
 
   function setView(next: SidebarView) {
     if (next !== view) clearSelection();
@@ -172,6 +211,7 @@
       loadFolders(),
       loadFacets(),
       loadNotes(true),
+      refreshRecent(),
       changedFolders === "all" ? Promise.resolve() : refreshFolders(changedFolders).catch((e) => (error = errorMessage(e))),
     ]);
   }
@@ -185,6 +225,32 @@
       .filter((f, i, all) => all.findIndex((g) => g.toLowerCase() === f.toLowerCase()) === i);
     if (selectedFolder !== null) selectedFolder = follow(selectedFolder);
     await Promise.all([treeFolderMoved(from, to).catch((e) => (error = errorMessage(e))), refresh()]);
+  }
+
+  /** Moves a folder and everything in it to the trash. A folder that only exists in the
+   * tree (no notes in it or below it) is just removed, without asking. */
+  async function deleteFolder(path: string) {
+    if (busy) return;
+    const inside = (f: string) => rebase(f, path, path) !== null;
+    if (folders.some(inside)) {
+      busy = true;
+      const ok = await ondeletefolder(path);
+      busy = false;
+      if (!ok) return;
+    }
+    emptyFolders = emptyFolders.filter((f) => !inside(f));
+    if (selectedFolder !== null && inside(selectedFolder)) {
+      const parent = path.split("/").slice(0, -1).join("/");
+      selectedFolder = parent || null;
+    }
+    treeFolderDeleted(path);
+    // Notes in the folder may have been picked; they are in the trash now.
+    for (const id of [...picked]) {
+      const note = notesOf([id])[0];
+      if (note && inside(note.folder)) picked.delete(id);
+    }
+    if (picked.size === 0) clearSelection();
+    await refresh();
   }
 
   /** Shows the Suggestions view for `tag` (Settings → Tags → Review suggestions). */
@@ -242,10 +308,13 @@
     loading = true;
     try {
       const query = toQuery(text, selectedFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
-      const page = await api.searchNotes(query);
-      if (run !== generation) return;
+      if (reset) currentSearch.query = searching ? query : null;
+      const result = await api.searchNotes(query);
+      if (run !== generation || result.cancelled) return;
+      const page = result.hits;
       if (reset) {
         hits = page;
+        newestFirst = result.newestFirst;
       } else {
         const seen = new Set(hits.map((h) => h.note.id));
         hits = [...hits, ...page.filter((h) => !seen.has(h.note.id))];
@@ -381,14 +450,24 @@
     menu = { id, x, y };
   }
 
-  function closeNoteMenu(refocus: boolean) {
-    const id = menu?.id;
+  function openFolderMenu(folder: string, x: number, y: number) {
+    menu = { folder, x, y };
+  }
+
+  function closeMenu(refocus: boolean) {
+    const was = menu;
     menu = null;
-    if (refocus && id !== undefined) explorer?.focusNote(id);
+    if (!refocus || !was) return;
+    if ("id" in was) explorer?.focusNote(was.id);
+    else explorer?.focusFolder(was.folder);
   }
 
   const menuItems = $derived.by((): MenuItem[] => {
     if (!menu) return [];
+    if ("folder" in menu) {
+      const folder = menu.folder;
+      return [{ label: "Move folder to trash", icon: "trash", danger: true, action: () => void deleteFolder(folder) }];
+    }
     const id = menu.id;
     const n = targetsOf(id).length;
     const items: MenuItem[] = [];
@@ -434,6 +513,7 @@
     { kind: "removeTag", label: "Remove tag" },
     { kind: "setTopic", label: "Set topic" },
     { kind: "setAuthor", label: "Set author" },
+    { kind: "setRating", label: "Set rating" },
   ];
   const editSuggestions = $derived(
     editKind === "setTopic" ? facets.topics : editKind === "setAuthor" ? facets.authors : facets.tags,
@@ -453,7 +533,9 @@
     if (tagEdit && value.replace(/^#+/, "") === "") return;
     busy = true;
     const ids = [...picked];
-    const report = await onedit(ids, { kind: editKind, value }, pickedNotes().map((n) => n.folder));
+    const edit: MetadataEdit =
+      editKind === "setRating" ? { kind: editKind, value: value ? Number(value) : null } : { kind: editKind, value };
+    const report = await onedit(ids, edit, pickedNotes().map((n) => n.folder));
     busy = false;
     if (!report) return;
     editNotice = describeEdit(editKind, value.replace(/^#+/, ""), report);
@@ -468,17 +550,18 @@
   function describeEdit(kind: MetadataEdit["kind"], value: string, r: MetadataEditReport) {
     const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
     const n = notes(r.changed.length);
+    const field = kind === "setTopic" ? "topic" : kind === "setRating" ? "rating" : "author";
+    const shown = kind === "setRating" ? `★ ${value}` : `“${value}”`;
     const parts = [
       kind === "addTag"
         ? `Added “${value}” to ${n}`
         : kind === "removeTag"
           ? `Removed “${value}” from ${n}`
           : value === ""
-            ? `Removed the ${kind === "setTopic" ? "topic" : "author"} from ${n}`
-            : `Set the ${kind === "setTopic" ? "topic" : "author"} to “${value}” on ${n}`,
+            ? `Removed the ${field} from ${n}`
+            : `Set the ${field} to ${shown} on ${n}`,
     ];
     if (r.unchanged > 0) {
-      const field = kind === "setTopic" ? "topic" : "author";
       const why =
         kind === "addTag"
           ? "already had it"
@@ -557,6 +640,15 @@
       {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
     </p>
   {/if}
+  {#if !searching && recentOpened.length > 0}
+    <RecentlyOpened
+      notes={recentOpened}
+      {selectedId}
+      collapsed={recentCollapsed}
+      ontoggle={toggleRecent}
+      onopen={openRecent}
+    />
+  {/if}
   {#if view === "suggestions" && !searching}
     <Suggestions
       bind:tag={reviewedTag}
@@ -580,6 +672,8 @@
         oncreatefolder={addFolder}
         onnotemenu={openNoteMenu}
         ondeletenote={(id) => void trash(targetsOf(id))}
+        onfoldermenu={openFolderMenu}
+        ondeletefolder={(path) => void deleteFolder(path)}
         onerror={(e) => (error = errorMessage(e))}
         ondropnotes={(ids, folder) => void dropNotes(ids, folder)}
         ondropfolder={(from, to) => void dropFolder(from, to)}
@@ -595,6 +689,9 @@
           oncreate={addFolder}
         />
       </div>
+    {/if}
+    {#if newestFirst && searching}
+      <p class="broad muted" role="status">Many matches, newest first. Type more to sort by relevance.</p>
     {/if}
     <div class="results">
       {#key queryVersion}
@@ -644,22 +741,34 @@
       {/if}
       {#if editing}
         <form class="edit" onsubmit={editSelection}>
-          <select aria-label="Edit" bind:value={editKind} disabled={busy}>
+          <select
+            aria-label="Edit"
+            bind:value={editKind}
+            onchange={(e) => (editValue = e.currentTarget.value === "setRating" ? "5" : "")}
+            disabled={busy}
+          >
             {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
           </select>
-          <input
-            list="edit-values"
-            placeholder={tagEdit ? "Tag" : "Empty = remove"}
-            aria-label={EDITS.find((e) => e.kind === editKind)?.label}
-            spellcheck="false"
-            bind:value={editValue}
-            onkeydown={(e) => e.key === "Escape" && (editing = false)}
-            disabled={busy}
-            {@attach (el) => el.focus()}
-          />
-          <datalist id="edit-values">
-            {#each editSuggestions as v (v)}<option value={v}></option>{/each}
-          </datalist>
+          {#if editKind === "setRating"}
+            <select aria-label="Rating" bind:value={editValue} disabled={busy}>
+              {#each [1, 2, 3, 4, 5] as n (n)}<option value={String(n)}>{"★".repeat(n)} {n}</option>{/each}
+              <option value="">No rating</option>
+            </select>
+          {:else}
+            <input
+              list="edit-values"
+              placeholder={tagEdit ? "Tag" : "Empty = remove"}
+              aria-label={EDITS.find((e) => e.kind === editKind)?.label}
+              spellcheck="false"
+              bind:value={editValue}
+              onkeydown={(e) => e.key === "Escape" && (editing = false)}
+              disabled={busy}
+              {@attach (el) => el.focus()}
+            />
+            <datalist id="edit-values">
+              {#each editSuggestions as v (v)}<option value={v}></option>{/each}
+            </datalist>
+          {/if}
           <button type="submit" class="primary" disabled={busy || (tagEdit && editValue.trim() === "")}>Apply</button>
         </form>
       {/if}
@@ -685,9 +794,13 @@
     <ContextMenu
       x={menu.x}
       y={menu.y}
-      label={targetsOf(menu.id).length === 1 ? "Note actions" : "Actions for the selected notes"}
+      label={"folder" in menu
+        ? "Folder actions"
+        : targetsOf(menu.id).length === 1
+          ? "Note actions"
+          : "Actions for the selected notes"}
       items={menuItems}
-      onclose={closeNoteMenu}
+      onclose={closeMenu}
     />
   {/if}
   <div class="footer">
@@ -973,5 +1086,10 @@
 
   .index.failed {
     color: var(--warn);
+  }
+  .broad {
+    margin: 0;
+    padding: 4px 12px;
+    font-size: 0.85em;
   }
 </style>

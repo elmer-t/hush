@@ -1,20 +1,27 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { api, errorMessage, type OpenedNote, type TrashedNote } from "$lib/api";
+  import { api, errorMessage, type OpenedNote, type TrashEntry } from "$lib/api";
   import { shortDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
 
   type Props = {
     /** Called with the restored note, which may have a new title. */
     onrestored: (note: OpenedNote) => void;
+    /** Called after a deleted folder was restored. */
+    onrestoredfolder: () => void;
     /** Called with the number of notes in the trash whenever it is loaded. */
     oncount: (count: number) => void;
   };
-  let { onrestored, oncount }: Props = $props();
+  let { onrestored, onrestoredfolder, oncount }: Props = $props();
 
   const DAY_MS = 86_400_000;
+  const PAGE_SIZE = 200;
 
-  let notes = $state<TrashedNote[] | null>(null);
+  // The entries loaded so far, newest first; a deleted folder is one entry.
+  let entries = $state<TrashEntry[] | null>(null);
+  let hasMore = $state(false);
+  // Notes in the trash, folder groups included.
+  let count = $state(0);
   let days = $state<number | null>(null);
   let busy = $state(false);
   let error = $state("");
@@ -27,14 +34,35 @@
     api.trashDays().then((d) => (days = d), () => {});
   });
 
+  /** Loads the first page again, or at least as many entries as are shown now. */
   async function load() {
     try {
-      notes = await api.trashedNotes();
-      oncount(notes.length);
+      const limit = Math.max(PAGE_SIZE, entries?.length ?? 0);
+      const [page, n] = await Promise.all([api.trashEntries(0, limit), api.trashCount()]);
+      entries = page;
+      hasMore = page.length === limit;
+      count = n;
+      oncount(n);
     } catch (e) {
       error = errorMessage(e);
     }
   }
+
+  async function more() {
+    if (!entries) return;
+    try {
+      const page = await api.trashEntries(entries.length, PAGE_SIZE);
+      entries = [...entries, ...page];
+      hasMore = page.length === PAGE_SIZE;
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
+  const entryKey = (e: TrashEntry) => (e.kind === "folder" ? `f:${e.deletedAt}` : `n:${e.id}`);
+  const name = (folder: string) => folder.split("/").pop() ?? folder;
+  const parent = (folder: string) => folder.split("/").slice(0, -1).join("/");
+  const notesText = (n: number) => `${n.toLocaleString()} ${n === 1 ? "note" : "notes"}`;
 
   async function run(action: () => Promise<unknown>) {
     busy = true;
@@ -50,13 +78,20 @@
   }
 
   /** Days until the note is deleted for good, or null when the trash is kept forever. */
-  function daysLeft(note: TrashedNote): number | null {
+  function daysLeft(entry: TrashEntry): number | null {
     if (!days) return null;
-    return Math.max(0, days - Math.floor((Date.now() - note.deletedAt) / DAY_MS));
+    return Math.max(0, days - Math.floor((Date.now() - entry.deletedAt) / DAY_MS));
   }
 
-  function restore(note: TrashedNote) {
-    void run(async () => onrestored(await api.restoreNote(note.id)));
+  function restore(entry: TrashEntry) {
+    if (entry.kind === "folder") {
+      void run(async () => {
+        await api.restoreFolder(entry.deletedAt);
+        onrestoredfolder();
+      });
+    } else {
+      void run(async () => onrestored(await api.restoreNote(entry.id)));
+    }
   }
 
   async function ask(question: NonNullable<typeof confirming>) {
@@ -72,20 +107,28 @@
     if (yes && question) void run(question.run);
   }
 
-  function deleteForever(note: TrashedNote) {
+  function deleteForever(entry: TrashEntry) {
+    if (entry.kind === "folder") {
+      void ask({
+        title: `Delete “${name(entry.folder)}” forever?`,
+        text: `The folder’s ${notesText(entry.notes)} are erased from the vault file. This cannot be undone.`,
+        action: "Delete forever",
+        run: () => api.deleteTrashFolder(entry.deletedAt),
+      });
+      return;
+    }
     void ask({
-      title: `Delete “${note.title}” forever?`,
+      title: `Delete “${entry.title}” forever?`,
       text: "The note is erased from the vault file. This cannot be undone.",
       action: "Delete forever",
-      run: () => api.deleteNote(note.id),
+      run: () => api.deleteNote(entry.id),
     });
   }
 
   function empty() {
-    const count = notes?.length ?? 0;
     void ask({
       title: "Empty the trash?",
-      text: `${count === 1 ? "The note" : `All ${count} notes`} in the trash ${count === 1 ? "is" : "are"} erased from the vault file. This cannot be undone.`,
+      text: `${count === 1 ? "The note" : `All ${count.toLocaleString()} notes`} in the trash ${count === 1 ? "is" : "are"} erased from the vault file. This cannot be undone.`,
       action: "Empty trash",
       run: () => api.emptyTrash(),
     });
@@ -106,7 +149,7 @@
         {/if}
       </p>
     </div>
-    <button class="danger" onclick={empty} disabled={busy || !notes?.length}>
+    <button class="danger" onclick={empty} disabled={busy || !entries?.length}>
       <Icon name="trash" />
       Empty trash
     </button>
@@ -115,9 +158,9 @@
   <div class="body">
     {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-    {#if notes && notes.length === 0}
+    {#if entries && entries.length === 0}
       <p class="muted">The trash is empty.</p>
-    {:else if notes}
+    {:else if entries}
       <div class="table">
         <table>
           <thead>
@@ -130,19 +173,30 @@
             </tr>
           </thead>
           <tbody>
-            {#each notes as note (note.id)}
-              {@const left = daysLeft(note)}
+            {#each entries as entry (entryKey(entry))}
+              {@const left = daysLeft(entry)}
               <tr>
-                <td class="title">{note.title}</td>
-                <td class="folder">{note.folder || "vault root"}</td>
-                <td class="dim">{shortDate(note.deletedAt)}</td>
+                {#if entry.kind === "folder"}
+                  <td class="title">
+                    <span class="name" title={entry.folder}>
+                      <Icon name="folder" size={14} />
+                      {name(entry.folder)}
+                    </span>
+                    <span class="dim count">Folder · {notesText(entry.notes)}</span>
+                  </td>
+                  <td class="folder">{parent(entry.folder) || "vault root"}</td>
+                {:else}
+                  <td class="title">{entry.title}</td>
+                  <td class="folder">{entry.folder || "vault root"}</td>
+                {/if}
+                <td class="dim">{shortDate(entry.deletedAt)}</td>
                 {#if days}<td class="dim num">{left} {left === 1 ? "day" : "days"}</td>{/if}
                 <td class="actions">
-                  <button class="small" onclick={() => restore(note)} disabled={busy}>
+                  <button class="small" onclick={() => restore(entry)} disabled={busy}>
                     <Icon name="restore" size={14} />
                     Restore
                   </button>
-                  <button class="small ghost danger" onclick={() => deleteForever(note)} disabled={busy}>
+                  <button class="small ghost danger" onclick={() => deleteForever(entry)} disabled={busy}>
                     Delete forever
                   </button>
                 </td>
@@ -151,6 +205,9 @@
           </tbody>
         </table>
       </div>
+      {#if hasMore}
+        <button class="more" onclick={more} disabled={busy}>Show more</button>
+      {/if}
     {/if}
   </div>
 </div>
@@ -239,6 +296,22 @@
 
   .title {
     font-weight: 500;
+  }
+
+  .title .name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .title .count {
+    margin-left: 8px;
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .more {
+    margin: 12px;
   }
 
   .folder {

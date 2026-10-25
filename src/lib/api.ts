@@ -11,6 +11,8 @@ export type NoteSummary = {
   title: string;
   author: string | null;
   topic: string | null;
+  /** 1–5 stars, or null when unrated. */
+  rating: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -21,6 +23,8 @@ export type Note = NoteSummary & { body: string; tags: string[] };
 export type NoteMeta = {
   author: string | null;
   topic: string | null;
+  /** A valid `rating` (1–5); any other value is listed under `attributes`. */
+  rating: number | null;
   tags: string[];
   frontmatterTags: string[];
   attributes: [string, string][];
@@ -29,14 +33,21 @@ export type NoteMeta = {
 export type OpenedNote = { note: Note; meta: NoteMeta };
 /** A note in the trash; `folder` is where it was deleted from. */
 export type TrashedNote = { id: number; folder: string; title: string; deletedAt: number };
+/** One row of the trash: a folder deleted as a whole (its notes share `deletedAt`), or a note. */
+export type TrashEntry =
+  | { kind: "folder"; deletedAt: number; folder: string; notes: number }
+  | ({ kind: "note" } & TrashedNote);
+/** What deleting a folder would move to the trash. */
+export type FolderContents = { notes: number; subfolders: number };
 export type SavedNote = { summary: NoteSummary; meta: NoteMeta };
 
-/** Mirrors `db::MetadataEdit`. An empty topic or author removes the key. */
+/** Mirrors `db::MetadataEdit`. An empty topic or author, or a null rating, removes the key. */
 export type MetadataEdit =
   | { kind: "addTag"; value: string }
   | { kind: "removeTag"; value: string }
   | { kind: "setTopic"; value: string }
-  | { kind: "setAuthor"; value: string };
+  | { kind: "setAuthor"; value: string }
+  | { kind: "setRating"; value: number | null };
 export type TitledNote = { id: number; folder: string; title: string };
 export type MetadataEditReport = {
   /** Notes whose body was rewritten. */
@@ -75,10 +86,26 @@ export type TagTraining = {
 export type SuggestionThreshold = { model: string; threshold: number | null; default: number | null };
 /** A note in a discovered group; `score` is its similarity to the group's centre. */
 export type GroupNote = { id: number; folder: string; title: string; score: number };
-/** Notes grouped by meaning (see `discover::Group`): nearest the centre first. */
-export type DiscoverGroup = { words: string[]; notes: GroupNote[] };
-/** `model` is `null` while no model is ready; `k` is the number of groups asked for. */
-export type Discovery = { model: string | null; notes: number; k: number; groups: DiscoverGroup[] };
+/** Notes grouped by meaning (see `discover::Group`): `size` notes, of which `notes`
+ * are the ones nearest the centre, nearest first. */
+export type DiscoverGroup = { words: string[]; size: number; notes: GroupNote[] };
+/** `model` is `null` while no model is ready; `k` is the number of groups asked for;
+ * `sampled` is how many notes the groups were computed from (the rest joined the
+ * nearest group). `run` names the groups for "select all". */
+export type Discovery = {
+  run: number;
+  model: string | null;
+  notes: number;
+  sampled: number;
+  k: number;
+  groups: DiscoverGroup[];
+};
+/** Which notes Discover tags groups. */
+export type DiscoverScope =
+  | { kind: "all" }
+  | { kind: "untagged" }
+  | { kind: "folder"; folder: string }
+  | { kind: "search"; query: SearchQuery };
 
 export type DateField = "created" | "updated";
 
@@ -115,12 +142,21 @@ export type SearchQuery = {
   from: number | null;
   to: number | null;
   attributes: [string, string][];
+  /** Notes rated this many stars or more; null for any. */
+  minRating: number | null;
   limit: number;
   offset: number;
 };
 
 /** `snippet` marks matches with the control characters below. */
 export type SearchHit = { note: NoteSummary; snippet: string | null };
+/** `newestFirst`: too many notes matched to rank them, so these are the newest matches.
+ * `cancelled`: a newer search replaced this one; drop the result. */
+export type SearchResult = { hits: SearchHit[]; newestFirst: boolean; cancelled: boolean };
+
+/** Emitted while opening a vault runs a schema upgrade that rebuilds derived data. */
+export const VAULT_UPGRADE_EVENT = "vault-upgrade";
+export type VaultUpgrade = { done: number; total: number };
 export const HIGHLIGHT_START = "\u0002";
 export const HIGHLIGHT_END = "\u0003";
 
@@ -214,8 +250,19 @@ export const api = {
   /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
   confirmTrash: () => invoke<boolean>("confirm_trash"),
   setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),
+  /** The recently opened notes, most recent first, without trashed ones. */
+  recentOpenedNotes: () => invoke<NoteSummary[]>("recent_opened_notes"),
+  /** How many recently opened notes are kept, 0–50; 0 turns the list off. */
+  recentOpenedCount: () => invoke<number>("recent_opened_count"),
+  setRecentOpenedCount: (count: number) => invoke<void>("set_recent_opened_count", { count }),
+  clearRecentOpened: () => invoke<void>("clear_recent_opened"),
+  recentOpenedCollapsed: () => invoke<boolean>("recent_opened_collapsed"),
+  setRecentOpenedCollapsed: (collapsed: boolean) => invoke<void>("set_recent_opened_collapsed", { collapsed }),
   createNote: (folder: string) => invoke<OpenedNote>("create_note", { folder }),
+  /** Opens a note for the user: it moves to the front of the recently opened list. */
   openNote: (id: number) => invoke<OpenedNote>("open_note", { id }),
+  /** Reads the open note again (after a move, an edit elsewhere, leaving Settings); not recorded as opened. */
+  reloadNote: (id: number) => invoke<OpenedNote>("open_note", { id, record: false }),
   saveNote: (id: number, body: string) => invoke<SavedNote>("save_note", { id, body }),
   renameNote: (id: number, folder: string, title: string) => invoke<OpenedNote>("rename_note", { id, folder, title }),
   /** The default delete: moves the note to the trash. */
@@ -234,7 +281,18 @@ export const api = {
     invoke<MetadataEditReport>("edit_notes_metadata", { ids, edit }),
   /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
-  trashedNotes: () => invoke<TrashedNote[]>("trashed_notes"),
+  /** One page of the trash, newest first: folder groups as one entry each, and loose notes. */
+  trashEntries: (offset: number, limit: number) => invoke<TrashEntry[]>("trash_entries", { offset, limit }),
+  /** How many notes are in the trash, folder groups included. */
+  trashCount: () => invoke<number>("trash_count"),
+  /** The live notes and subfolders in `folder` and below it. */
+  folderContents: (folder: string) => invoke<FolderContents>("folder_contents", { folder }),
+  /** Moves `folder` with everything in it to the trash as one entry; resolves to the number of notes. */
+  trashFolder: (folder: string) => invoke<number>("trash_folder", { folder }),
+  /** Restores a folder group; resolves to the number of notes restored. */
+  restoreFolder: (deletedAt: number) => invoke<number>("restore_folder", { deletedAt }),
+  /** Deletes a folder group from the trash for good. */
+  deleteTrashFolder: (deletedAt: number) => invoke<number>("delete_trash_folder", { deletedAt }),
   restoreNote: (id: number) => invoke<OpenedNote>("restore_note", { id }),
   emptyTrash: () => invoke<number>("empty_trash"),
   trashDays: () => invoke<number>("trash_days"),
@@ -244,7 +302,7 @@ export const api = {
   defaultAuthor: () => invoke<string | null>("default_author"),
   setDefaultAuthor: (author: string) => invoke<void>("set_default_author", { author }),
 
-  searchNotes: (query: SearchQuery) => invoke<SearchHit[]>("search_notes", { query }),
+  searchNotes: (query: SearchQuery) => invoke<SearchResult>("search_notes", { query }),
   searchFacets: () => invoke<Facets>("search_facets"),
   attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
 
@@ -286,12 +344,17 @@ export const api = {
   tagTraining: () => invoke<TagTraining[]>("tag_training"),
 
   /** Groups notes by meaning; `groups: null` picks the default. Resolves to `null` when cancelled. */
-  discoverTags: (groups: number | null, untaggedOnly: boolean) =>
-    invoke<Discovery | null>("discover_tags", { options: { groups, untaggedOnly } }),
+  discoverTags: (groups: number | null, scope: DiscoverScope) =>
+    invoke<Discovery | null>("discover_tags", { options: { groups, scope } }),
   cancelDiscoverTags: () => invoke<void>("cancel_discover_tags"),
-  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, all or nothing. */
-  createTagFromGroup: (tag: string, description: string, ids: number[]) =>
-    invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids }),
+  /** Saves the description (empty leaves it alone) and adds the tag to `ids`, or with
+   * `wholeGroup` to every member of group `group` of run `run`; all or nothing. */
+  createTagFromGroup: (
+    tag: string,
+    description: string,
+    ids: number[],
+    wholeGroup: { run: number; group: number } | null = null,
+  ) => invoke<MetadataEditReport>("create_tag_from_group", { tag, description, ids, wholeGroup }),
 
   /** The background indexing job; changes arrive as `INDEX_STATUS_EVENT`. */
   indexStatus: () => invoke<IndexStatus>("index_status"),

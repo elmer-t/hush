@@ -1,7 +1,17 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { open, save } from "@tauri-apps/plugin-dialog";
-  import { api, errorMessage, isApiError, type LockReason, type RecentVault, type VaultInfo } from "$lib/api";
+  import { listen } from "@tauri-apps/api/event";
+  import {
+    api,
+    errorMessage,
+    isApiError,
+    VAULT_UPGRADE_EVENT,
+    type LockReason,
+    type RecentVault,
+    type VaultInfo,
+    type VaultUpgrade,
+  } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
 
   let { lockReason, onunlock }: { lockReason: LockReason | null; onunlock: (vault: VaultInfo) => void } = $props();
@@ -18,6 +28,9 @@
   // The create form only submits once the user has said they know there is no recovery.
   let understood = $state(false);
   let busy = $state(false);
+  // A schema upgrade running while the vault opens, shown after a second.
+  let upgrade = $state<VaultUpgrade | null>(null);
+  let showUpgrade = $state(false);
   let error = $state<{ kind: string; message: string } | null>(null);
   let passphraseInput = $state<HTMLInputElement>();
 
@@ -90,6 +103,10 @@
     }
     busy = true;
     error = null;
+    upgrade = null;
+    showUpgrade = false;
+    const shown = setTimeout(() => (showUpgrade = true), 1000);
+    const unlisten = listen<VaultUpgrade>(VAULT_UPGRADE_EVENT, (e) => (upgrade = e.payload));
     try {
       const vault =
         target.mode === "create"
@@ -103,6 +120,10 @@
       busy = false;
       await tick();
       passphraseInput?.focus();
+    } finally {
+      clearTimeout(shown);
+      void unlisten.then((stop) => stop());
+      upgrade = null;
     }
   }
 </script>
@@ -236,6 +257,12 @@
         <button type="submit" class="primary submit" disabled={busy || !passphrase}>
           {busy ? "Unlocking…" : "Unlock"}
         </button>
+        {#if busy && showUpgrade && upgrade && upgrade.total > 0}
+          <p class="muted upgrade" role="status">
+            Upgrading the search index: {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
+            of {upgrade.total.toLocaleString()} notes). This happens once.
+          </p>
+        {/if}
       {/if}
 
       <div class="other">
@@ -558,5 +585,9 @@
     text-align: center;
     font-size: 12px;
     color: var(--muted);
+  }
+  .upgrade {
+    margin: 8px 0 0;
+    font-size: 0.9em;
   }
 </style>

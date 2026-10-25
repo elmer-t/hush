@@ -12,13 +12,15 @@
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
-  import { confirmTrash } from "$lib/confirmTrash";
+  import { confirmFolderTrash, confirmTrash } from "$lib/confirmTrash";
   import { findNote, rebase } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
+  import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RAIL, RIGHT, saveWidth, type Column } from "$lib/layout";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
+  import ResizeHandle from "$lib/ResizeHandle.svelte";
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import Trash from "$lib/Trash.svelte";
@@ -51,6 +53,33 @@
   let now = $state(Date.now());
   let autoLockMinutes = $state<number | null>(null);
 
+  // Side column widths as stored, and as shown: a window too narrow for both and the
+  // editor shrinks them for display without changing what is stored.
+  let leftWidth = $state(loadWidth(LEFT));
+  let rightWidth = $state(loadWidth(RIGHT));
+  let windowWidth = $state(window.innerWidth);
+  const leftShown = $derived(showLeft);
+  const rightShown = $derived(view === "note" && showRight);
+  const fitted = $derived(
+    fitWidths(
+      windowWidth,
+      leftShown ? leftWidth : null,
+      rightShown ? rightWidth : null,
+      view === "note" && !showRight ? RAIL : 0,
+    ),
+  );
+  const leftColumn = $derived(leftShown ? fitted.left : 0);
+  const rightColumn = $derived(view !== "note" ? 0 : showRight ? fitted.right : RAIL);
+  /** How wide a column may be dragged: its maximum, but never into the editor's minimum. */
+  const maxWidth = (column: Column, other: number) =>
+    Math.max(column.min, Math.min(column.max, windowWidth - EDITOR_MIN - other));
+
+  function resetWidth(column: Column) {
+    if (column === LEFT) leftWidth = LEFT.default;
+    else rightWidth = RIGHT.default;
+    saveWidth(column, column.default);
+  }
+
   const locksIn = $derived(
     autoLockMinutes === null
       ? null
@@ -77,10 +106,7 @@
   }
 
   async function loadTrashCount() {
-    trashCount = await api.trashedNotes().then(
-      (notes) => notes.length,
-      () => trashCount,
-    );
+    trashCount = await api.trashCount().catch(() => trashCount);
   }
 
   function activity() {
@@ -119,10 +145,13 @@
   async function toggleView(next: "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
-    // The auto-lock time may have been changed there.
-    if (view === "settings") void loadAutoLock();
+    // The auto-lock time and the recently opened count may have been changed there.
+    const leavingSettings = view === "settings";
+    if (leavingSettings) void loadAutoLock();
     if (view === next) await showNote();
     else view = next;
+    // After showNote, whose reopen may have recorded the note.
+    if (leavingSettings) void sidebar?.refreshRecent();
     if (next === "import") importOpened = true;
   }
 
@@ -134,7 +163,7 @@
   async function showNote() {
     if (opened) {
       try {
-        const fresh = await api.openNote(opened.note.id);
+        const fresh = await api.reloadNote(opened.note.id);
         opened = fresh;
         summary = fresh.note;
         meta = fresh.meta;
@@ -229,7 +258,7 @@
     // Reopen, so its folder field and any rewritten links are current.
     if (open !== null) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -253,7 +282,7 @@
     await sidebar?.folderMoved(from, moved);
     if (open !== null) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -278,7 +307,7 @@
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -324,7 +353,7 @@
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
       try {
-        show(await api.openNote(open), false);
+        show(await api.reloadNote(open), false);
         editorRevision++;
       } catch (e) {
         error = errorMessage(e);
@@ -375,6 +404,34 @@
     return true;
   }
 
+  /** Moves a folder with everything in it to the trash, after asking with its counts. */
+  async function deleteFolder(folder: string): Promise<boolean> {
+    try {
+      const contents = await api.folderContents(folder);
+      if (contents.notes > 0 && !(await confirmFolderTrash(folder, contents))) return false;
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    // The open note is closed if it is in the folder or below it, as when it is trashed.
+    const inside = summary && rebase(summary.folder, folder, folder) !== null ? summary.id : null;
+    const open = inside === null ? null : await flushIfIn([inside]);
+    try {
+      await api.trashFolder(folder);
+    } catch (e) {
+      error = errorMessage(e);
+      return false;
+    }
+    error = "";
+    if (open !== null) opened = summary = meta = null;
+    void loadTrashCount();
+    return true;
+  }
+
+  async function restoredFolder() {
+    await sidebar?.refresh();
+  }
+
   async function deleted(id: number) {
     const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
@@ -383,9 +440,22 @@
   }
 </script>
 
-<svelte:window onkeydowncapture={onkeydown} onpointerdown={activity} onpointermove={activity} onwheel={activity} />
+<svelte:window
+  bind:innerWidth={windowWidth}
+  onkeydowncapture={onkeydown}
+  onpointerdown={activity}
+  onpointermove={activity}
+  onwheel={activity}
+/>
 
-<div class="workspace" class:no-left={!showLeft} class:no-right={!showRight} class:no-details={view !== "note"}>
+<div
+  class="workspace"
+  class:no-left={!showLeft}
+  class:no-right={!showRight}
+  class:no-details={view !== "note"}
+  style:--left="{leftColumn}px"
+  style:--right="{rightColumn}px"
+>
   <header>
     <button
       class="ghost icon"
@@ -450,11 +520,22 @@
         onmove={moveNotes}
         onmovefolder={moveFolder}
         ondelete={deleteNotes}
+        ondeletefolder={deleteFolder}
         onedit={editNotes}
         onaccepttag={acceptTag}
         onrejecttag={rejectTag}
       />
     </div>
+    <ResizeHandle
+      edge="right"
+      label="Resize sidebar"
+      width={leftColumn}
+      min={LEFT.min}
+      max={maxWidth(LEFT, rightColumn)}
+      onresize={(w) => (leftWidth = w)}
+      oncommit={(w) => saveWidth(LEFT, w)}
+      onreset={() => resetWidth(LEFT)}
+    />
   {/if}
 
   <main>
@@ -465,7 +546,7 @@
     {#if view === "settings"}
       <div class="page"><Settings onreviewtag={reviewTag} /></div>
     {:else if view === "trash"}
-      <Trash onrestored={restored} oncount={(n) => (trashCount = n)} />
+      <Trash onrestored={restored} onrestoredfolder={restoredFolder} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
       {#if opened}
         {#key `${opened.note.id}:${editorRevision}`}
@@ -507,6 +588,16 @@
           <RelatedNotes id={summary.id} bind:open={showRelated} onopen={select} />
         {/if}
       </div>
+      <ResizeHandle
+        edge="left"
+        label="Resize details panel"
+        width={rightColumn}
+        min={RIGHT.min}
+        max={maxWidth(RIGHT, leftColumn)}
+        onresize={(w) => (rightWidth = w)}
+        oncommit={(w) => saveWidth(RIGHT, w)}
+        onreset={() => resetWidth(RIGHT)}
+      />
     {:else}
       <div class="right rail">
         <button class="ghost icon" onclick={() => (showRight = true)} aria-label="Show details panel" title="Show details panel">
@@ -518,9 +609,8 @@
 </div>
 
 <style>
+  /* --left and --right are set from the script (stored widths, hidden columns, the rail). */
   .workspace {
-    --left: 280px;
-    --right: 300px;
     display: grid;
     grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
     grid-template-rows: auto minmax(0, 1fr);
@@ -528,19 +618,6 @@
       "header header header"
       "left main right";
     height: 100vh;
-  }
-
-  .workspace.no-left {
-    --left: 0px;
-  }
-
-  /* Hidden details leave a rail with the button that brings them back. */
-  .workspace.no-right {
-    --right: 48px;
-  }
-
-  .workspace.no-details {
-    --right: 0px;
   }
 
   header {
@@ -633,6 +710,14 @@
     gap: 6px;
     font-size: 12px;
     color: var(--muted);
+  }
+
+  .workspace > :global(.handle.right) {
+    grid-area: left;
+  }
+
+  .workspace > :global(.handle.left) {
+    grid-area: right;
   }
 
   .left {

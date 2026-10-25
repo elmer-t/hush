@@ -1,25 +1,54 @@
 //! Discover tags (Settings → Tags): group notes by meaning and create a tag from a
 //! group (see `crate::discover`).
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use super::Result;
+use super::{CommandError, Result};
 use crate::db::MetadataEditReport;
 use crate::discover::{self, DiscoverError, Discovery, Options};
 use crate::session::{Session, SessionError};
 
-/// Counts runs, so a newer run (or a cancel) stops the one before it.
+/// Counts runs, so a newer run (or a cancel) stops the one before it, and keeps the
+/// members of the latest run's groups for *Select all*, until the next run, a cancel or
+/// a lock.
 #[derive(Default)]
 pub struct DiscoverJob {
     runs: AtomicU64,
+    last: Mutex<Option<LastRun>>,
+}
+
+struct LastRun {
+    run: u64,
+    generation: u64,
+    /// Every member of each group, in the order the groups were returned.
+    members: Vec<Vec<i64>>,
+}
+
+/// A run's result, and its number, which *Select all* names the groups by.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverResult {
+    pub run: u64,
+    #[serde(flatten)]
+    pub discovery: Discovery,
+}
+
+/// Group `group` of run `run`, all of its members.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WholeGroup {
+    pub run: u64,
+    pub group: usize,
 }
 
 /// Groups the notes off the main thread. Resolves to `null` when a newer run or
 /// `cancel_discover_tags` stopped this one.
 #[tauri::command]
-pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Discovery>> {
+pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<DiscoverResult>> {
     let session = app.state::<Session>();
     let generation = session.generation();
     if generation == 0 {
@@ -27,7 +56,9 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
     }
     // Starting a run is the user's doing; the run itself is not activity.
     session.touch();
-    let run = app.state::<DiscoverJob>().runs.fetch_add(1, Ordering::SeqCst) + 1;
+    let job = app.state::<DiscoverJob>();
+    let run = job.runs.fetch_add(1, Ordering::SeqCst) + 1;
+    *job.last.lock().unwrap() = None;
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let job = handle.state::<DiscoverJob>();
@@ -36,7 +67,16 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
     })
     .await;
     match result {
-        Ok(Ok(discovery)) => Ok(Some(discovery)),
+        Ok(Ok(mut discovery)) => {
+            let members = discovery.groups.iter_mut().map(|g| std::mem::take(&mut g.members)).collect();
+            let job = app.state::<DiscoverJob>();
+            let mut last = job.last.lock().unwrap();
+            if job.runs.load(Ordering::SeqCst) != run {
+                return Ok(None);
+            }
+            *last = Some(LastRun { run, generation, members });
+            Ok(Some(DiscoverResult { run, discovery }))
+        }
         Ok(Err(DiscoverError::Cancelled)) => Ok(None),
         Ok(Err(DiscoverError::Locked)) => Err(SessionError::Locked.into()),
         Ok(Err(DiscoverError::Db(e))) => Err(e.into()),
@@ -48,16 +88,36 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
 #[tauri::command]
 pub fn cancel_discover_tags(job: State<'_, DiscoverJob>) {
     job.runs.fetch_add(1, Ordering::SeqCst);
+    *job.last.lock().unwrap() = None;
 }
 
-/// Saves the tag's description and adds the tag to `ids`, recording each as an
-/// accepted example; all or nothing.
+/// Saves the tag's description and adds the tag to `ids`, or with `whole_group` to
+/// every member of that group still live, recording each as an accepted example; all
+/// or nothing.
 #[tauri::command]
 pub fn create_tag_from_group(
     session: State<'_, Session>,
+    job: State<'_, DiscoverJob>,
     tag: String,
     description: String,
     ids: Vec<i64>,
+    whole_group: Option<WholeGroup>,
 ) -> Result<MetadataEditReport> {
-    Ok(session.with_vault(|v| v.create_tag_from_group(&tag, &description, &ids))?)
+    let Some(whole) = whole_group else {
+        return Ok(session.with_vault(|v| v.create_tag_from_group(&tag, &description, &ids))?);
+    };
+    let members = {
+        let last = job.last.lock().unwrap();
+        match last.as_ref() {
+            Some(l) if l.run == whole.run && l.generation == session.generation() => {
+                l.members.get(whole.group).cloned().ok_or(CommandError::StaleGroups)?
+            }
+            _ => return Err(CommandError::StaleGroups),
+        }
+    };
+    Ok(session.with_vault(|v| {
+        // Notes trashed since the run are left out rather than failing the lot.
+        let live = v.live_notes(&members)?;
+        v.create_tag_from_group(&tag, &description, &live)
+    })?)
 }

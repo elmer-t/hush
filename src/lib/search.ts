@@ -9,15 +9,17 @@ export type Filters = {
   from: string;
   to: string;
   attributes: [string, string][];
+  /** 0 for any rating. */
+  minRating: number;
 };
 
 export function emptyFilters(): Filters {
-  return { tags: [], topic: "", author: "", dateField: "created", from: "", to: "", attributes: [] };
+  return { tags: [], topic: "", author: "", dateField: "created", from: "", to: "", attributes: [], minRating: 0 };
 }
 
 export function activeFilterCount(f: Filters): number {
   return (
-    f.tags.length + f.attributes.length + Number(!!f.topic) + Number(!!f.author) + Number(!!(f.from || f.to))
+    f.tags.length + f.attributes.length + Number(!!f.topic) + Number(!!f.author) + Number(!!(f.from || f.to)) + Number(f.minRating > 0)
   );
 }
 
@@ -39,6 +41,7 @@ export function toQuery(text: string, folder: string | null, f: Filters, offset:
     // The end date is inclusive in the UI and exclusive in the query.
     to: localDay(f.to, 1),
     attributes: f.attributes.map(([k, v]) => [k, v]),
+    minRating: f.minRating || null,
     limit,
     offset,
   };

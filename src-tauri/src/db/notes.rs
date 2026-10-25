@@ -16,6 +16,8 @@ pub struct Note {
     pub body: String,
     pub author: Option<String>,
     pub topic: Option<String>,
+    /// 1–5 stars, from frontmatter `rating`.
+    pub rating: Option<u8>,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -29,6 +31,7 @@ pub struct NoteSummary {
     pub title: String,
     pub author: Option<String>,
     pub topic: Option<String>,
+    pub rating: Option<u8>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -41,6 +44,7 @@ impl Note {
             title: self.title.clone(),
             author: self.author.clone(),
             topic: self.topic.clone(),
+            rating: self.rating,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -58,7 +62,7 @@ pub struct NewNote<'a> {
 }
 
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
-pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at";
+pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at, n.rating";
 
 impl NoteSummary {
     pub(super) fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -70,6 +74,7 @@ impl NoteSummary {
             topic: r.get(4)?,
             created_at: r.get(5)?,
             updated_at: r.get(6)?,
+            rating: r.get(7)?,
         })
     }
 }
@@ -110,7 +115,7 @@ impl Vault {
         let mut note = self
             .conn
             .query_row(
-                "SELECT id, folder, title, body, author, topic, created_at, updated_at FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT id, folder, title, body, author, topic, created_at, updated_at, rating FROM notes WHERE id = ?1 AND deleted_at IS NULL",
                 [id],
                 |r| {
                     Ok(Note {
@@ -120,6 +125,7 @@ impl Vault {
                         body: r.get(3)?,
                         author: r.get(4)?,
                         topic: r.get(5)?,
+                        rating: r.get(8)?,
                         tags: Vec::new(),
                         created_at: r.get(6)?,
                         updated_at: r.get(7)?,
@@ -262,19 +268,19 @@ impl Vault {
         let tx = self.conn.transaction()?;
         // Every live note in the folder or below it, with its new folder: `dest` plus the
         // rest of its path below `from`, in the case it is stored with.
-        let len = from.chars().count() as i64;
+        let len = from.chars().count();
         let mut moving: Vec<(i64, String, String)> = Vec::new();
         {
-            let mut stmt = tx.prepare_cached(
-                "SELECT id, folder, title FROM notes
-                 WHERE deleted_at IS NULL AND (folder = ?1 OR substr(folder, 1, ?2) = ?3 COLLATE NOCASE)",
-            )?;
-            let rows = stmt.query_map(params![from, len + 1, format!("{from}/")], |r| {
+            let mut stmt = tx.prepare_cached(&format!(
+                "SELECT id, folder, title FROM notes WHERE deleted_at IS NULL AND {IN_SUBTREE}"
+            ))?;
+            let (a, b, c) = subtree_params(&from);
+            let rows = stmt.query_map(params![a, b, c], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
             })?;
             for row in rows {
                 let (id, folder, title) = row?;
-                let rest: String = folder.chars().skip(len as usize).collect();
+                let rest: String = folder.chars().skip(len).collect();
                 moving.push((id, format!("{dest}{rest}"), title));
             }
         }
@@ -354,9 +360,12 @@ impl Vault {
     /// Deletes a note for good, live or trashed (`secure_delete` overwrites its text).
     /// The default delete is [`Vault::trash_note`].
     pub fn delete_note(&mut self, id: i64) -> Result<()> {
-        if self.conn.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
+        let tx = self.conn.transaction()?;
+        if tx.execute("DELETE FROM notes WHERE id = ?1", [id])? == 0 {
             return Err(Error::NoteNotFound);
         }
+        super::trash::forget_empty_groups(&tx)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -395,13 +404,23 @@ impl Vault {
     }
 }
 
+/// Matches folder `?1` and every folder below it, case-insensitively like the column, as
+/// one range on the `folder` index rather than a scan: `?2` is `?1/` and `?3` is `?1`
+/// followed by `0`, the character after `/`. (Written as `folder = ?1 OR folder > ?2 AND
+/// folder < ?3`, SQLite scans the whole index.) Bind with [`subtree_params`].
+pub(super) const IN_SUBTREE: &str = "(folder >= ?1 AND folder < ?3 AND (folder = ?1 OR folder > ?2))";
+
+pub(super) fn subtree_params(folder: &str) -> (String, String, String) {
+    (folder.to_string(), format!("{folder}/"), format!("{folder}0"))
+}
+
 /// Rebuilds the index rows of one note from its body.
 pub(super) fn derive(conn: &Connection, id: i64, body: &str) -> Result<()> {
     let p = markdown::parse(body);
     conn.prepare_cached(
-        "UPDATE notes SET author = ?2, topic = ?3, created_at = COALESCE(?4, created_at) WHERE id = ?1",
+        "UPDATE notes SET author = ?2, topic = ?3, rating = ?5, created_at = COALESCE(?4, created_at) WHERE id = ?1",
     )?
-    .execute(params![id, p.author, p.topic, p.created_at])?;
+    .execute(params![id, p.author, p.topic, p.created_at, p.rating])?;
 
     for table in ["note_tags", "note_attributes"] {
         conn.prepare_cached(&format!("DELETE FROM {table} WHERE note_id = ?1"))?.execute([id])?;

@@ -29,17 +29,22 @@
   let trashStatus = $state("");
   let trashError = $state("");
 
+  let recentCount = $state(10);
+  let recentStatus = $state("");
+  let recentError = $state("");
+
   let author = $state("");
   let authorStatus = $state("");
   let authorError = $state("");
 
   onMount(async () => {
     api.indexAllCores().then((on) => (allCores = on), () => {});
-    [minutes, author, trashDays, confirmTrash] = await Promise.all([
+    [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
       api.trashDays(),
       api.confirmTrash(),
+      api.recentOpenedCount(),
     ]);
   });
 
@@ -72,6 +77,27 @@
       trashStatus = "Saved.";
     } catch (err) {
       trashError = errorMessage(err);
+    }
+  }
+
+  async function saveRecentCount(e: SubmitEvent) {
+    e.preventDefault();
+    recentStatus = recentError = "";
+    try {
+      await api.setRecentOpenedCount(recentCount);
+      recentStatus = "Saved.";
+    } catch (err) {
+      recentError = errorMessage(err);
+    }
+  }
+
+  async function clearRecent() {
+    recentStatus = recentError = "";
+    try {
+      await api.clearRecentOpened();
+      recentStatus = "List cleared.";
+    } catch (err) {
+      recentError = errorMessage(err);
     }
   }
 
@@ -175,6 +201,21 @@
     {#if trashError}<p class="error" role="alert">{trashError}</p>{/if}
     <div class="actions">
       {#if trashStatus}<span class="muted">{trashStatus}</span>{/if}
+      <button type="submit">Save</button>
+    </div>
+  </form>
+
+  <form class="card" onsubmit={saveRecentCount}>
+    <h2>Recently opened notes</h2>
+    <label>
+      How many notes the "Recently opened" list keeps (0 = off)
+      <input type="number" min="0" max="50" step="1" bind:value={recentCount} required />
+    </label>
+    <p class="muted">Kept inside the vault, per vault. Turning it off clears the list.</p>
+    {#if recentError}<p class="error" role="alert">{recentError}</p>{/if}
+    <div class="actions">
+      {#if recentStatus}<span class="muted">{recentStatus}</span>{/if}
+      <button type="button" onclick={clearRecent}>Clear list</button>
       <button type="submit">Save</button>
     </div>
   </form>

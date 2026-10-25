@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashedNote, Vault};
+use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashEntry, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -16,6 +16,7 @@ pub const DEFAULT_AUTHOR_SETTING: &str = "default_author";
 pub struct NoteMeta {
     author: Option<String>,
     topic: Option<String>,
+    rating: Option<u8>,
     tags: Vec<String>,
     frontmatter_tags: Vec<String>,
     attributes: Vec<(String, String)>,
@@ -27,6 +28,7 @@ impl NoteMeta {
         Self {
             author: p.author,
             topic: p.topic,
+            rating: p.rating,
             tags: p.tags,
             frontmatter_tags: p.frontmatter_tags,
             attributes: p.attributes,
@@ -109,13 +111,58 @@ pub fn create_note(session: State<'_, Session>, folder: String) -> Result<Opened
             _ => String::new(),
         };
         let id = v.create_untitled(&folder, &body)?;
-        opened(v, id)
+        let note = opened(v, id)?;
+        v.record_opened(id)?;
+        Ok(note)
     })?)
 }
 
+/// Opens a note and, unless `record` is false (the frontend reading the open note
+/// again), puts it at the front of the recently opened list.
 #[tauri::command]
-pub fn open_note(session: State<'_, Session>, id: i64) -> Result<OpenedNote> {
-    Ok(session.with_vault(|v| opened(v, id))?)
+pub fn open_note(session: State<'_, Session>, id: i64, record: Option<bool>) -> Result<OpenedNote> {
+    Ok(session.with_vault(|v| {
+        let note = opened(v, id)?;
+        if record != Some(false) {
+            v.record_opened(id)?;
+        }
+        Ok(note)
+    })?)
+}
+
+/// The recently opened notes, most recent first, without trashed ones.
+#[tauri::command]
+pub fn recent_opened_notes(session: State<'_, Session>) -> Result<Vec<NoteSummary>> {
+    Ok(session.with_vault(|v| v.recent_opened_notes())?)
+}
+
+#[tauri::command]
+pub fn recent_opened_count(session: State<'_, Session>) -> Result<u32> {
+    Ok(session.with_vault(|v| v.recent_opened_count())?)
+}
+
+/// Sets how many recently opened notes are kept (0 turns the list off and clears it).
+#[tauri::command]
+pub fn set_recent_opened_count(session: State<'_, Session>, count: u32) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_recent_opened_count(count))?)
+}
+
+#[tauri::command]
+pub fn clear_recent_opened(session: State<'_, Session>) -> Result<()> {
+    Ok(session.with_vault(|v| v.clear_recent_opened())?)
+}
+
+/// Whether the "Recently opened" section is collapsed: `"true"` collapses it.
+pub const RECENT_OPENED_COLLAPSED_SETTING: &str = "recent_opened_collapsed";
+
+#[tauri::command]
+pub fn recent_opened_collapsed(session: State<'_, Session>) -> Result<bool> {
+    Ok(session.with_vault(|v| v.setting(RECENT_OPENED_COLLAPSED_SETTING))?.as_deref() == Some("true"))
+}
+
+#[tauri::command]
+pub fn set_recent_opened_collapsed(session: State<'_, Session>, collapsed: bool) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_setting(RECENT_OPENED_COLLAPSED_SETTING, if collapsed { "true" } else { "false" }))?)
 }
 
 #[tauri::command]
@@ -173,9 +220,41 @@ pub fn delete_note(session: State<'_, Session>, id: i64) -> Result<()> {
     Ok(session.with_vault(|v| v.delete_note(id))?)
 }
 
+/// One page of the trash: folder groups as one entry each, and loose notes.
 #[tauri::command]
-pub fn trashed_notes(session: State<'_, Session>) -> Result<Vec<TrashedNote>> {
-    Ok(session.with_vault(|v| v.trashed_notes())?)
+pub fn trash_entries(session: State<'_, Session>, offset: u32, limit: u32) -> Result<Vec<TrashEntry>> {
+    Ok(session.with_vault(|v| v.trash_entries(offset, limit))?)
+}
+
+/// How many notes are in the trash.
+#[tauri::command]
+pub fn trash_count(session: State<'_, Session>) -> Result<usize> {
+    Ok(session.with_vault(|v| v.trash_count())?)
+}
+
+/// What deleting `folder` would move to the trash, for the confirmation.
+#[tauri::command]
+pub fn folder_contents(session: State<'_, Session>, folder: String) -> Result<FolderContents> {
+    Ok(session.with_vault(|v| v.folder_contents(&folder))?)
+}
+
+/// Moves a folder and every note in it and below it to the trash as one entry. Returns
+/// how many notes were trashed.
+#[tauri::command]
+pub fn trash_folder(session: State<'_, Session>, folder: String) -> Result<usize> {
+    Ok(session.with_vault(|v| v.trash_folder(&folder))?)
+}
+
+/// Restores a folder group from the trash. Returns how many notes came back.
+#[tauri::command]
+pub fn restore_folder(session: State<'_, Session>, deleted_at: i64) -> Result<usize> {
+    Ok(session.with_vault(|v| v.restore_folder(deleted_at))?)
+}
+
+/// Deletes a folder group from the trash for good. Returns how many notes.
+#[tauri::command]
+pub fn delete_trash_folder(session: State<'_, Session>, deleted_at: i64) -> Result<usize> {
+    Ok(session.with_vault(|v| v.delete_trash_folder(deleted_at))?)
 }
 
 /// Restores a trashed note and returns it opened (its title may have changed).
