@@ -954,14 +954,16 @@
     border-bottom: 1px solid var(--border);
   }
 
+  /* Room for a few rows of tree or results when the sidebar is short; the
+     Recently opened panel above gives way first. */
   .explorer {
     flex: 1;
-    min-height: 0;
+    min-height: 120px;
   }
 
   .results {
     flex: 1;
-    min-height: 0;
+    min-height: 120px;
     display: grid;
     grid-template-rows: minmax(0, 1fr);
   }

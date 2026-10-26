@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import type { NoteSummary } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
 
@@ -11,6 +12,26 @@
     onopen: (id: number, event: MouseEvent | KeyboardEvent) => void;
   };
   let { notes, selectedId, collapsed, ontoggle, onopen }: Props = $props();
+
+  let list = $state<HTMLUListElement>();
+  // A note opened from this list moves to the top of it, which can be above the
+  // scrolled view. Reveal it then, and only then: no jump while the user scrolls.
+  let reveal: number | null = null;
+
+  function open(id: number, event: MouseEvent | KeyboardEvent) {
+    reveal = id;
+    onopen(id, event);
+  }
+
+  $effect(() => {
+    const ids = notes.map((n) => n.id);
+    if (reveal === null || !ids.includes(reveal)) return;
+    const id = reveal;
+    reveal = null;
+    void tick().then(() =>
+      list?.querySelector(`[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" }),
+    );
+  });
 </script>
 
 <section class="recent" aria-label="Recently opened">
@@ -20,15 +41,16 @@
     <span class="count">{notes.length}</span>
   </button>
   {#if !collapsed}
-    <ul>
+    <ul bind:this={list}>
       {#each notes as note (note.id)}
         <li>
           <button
             class="row"
+            data-id={note.id}
             class:selected={note.id === selectedId}
             aria-current={note.id === selectedId}
             title={note.folder ? `${note.folder}/${note.title}` : note.title}
-            onclick={(e) => onopen(note.id, e)}
+            onclick={(e) => open(note.id, e)}
           >
             <span class="glyph"><Icon name="note" size={14} /></span>
             <span class="title">{note.title}</span>
@@ -41,8 +63,15 @@
 </section>
 
 <style>
+  /* The list has a fixed height of six rows (--rows x --row), whatever the
+     entry count or window height, so the tree below never moves when a note
+     is opened. It only shrinks when the sidebar is too short for both; the
+     tree keeps its own minimum height (see Sidebar.svelte). */
   .recent {
-    flex: none;
+    --rows: 6;
+    --row: 32px;
+    flex: 0 1 auto;
+    min-height: calc(26px + 2px + var(--row) + 6px); /* heading, gap, one row, padding */
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -76,7 +105,9 @@
   }
 
   ul {
-    max-height: 30vh;
+    flex: 0 1 auto;
+    height: calc(var(--rows) * var(--row));
+    min-height: var(--row);
     overflow-y: auto;
     margin: 0;
     padding: 0;
@@ -89,7 +120,8 @@
     align-items: center;
     justify-content: flex-start;
     gap: 6px;
-    height: 28px;
+    height: var(--row);
+    min-height: 0;
     padding: 0 8px;
     border: none;
     border-radius: 6px;
