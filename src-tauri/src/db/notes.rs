@@ -398,6 +398,7 @@ impl Vault {
             return Err(Error::NoteNotFound);
         }
         super::trash::forget_empty_groups(&tx)?;
+        super::recent::forget_last_opened(&tx, id)?;
         tx.commit()?;
         Ok(())
     }

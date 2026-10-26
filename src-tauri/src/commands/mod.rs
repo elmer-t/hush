@@ -4,6 +4,7 @@ pub mod activity;
 pub mod discover;
 pub mod embeddings;
 pub mod import;
+pub mod layout;
 pub mod links;
 pub mod notes;
 pub mod review;

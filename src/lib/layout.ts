@@ -1,5 +1,9 @@
-// Widths of the left sidebar and the details panel. Stored per device in localStorage,
-// not in the vault: they hold no note data and are needed before unlock.
+// The app layout that holds no note data: column widths, which panels are shown, the
+// editor mode, the main view and the graph's display controls. Stored per device in
+// localStorage, not in the vault: it is needed before unlock (the first render after it),
+// and a vault opened on a laptop and a desktop keeps a layout that suits each screen.
+// Anything that names note content (note ids, folders, tags) goes in the vault instead;
+// see `commands/layout.rs`.
 
 export type Column = { min: number; max: number; default: number; storageKey: string };
 
@@ -52,4 +56,72 @@ export function fitWidths(
     }
   }
   return { left: Math.round(l), right: Math.round(r) };
+}
+
+/** localStorage keys of the layout values other than the widths. */
+export const KEYS = {
+  previewOnly: "hush.layout.previewOnly",
+  showLeft: "hush.layout.showLeft",
+  showRight: "hush.layout.showRight",
+  showInternals: "hush.layout.showInternals",
+  showActivity: "hush.layout.showActivity",
+  view: "hush.layout.view",
+  graph: "hush.graph.display",
+} as const;
+
+export const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+
+export const oneOf =
+  <T extends string>(...values: T[]) =>
+  (value: unknown): value is T =>
+    values.includes(value as T);
+
+/**
+ * A stored layout value, or `fallback` when storage is unavailable, holds nothing, or
+ * holds something that isn't valid JSON or that `valid` rejects.
+ */
+export function loadStored<T>(key: string, fallback: T, valid: (value: unknown) => value is T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const value: unknown = JSON.parse(raw);
+    return valid(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveStored(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable; the value then lasts until the window closes.
+  }
+}
+
+/**
+ * `run` at most once per `ms`, with the last value given: for drags and sliders.
+ * `flush` runs a pending call now and returns what it returned; `cancel` drops it.
+ */
+export function debounced<T>(ms: number, run: (value: T) => unknown) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: { value: T } | null = null;
+  const flush = () => {
+    clearTimeout(timer);
+    const p = pending;
+    pending = null;
+    return p ? run(p.value) : undefined;
+  };
+  return {
+    call(value: T) {
+      pending = { value };
+      clearTimeout(timer);
+      timer = setTimeout(flush, ms);
+    },
+    flush,
+    cancel() {
+      clearTimeout(timer);
+      pending = null;
+    },
+  };
 }

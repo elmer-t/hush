@@ -24,7 +24,21 @@
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
   import NoteInternals from "$lib/NoteInternals.svelte";
-  import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RIGHT, saveWidth, type Column } from "$lib/layout";
+  import {
+    EDITOR_MIN,
+    fitWidths,
+    isBoolean,
+    KEYS,
+    LEFT,
+    loadStored,
+    loadWidth,
+    oneOf,
+    RIGHT,
+    saveStored,
+    saveWidth,
+    type Column,
+  } from "$lib/layout";
+  import { flushGraphSettings, persistGraphSettings, restoreGraphScope } from "$lib/graph/settings.svelte";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
@@ -39,13 +53,17 @@
   // How often the "Locks in" countdown is redrawn.
   const COUNTDOWN_TICK_MS = 15_000;
 
-  let view = $state<"note" | "graph" | "settings" | "import" | "trash">("note");
+  // The layout is read from device storage here, so the first render already has it.
+  // Settings, Import and Trash are never reopened: only the note or graph view is stored.
+  let view = $state<"note" | "graph" | "settings" | "import" | "trash">(
+    loadStored(KEYS.view, "note", oneOf("note", "graph")),
+  );
   // The views with the details panel beside them.
   const details = $derived(view === "note" || view === "graph");
   // The import view stays mounted once opened, so a running import keeps its progress.
   let importOpened = $state(false);
-  let showLeft = $state(true);
-  let showRight = $state(true);
+  let showLeft = $state(loadStored(KEYS.showLeft, true, isBoolean));
+  let showRight = $state(loadStored(KEYS.showRight, true, isBoolean));
   // Details panel sections the user collapsed; stored in the vault.
   let collapsed = $state<DetailsSection[]>([]);
   // Bumped when the open note was saved or other notes changed, so the links panels and
@@ -53,15 +71,15 @@
   let linksRevision = $state(0);
   // The chooser a clicked ambiguous or unresolved link opens.
   let linkMenu = $state<{ x: number; y: number; label: string; items: MenuItem[] } | null>(null);
-  let showInternals = $state(false);
+  let showInternals = $state(loadStored(KEYS.showInternals, false, isBoolean));
   // The Activity panel, toggled from the sidebar footer and with Ctrl+J.
-  let showActivity = $state(false);
+  let showActivity = $state(loadStored(KEYS.showActivity, false, isBoolean));
   let opened = $state<OpenedNote | null>(null);
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
   let focusTitle = $state(false);
-  // Kept for the unlocked session only: lock reloads the page, which resets it.
-  let previewOnly = $state(false);
+  // The editor mode, shared across notes.
+  let previewOnly = $state(loadStored(KEYS.previewOnly, false, isBoolean));
   let error = $state("");
   let editor = $state<ReturnType<typeof NoteEditor>>();
   let sidebar = $state<ReturnType<typeof Sidebar>>();
@@ -99,7 +117,20 @@
       : Math.max(1, Math.ceil((autoLockMinutes * 60_000 - (now - lastTouch)) / 60_000)),
   );
 
+  // Each layout change is stored when it happens, so auto-lock or a crash loses nothing.
+  $effect(() => saveStored(KEYS.previewOnly, previewOnly));
+  $effect(() => saveStored(KEYS.showLeft, showLeft));
+  $effect(() => saveStored(KEYS.showRight, showRight));
+  $effect(() => saveStored(KEYS.showInternals, showInternals));
+  $effect(() => saveStored(KEYS.showActivity, showActivity));
+  $effect(() => {
+    if (view === "note" || view === "graph") saveStored(KEYS.view, view);
+  });
+  persistGraphSettings();
+
   onMount(() => {
+    void restoreLastOpened();
+    void restoreGraphScope();
     // The backend holds the window open briefly so pending edits can be saved.
     const unlisten = listen(CLOSE_EVENT, async () => {
       await editor?.flush();
@@ -119,6 +150,12 @@
       void unlisten.then((stop) => stop());
     };
   });
+
+  /** Reopens the note that was open when the app was last left, unless one was opened since. */
+  async function restoreLastOpened() {
+    const note = await api.lastOpenedNote().catch(() => null);
+    if (note && !opened) show(note, false, true);
+  }
 
   async function loadAutoLock() {
     autoLockMinutes = await api.autoLockMinutes().catch(() => null);
@@ -261,6 +298,7 @@
 
   async function lock() {
     await editor?.flush();
+    await flushGraphSettings();
     await api.lockVault();
   }
 

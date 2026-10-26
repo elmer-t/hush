@@ -3,7 +3,7 @@ mod common;
 use std::path::Path;
 
 use hush_lib::config::Config;
-use hush_lib::db::{DEFAULT_RECENT_OPENED_COUNT, Error, Vault};
+use hush_lib::db::{DEFAULT_RECENT_OPENED_COUNT, Error, LAST_OPENED_SETTING, Vault};
 
 fn recent(vault: &Vault) -> Vec<String> {
     vault.recent_opened_notes().unwrap().into_iter().map(|n| n.title).collect()
@@ -160,4 +160,90 @@ fn config_json_holds_no_note_ids_or_titles() {
     assert!(json["index_all_cores"].is_boolean());
     assert!(json["index_rates"].as_object().unwrap().is_empty());
     assert_eq!(json["recent_vaults"][0].as_str().map(Path::new), Some(vault_path.as_path()));
+}
+
+#[test]
+fn the_last_opened_note_is_remembered_and_survives_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.hush");
+    let mut vault = Vault::create(&path, common::PASS).unwrap();
+    let ids = notes(&mut vault, 2);
+    assert_eq!(vault.last_opened().unwrap(), None);
+    vault.record_opened(ids[0]).unwrap();
+    vault.record_opened(ids[1]).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(ids[1]));
+    vault.record_opened(ids[0]).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(ids[0]));
+    vault.close().unwrap();
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(ids[0]));
+}
+
+#[test]
+fn trashing_the_last_opened_note_forgets_it_but_trashing_another_does_not() {
+    let (_dir, mut vault) = common::vault();
+    let ids = notes(&mut vault, 2);
+    vault.record_opened(ids[0]).unwrap();
+    vault.trash_note(ids[1]).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(ids[0]));
+    vault.trash_notes(&[ids[0]]).unwrap();
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "cleared when it was trashed");
+    // Restoring it doesn't bring it back: it was closed when it was trashed.
+    vault.restore_note(ids[0]).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), None);
+}
+
+#[test]
+fn trashing_the_folder_of_the_last_opened_note_forgets_it() {
+    let (_dir, mut vault) = common::vault();
+    let outside = vault.create_note("", "Outside", "").unwrap();
+    let inside = vault.create_note("work/deep", "Inside", "").unwrap();
+    vault.record_opened(outside).unwrap();
+    vault.trash_folder("work").unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(outside), "another folder's note stays");
+    vault.restore_folder(vault.trashed_notes().unwrap()[0].deleted_at).unwrap();
+    vault.record_opened(inside).unwrap();
+    vault.trash_folder("work").unwrap();
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None);
+}
+
+#[test]
+fn deleting_the_last_opened_note_forgets_it() {
+    let (_dir, mut vault) = common::vault();
+    let ids = notes(&mut vault, 1);
+    vault.record_opened(ids[0]).unwrap();
+    vault.delete_note(ids[0]).unwrap();
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None);
+}
+
+#[test]
+fn a_stale_or_unreadable_last_opened_value_is_cleared_on_read() {
+    let (_dir, mut vault) = common::vault();
+    for value in ["not a number", "999999"] {
+        vault.set_setting(LAST_OPENED_SETTING, value).unwrap();
+        assert_eq!(vault.last_opened().unwrap(), None);
+        assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "{value}");
+    }
+    // A note trashed while the key wasn't cleared (older builds): left out and cleared.
+    let ids = notes(&mut vault, 1);
+    vault.trash_note(ids[0]).unwrap();
+    vault.set_setting(LAST_OPENED_SETTING, &ids[0].to_string()).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), None);
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None);
+}
+
+#[test]
+fn history_off_stores_no_last_opened_note_and_clears_it() {
+    let (_dir, mut vault) = common::vault();
+    let ids = notes(&mut vault, 2);
+    vault.record_opened(ids[0]).unwrap();
+    vault.set_recent_opened_count(0).unwrap();
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "turning history off clears it");
+    vault.record_opened(ids[1]).unwrap();
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "and nothing is stored while off");
+    vault.set_setting(LAST_OPENED_SETTING, &ids[1].to_string()).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), None, "a value stored anyway is not restored");
+    vault.set_recent_opened_count(5).unwrap();
+    vault.record_opened(ids[1]).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(ids[1]));
 }
