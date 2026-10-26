@@ -15,12 +15,14 @@
   } from "$lib/api";
   import { confirmFolderTrash, confirmTrash } from "$lib/confirmTrash";
   import { findNote, rebase } from "$lib/explorer.svelte";
+  import Activity from "$lib/Activity.svelte";
   import Icon from "$lib/Icon.svelte";
   import GraphView from "$lib/GraphView.svelte";
   import Import from "$lib/Import.svelte";
   import LinkPanels from "$lib/LinkPanels.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
+  import NoteInternals from "$lib/NoteInternals.svelte";
   import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RAIL, RIGHT, saveWidth, type Column } from "$lib/layout";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
@@ -50,6 +52,9 @@
   let linksRevision = $state(0);
   // The chooser a clicked ambiguous or unresolved link opens.
   let linkMenu = $state<{ x: number; y: number; label: string; items: MenuItem[] } | null>(null);
+  let showInternals = $state(false);
+  // The Activity panel, toggled from the sidebar footer and with Ctrl+J.
+  let showActivity = $state(false);
   let opened = $state<OpenedNote | null>(null);
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
@@ -149,6 +154,10 @@
       e.preventDefault();
       e.stopPropagation();
       void focusSearch();
+    } else if (key === "j") {
+      e.preventDefault();
+      e.stopPropagation();
+      showActivity = !showActivity;
     }
   }
 
@@ -548,6 +557,7 @@
   class:no-left={!showLeft}
   class:no-right={!showRight}
   class:no-details={!details}
+  class:with-activity={showActivity}
   style:--left="{leftColumn}px"
   style:--right="{rightColumn}px"
 >
@@ -623,6 +633,8 @@
         onedit={editNotes}
         onaccepttag={acceptTag}
         onrejecttag={rejectTag}
+        activityOpen={showActivity}
+        onactivity={() => (showActivity = !showActivity)}
       />
     </div>
     <ResizeHandle
@@ -706,6 +718,7 @@
             ontoggle={(open) => toggleSection("related", open)}
             onopen={view === "graph" ? openFromGraph : select}
           />
+          <NoteInternals id={summary.id} updatedAt={summary.updatedAt} bind:open={showInternals} />
         {/if}
       </div>
       <ResizeHandle
@@ -726,6 +739,12 @@
       </div>
     {/if}
   {/if}
+
+  {#if showActivity}
+    <div class="activity-panel">
+      <Activity onclose={() => (showActivity = false)} />
+    </div>
+  {/if}
 </div>
 
 {#if linkMenu}
@@ -742,6 +761,19 @@
       "header header header"
       "left main right";
     height: 100vh;
+  }
+
+  .workspace.with-activity {
+    grid-template-rows: auto minmax(0, 1fr) min(300px, 40vh);
+    grid-template-areas:
+      "header header header"
+      "left main right"
+      "activity activity activity";
+  }
+
+  .activity-panel {
+    grid-area: activity;
+    min-height: 0;
   }
 
   header {

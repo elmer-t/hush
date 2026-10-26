@@ -13,6 +13,7 @@ use serde::Serialize;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::descriptor;
+use crate::activity::{Job, count};
 use crate::db::{NoteSummary, Reasons, StoredVector};
 use crate::session::{Session, SessionError};
 
@@ -69,6 +70,17 @@ impl RelatedIndex {
 
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+
+    /// Roughly the memory the index holds, in bytes: its buffers' capacity and the
+    /// row map's entries.
+    pub fn memory_bytes(&self) -> usize {
+        self.vectors.capacity()
+            + self.hashes.capacity() * 32
+            + self.scales.capacity() * size_of::<f32>()
+            + self.ids.capacity() * size_of::<i64>()
+            // Key, value and about one control byte per bucket.
+            + self.rows.capacity() * (size_of::<i64>() + size_of::<usize>() + 1)
     }
 
     pub fn contains(&self, id: i64) -> bool {
@@ -326,21 +338,28 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
     if remove.is_empty() && load.is_empty() {
         return Ok(false);
     }
+    let activity = session.activity().reporter(generation);
+    activity.start(Job::Related, format!("loading {} vectors, dropping {}", count(load.len() as u64), count(remove.len() as u64)));
     let mut loaded: Vec<StoredVector> = Vec::with_capacity(load.len());
     for page in load.chunks(LOAD_PAGE) {
         loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(&model, page))?);
     }
-    session
+    let size = session
         .update_related_index(generation, |index| {
-            let Some(index) = index.as_mut() else { return };
+            let Some(index) = index.as_mut() else { return 0 };
             for &id in &remove {
                 index.remove(id);
             }
             for v in &loaded {
                 index.upsert(v.id, v.hash, &v.vector);
             }
+            index.len()
         })
         .ok_or(SessionError::Locked)?;
+    activity.finish_quietly(
+        Job::Related,
+        format!("updated {} notes, removed {}; {} in the index", count(loaded.len() as u64), count(remove.len() as u64), count(size as u64)),
+    );
     Ok(true)
 }
 
@@ -348,28 +367,46 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
 /// in pages and quantised into a new index as they arrive, so no copy of every `f32`
 /// vector is held; the old index keeps serving until the new one replaces it.
 fn rebuild(session: &Session, generation: u64, ready: Option<String>) -> Result<bool, SessionError> {
-    let mut fresh = match &ready {
+    let activity = session.activity().reporter(generation);
+    let (mut fresh, total) = match &ready {
         Some(model) => {
-            let count = session.with_vault_quiet(generation, |v| v.embedding_count(model))?;
-            RelatedIndex::new(ready.clone(), count)
+            activity.start(Job::Related, format!("rebuilding index for {model}"));
+            let total = session.with_vault_quiet(generation, |v| v.embedding_count(model))?;
+            (RelatedIndex::new(ready.clone(), total), total)
         }
-        None => RelatedIndex::new(None, 0),
+        None => (RelatedIndex::new(None, 0), 0),
     };
     if let Some(model) = &ready {
         let mut after = 0;
+        let mut loaded = 0;
         loop {
             let (page, next) =
                 session.with_vault_quiet(generation, |v| v.embedding_vector_page(model, after, LOAD_PAGE))?;
+            loaded += page.len();
             for v in &page {
                 fresh.upsert(v.id, v.hash, &v.vector);
             }
+            activity.progress(
+                Job::Related,
+                format!("rebuilding index: {} / {} vectors", count(loaded as u64), count(total.max(loaded) as u64)),
+                loaded as u64,
+                Some(total.max(loaded) as u64),
+            );
             match next {
                 Some(n) => after = n,
                 None => break,
             }
         }
     }
+    let (size, bytes) = (fresh.len(), fresh.memory_bytes());
     session.update_related_index(generation, |index| *index = Some(fresh)).ok_or(SessionError::Locked)?;
+    match &ready {
+        Some(model) => activity.finish(
+            Job::Related,
+            format!("rebuilt index: {} vectors of {model}, {:.1} MB", count(size as u64), bytes as f64 / 1_048_576.0),
+        ),
+        None => activity.idle(Job::Related, Some("no model is ready yet")),
+    }
     Ok(true)
 }
 
@@ -392,17 +429,31 @@ pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, S
         loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(&model, page))?);
     }
     let found: HashSet<i64> = loaded.iter().map(|v| v.id).collect();
-    session
+    let size = session
         .update_related_index(generation, |index| {
-            let Some(index) = index.as_mut() else { return };
+            let Some(index) = index.as_mut() else { return 0 };
             for id in ids.iter().filter(|id| !found.contains(id)) {
                 index.remove(*id);
             }
             for v in &loaded {
                 index.upsert(v.id, v.hash, &v.vector);
             }
+            index.len()
         })
         .ok_or(SessionError::Locked)?;
+    let summary = format!(
+        "updated {} notes, removed {}; {} in the index",
+        count(found.len() as u64),
+        count((ids.len() - found.len()) as u64),
+        count(size as u64)
+    );
+    // A big pass is worth a log entry; the one after an autosave isn't.
+    let activity = session.activity().reporter(generation);
+    if ids.len() >= 10 {
+        activity.finish(Job::Related, summary);
+    } else {
+        activity.finish_quietly(Job::Related, summary);
+    }
     Ok(true)
 }
 
