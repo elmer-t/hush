@@ -23,7 +23,7 @@
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
   import NoteInternals from "$lib/NoteInternals.svelte";
-  import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RAIL, RIGHT, saveWidth, type Column } from "$lib/layout";
+  import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RIGHT, saveWidth, type Column } from "$lib/layout";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
@@ -78,15 +78,10 @@
   const leftShown = $derived(showLeft);
   const rightShown = $derived(details && showRight);
   const fitted = $derived(
-    fitWidths(
-      windowWidth,
-      leftShown ? leftWidth : null,
-      rightShown ? rightWidth : null,
-      details && !showRight ? RAIL : 0,
-    ),
+    fitWidths(windowWidth, leftShown ? leftWidth : null, rightShown ? rightWidth : null),
   );
   const leftColumn = $derived(leftShown ? fitted.left : 0);
-  const rightColumn = $derived(!details ? 0 : showRight ? fitted.right : RAIL);
+  const rightColumn = $derived(rightShown ? fitted.right : 0);
   /** How wide a column may be dragged: its maximum, but never into the editor's minimum. */
   const maxWidth = (column: Column, other: number) =>
     Math.max(column.min, Math.min(column.max, windowWidth - EDITOR_MIN - other));
@@ -615,6 +610,17 @@
         <span class="kbd">Ctrl L</span>
       </button>
     </div>
+    <!-- Disabled, not removed, where there is no details panel, so the header doesn't shift. -->
+    <button
+      class="ghost icon"
+      onclick={() => (showRight = !showRight)}
+      disabled={!details}
+      aria-pressed={showRight}
+      aria-label={showRight ? "Hide details panel" : "Show details panel"}
+      title={showRight ? "Hide details panel" : "Show details panel"}
+    >
+      <Icon name="panelRight" />
+    </button>
   </header>
 
   {#if showLeft}
@@ -672,8 +678,6 @@
             {opened}
             {focusTitle}
             bind:previewOnly
-            detailsShown={showRight}
-            ontoggledetails={() => (showRight = !showRight)}
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}
@@ -731,12 +735,6 @@
         oncommit={(w) => saveWidth(RIGHT, w)}
         onreset={() => resetWidth(RIGHT)}
       />
-    {:else}
-      <div class="right rail">
-        <button class="ghost icon" onclick={() => (showRight = true)} aria-label="Show details panel" title="Show details panel">
-          <Icon name="panelRight" />
-        </button>
-      </div>
     {/if}
   {/if}
 
@@ -752,7 +750,7 @@
 {/if}
 
 <style>
-  /* --left and --right are set from the script (stored widths, hidden columns, the rail). */
+  /* --left and --right are set from the script (stored widths, hidden columns). */
   .workspace {
     display: grid;
     grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
@@ -902,13 +900,6 @@
     overflow-y: auto;
     border-left: 1px solid var(--border);
     background: var(--panel);
-  }
-
-  .rail {
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 10px;
   }
 
   .banner {
