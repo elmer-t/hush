@@ -156,8 +156,9 @@ fn config_json_holds_no_note_ids_or_titles() {
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
     // Vault paths and machine settings only.
-    assert_eq!(keys, ["index_all_cores", "recent_vaults"]);
+    assert_eq!(keys, ["index_all_cores", "index_rates", "recent_vaults"]);
     assert!(json["index_all_cores"].is_boolean());
+    assert!(json["index_rates"].as_object().unwrap().is_empty());
     assert_eq!(json["recent_vaults"][0].as_str().map(Path::new), Some(vault_path.as_path()));
 }
 

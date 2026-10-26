@@ -13,6 +13,8 @@
     type TagTraining,
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  import ModelNotice from "$lib/ModelNotice.svelte";
+  import { reducedText } from "$lib/modelStatus.svelte";
   import { isToggle, selectionKeys } from "$lib/selection";
 
   type Props = {
@@ -328,6 +330,8 @@
         Pick a tag to see the notes it would be suggested on, across the vault. Answering the ones Hush is least sure
         about teaches it fastest.
       </p>
+    {:else if notes.length === 0 && reducedText()}
+      <div class="empty"><ModelNotice what="Tag suggestions" /></div>
     {:else if review && review.method === null}
       <p class="muted empty">
         #{tag} can't be suggested yet: describe it in Settings → Tags{#if training && training.needed > 0}, or add it

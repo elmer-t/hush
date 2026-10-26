@@ -37,6 +37,10 @@ pub enum CommandError {
     ImportRunning,
     #[error("the groups are out of date; group the notes again")]
     StaleGroups,
+    #[error("this version of Hush doesn't know model “{0}”")]
+    UnknownModel(String),
+    #[error("{0}")]
+    ModelUnavailable(String),
 }
 
 impl From<crate::import::ImportError> for CommandError {
@@ -87,6 +91,8 @@ impl CommandError {
             Self::ImportSource(_) => "importSource",
             Self::ImportRunning => "importRunning",
             Self::StaleGroups => "staleGroups",
+            Self::UnknownModel(_) => "unknownModel",
+            Self::ModelUnavailable(_) => "modelUnavailable",
         }
     }
 }

@@ -48,7 +48,7 @@ pub fn run() {
             let config = Config::new(config_path);
             let all_cores = config.get().index_all_cores;
             app.manage(config);
-            app.manage(Indexer::new(app.path().resource_dir()?.join("models"), all_cores));
+            app.manage(Indexer::new(app.handle().clone(), app.path().resource_dir()?.join("models"), all_cores));
             commands::activity::start_emitter(app.handle());
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
@@ -146,6 +146,10 @@ pub fn run() {
             commands::embeddings::index_status,
             commands::embeddings::index_all_cores,
             commands::embeddings::set_index_all_cores,
+            commands::embeddings::model_status,
+            commands::embeddings::model_overview,
+            commands::embeddings::set_embedding_model,
+            commands::embeddings::recheck_models,
             commands::tags::tag_list,
             commands::tags::set_tag_description,
             commands::tags::tag_suggestions,

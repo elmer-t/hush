@@ -37,6 +37,9 @@ const PROGRESS_MIN: usize = 10;
 const SCAN_PAUSE: Duration = Duration::from_millis(5);
 /// How often a waiting job looks at the lock state (cheap, no vault access).
 const STOP_CHECK: Duration = Duration::from_millis(100);
+/// A pass embeds at least this many notes before its speed is passed on as the
+/// model's rate: fewer is mostly start-up.
+const RATE_MIN: usize = 50;
 
 /// Gives the job an embedder for a model ID.
 pub trait EmbedderSource: Send + Sync {
@@ -47,6 +50,13 @@ pub trait EmbedderSource: Send + Sync {
     fn is_loaded(&self, _model: &str) -> bool {
         true
     }
+
+    /// The job read the vault's model settings: at the start of every pass, and when
+    /// `model` became the ready model. For Settings → Model.
+    fn vault_models(&self, _model: &str, _ready: Option<&str>) {}
+
+    /// The job embedded enough notes with `model` to measure its speed on this machine.
+    fn measured_rate(&self, _model: &str, _notes_per_sec: f64) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -300,6 +310,7 @@ pub fn pass(
     let (model, ready, queued) = session.with_vault_quiet(generation, |v| {
         Ok((v.embedding_model()?, v.embedding_model_ready()?, v.embedding_queue_len()?))
     })?;
+    source.vault_models(&model, ready.as_deref());
     let loading = !source.is_loaded(&model);
     if loading {
         activity.start(Job::Embedding, format!("loading model {model}"));
@@ -311,6 +322,7 @@ pub fn pass(
     if queued > 0 {
         activity.start(Job::Embedding, format!("embedding {} queued notes with {model}", count(queued as u64)));
     }
+    let embedding_started = Instant::now();
 
     let show = queued >= PROGRESS_MIN;
     // Counting every note costs a scan of `notes`: only done for the progress line.
@@ -400,12 +412,16 @@ pub fn pass(
     if empty && !ready_now {
         session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
         ready_now = true;
+        source.vault_models(&model, Some(&model));
         activity.log(Job::Embedding, format!("every note has a {model} vector: it is now the ready model"));
     }
     // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
     let descriptions = if ready_now { embed_descriptions(session, generation, &model, embedder.as_ref())? } else { 0 };
     if descriptions > 0 {
         activity.log(Job::Embedding, format!("embedded {} tag descriptions", count(descriptions as u64)));
+    }
+    if stale >= RATE_MIN {
+        source.measured_rate(&model, stale as f64 / embedding_started.elapsed().as_secs_f64().max(1e-3));
     }
     if stale > 0 || queued > 0 {
         let secs = started.elapsed().as_secs_f64();
