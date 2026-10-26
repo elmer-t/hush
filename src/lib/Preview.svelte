@@ -1,6 +1,8 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { untrack } from "svelte";
   import { renderMarkdown } from "$lib/markdown";
+  import { diagrams } from "$lib/mermaid";
 
   type Props = {
     body: string;
@@ -13,6 +15,22 @@
 
   const html = $derived(renderMarkdown(body));
 
+  let article: HTMLElement;
+  let mermaid: ReturnType<typeof diagrams> | undefined;
+
+  // `{@html}` replaces every diagram placeholder on each change: diagrams are put back after it.
+  $effect.pre(() => {
+    html;
+    untrack(() => mermaid?.snapshot());
+  });
+
+  $effect(() => {
+    html;
+    untrack(() => (mermaid ??= diagrams(article)).update());
+  });
+
+  $effect(() => () => mermaid?.destroy());
+
   // Wikilinks open notes; external links open in the system browser; nothing else navigates.
   function onclick(e: MouseEvent) {
     const link = (e.target as Element).closest("a");
@@ -23,13 +41,14 @@
       onwikilink?.(target, e.clientX, e.clientY);
       return;
     }
-    const href = link.getAttribute("href") ?? "";
+    // Links in diagrams are SVG `<a>` elements, which may only carry `xlink:href`.
+    const href = link.getAttribute("href") ?? link.getAttribute("xlink:href") ?? "";
     if (/^(https?:|mailto:)/i.test(href)) void openUrl(href);
   }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-<article class="preview" class:large aria-label="Preview" {onclick}>
+<article class="preview" class:large aria-label="Preview" bind:this={article} {onclick}>
   {@html html}
 </article>
 
@@ -142,6 +161,56 @@
 
   .preview :global(img) {
     max-width: 100%;
+  }
+
+  .preview :global(.mermaid-block) {
+    margin: 0 0 16px;
+    font-family: var(--sans);
+  }
+
+  .preview :global(.mermaid-block svg) {
+    display: block;
+    height: auto;
+    margin: 0 auto;
+  }
+
+  /* The source, muted, until the diagram is ready; while it is edited, the last rendering, faded. */
+  .preview :global(.mermaid-block[data-state="pending"] > .mermaid-source) {
+    color: var(--muted);
+  }
+
+  .preview :global(.mermaid-block[data-stale]) {
+    opacity: 0.6;
+  }
+
+  .preview :global(.mermaid-block svg p) {
+    margin: 0;
+  }
+
+  .preview :global(.mermaid-error) {
+    padding: 10px 14px;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    background: var(--danger-soft);
+    font-size: 14px;
+  }
+
+  .preview :global(.mermaid-error strong) {
+    color: var(--danger);
+  }
+
+  /* Parse errors point at a column with a caret line, so they need a fixed-width font. */
+  .preview :global(.mermaid-error p) {
+    margin: 4px 0 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+  }
+
+  .preview :global(.mermaid-error pre) {
+    max-height: 240px;
+    margin: 0;
+    overflow: auto;
   }
 
   .preview :global(hr) {

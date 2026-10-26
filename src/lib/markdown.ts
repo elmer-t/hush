@@ -35,6 +35,18 @@ md.inline.ruler.before("link", "wikilink", (state, silent) => {
   return true;
 });
 
+/**
+ * A ```mermaid fence becomes a placeholder holding its source as escaped text, which the
+ * markdown sanitizer keeps; `mermaid.ts` swaps in the diagram after the HTML is in the DOM,
+ * since its SVG needs `<style>` and `style`, which the sanitizer here removes.
+ */
+const fence = md.renderer.rules.fence!;
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  if (token.info.trim().split(/\s+/)[0].toLowerCase() !== "mermaid") return fence(tokens, idx, options, env, self);
+  return `<div class="mermaid-block"><pre class="mermaid-source"><code>${md.utils.escapeHtml(token.content)}</code></pre></div>\n`;
+};
+
 /** Matches the frontmatter block the way `markdown::split_frontmatter` does in Rust. */
 const FRONTMATTER = /^---\r?\n(?:[\s\S]*?\n)?(?:---|\.\.\.)\r?(?:\n|$)/;
 
