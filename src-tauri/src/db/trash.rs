@@ -97,6 +97,7 @@ impl Vault {
                 tx.execute(&format!("DELETE FROM {table} WHERE note_id = ?1"), [id])?;
             }
             tx.execute("DELETE FROM links WHERE from_note_id = ?1", [id])?;
+            super::recent::forget_last_opened(&tx, id)?;
         }
         tx.commit()?;
         Ok(())
@@ -163,6 +164,7 @@ impl Vault {
                 [now],
             )?;
         }
+        super::recent::forget_last_opened_trashed_at(&tx, now)?;
         tx.execute("INSERT INTO trash_folders(deleted_at, folder) VALUES (?1, ?2)", params![now, folder])?;
         tx.commit()?;
         Ok(trashed)

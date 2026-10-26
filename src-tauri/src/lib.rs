@@ -13,6 +13,7 @@ pub mod session;
 use std::time::Duration;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use tauri_plugin_window_state::StateFlags;
 
 use crate::commands::activity::ActivityPanel;
 use crate::commands::discover::DiscoverJob;
@@ -31,6 +32,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Geometry only, in plain JSON in the app config dir: no note data, readable before
+        // unlock. The position is only restored when it is on a connected monitor.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                .build(),
+        )
         .manage(Session::default())
         .manage(ImportJob::default())
         .manage(DiscoverJob::default())
@@ -101,6 +109,11 @@ pub fn run() {
             commands::notes::clear_recent_opened,
             commands::notes::recent_opened_collapsed,
             commands::notes::set_recent_opened_collapsed,
+            commands::layout::last_opened_note,
+            commands::layout::graph_scope,
+            commands::layout::set_graph_scope,
+            commands::layout::sidebar_folder,
+            commands::layout::set_sidebar_folder,
             commands::notes::trash_note,
             commands::notes::trash_notes,
             commands::notes::move_notes,

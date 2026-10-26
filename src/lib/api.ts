@@ -31,6 +31,8 @@ export type NoteMeta = {
 };
 
 export type OpenedNote = { note: Note; meta: NoteMeta };
+/** The graph's scope; `folder` null is the open note's folder. */
+export type StoredGraphScope = { kind: "folder" | "tag" | "search" | "all"; folder: string | null; tag: string };
 /** A note in the trash; `folder` is where it was deleted from. */
 export type TrashedNote = { id: number; folder: string; title: string; deletedAt: number };
 /** One row of the trash: a folder deleted as a whole (its notes share `deletedAt`), or a note. */
@@ -249,6 +251,13 @@ export const api = {
   folderNotes: (folder: string, offset: number, limit: number) =>
     invoke<NoteSummary[]>("folder_notes", { folder, offset, limit }),
   sidebarView: () => invoke<SidebarView>("sidebar_view"),
+  /** The folder selected in the sidebar, stored in the vault; null when none. */
+  sidebarFolder: () => invoke<string | null>("sidebar_folder"),
+  setSidebarFolder: (folder: string | null) => invoke<void>("set_sidebar_folder", { folder }),
+  /** The note open when the app was last left, if it is still live; not recorded as opened. */
+  lastOpenedNote: () => invoke<OpenedNote | null>("last_opened_note"),
+  graphScope: () => invoke<StoredGraphScope | null>("graph_scope"),
+  setGraphScope: (scope: StoredGraphScope) => invoke<void>("set_graph_scope", { scope }),
   setSidebarView: (view: SidebarView) => invoke<void>("set_sidebar_view", { view }),
   /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
   confirmTrash: () => invoke<boolean>("confirm_trash"),

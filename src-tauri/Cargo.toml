@@ -31,6 +31,8 @@ regex = "1"
 yaml-rust2 = "0.13"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tauri-plugin-dialog = "2"
+# Window size, position and maximized state across restarts (plain JSON, geometry only).
+tauri-plugin-window-state = "2"
 htmd = "0.5.6"
 # Local embedding model (see docs/decisions.md, AI classification). ONNX Runtime is
 # fetched at build time (`download-binaries`); nothing here can reach the network at runtime.

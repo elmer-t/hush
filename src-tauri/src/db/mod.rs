@@ -38,7 +38,8 @@ pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
 pub use reasons::{MAX_VIA, Reasons};
 pub use recent::{
-    DEFAULT_RECENT_OPENED_COUNT, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING, RECENT_OPENED_SETTING,
+    DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING,
+    RECENT_OPENED_SETTING,
 };
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
 pub use schema::Upgrade;
@@ -176,6 +177,11 @@ impl Vault {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, value],
         )?;
+        Ok(())
+    }
+
+    pub fn delete_setting(&self, key: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
         Ok(())
     }
 }

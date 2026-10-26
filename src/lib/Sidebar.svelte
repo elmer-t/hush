@@ -99,7 +99,9 @@
   let folders = $state<string[]>([]);
   // Folders made in the tree that have no notes yet; they exist only until the vault locks.
   let emptyFolders = $state<string[]>([]);
+  // Stored in the vault (a folder path is note data), read once after the folders load.
   let selectedFolder = $state<string | null>(null);
+  let folderRestored = false;
   let text = $state("");
   let filters = $state(emptyFilters());
   let showFilters = $state(false);
@@ -145,7 +147,7 @@
   let indexStatus = $state<IndexStatus>({ state: "idle" });
 
   onMount(() => {
-    void Promise.all([loadFolders(), loadFacets()]);
+    void Promise.all([loadFolders(), loadFacets()]).then(restoreFolder);
     api.sidebarView().then((v) => (view = v), () => {});
     api.recentOpenedCollapsed().then((c) => (recentCollapsed = c), () => {});
     const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
@@ -289,6 +291,20 @@
     const others = hits.filter((h) => h.note.id !== summary.id);
     hits = inFolder(summary.folder, selectedFolder) ? [{ note: summary, snippet: null }, ...others] : others;
   }
+
+  /** Selects the stored folder again, if it still exists and nothing was selected since. */
+  async function restoreFolder() {
+    const f = await api.sidebarFolder().catch(() => null);
+    if (f !== null && selectedFolder === null && folders.some((x) => x === f || x.startsWith(`${f}/`))) {
+      selectedFolder = f;
+    }
+    folderRestored = true;
+  }
+
+  $effect(() => {
+    const folder = selectedFolder;
+    if (folderRestored) void api.setSidebarFolder(folder).catch(() => {});
+  });
 
   async function loadFolders() {
     try {
