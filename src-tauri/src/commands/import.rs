@@ -7,6 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::{CommandError, Result};
+use crate::activity::{Job, count};
 use crate::import::rules::{self, Rule, RuleInput, RuleOutput};
 use crate::import::{self, ImportReport};
 use crate::markdown;
@@ -52,13 +53,41 @@ pub fn start_import(
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let job = app.state::<ImportJob>();
+        let activity = session.activity().reporter(session.generation());
+        let verb = if dry_run { "previewing" } else { "importing" };
+        activity.start(Job::Import, format!("{verb}: finding files"));
         // A dry run only reads, so indexing carries on.
         let pause = (!dry_run).then(|| session.begin_import());
         let result = import::run(&session, &source, &target, dry_run, &job.cancel, |p| {
             let _ = app.emit(IMPORT_PROGRESS_EVENT, p);
+            activity.progress(
+                Job::Import,
+                format!("{verb} {} / {} files", count(p.done as u64), count(p.total as u64)),
+                p.done as u64,
+                Some(p.total as u64),
+            );
         });
         drop(pause);
         job.running.store(false, Ordering::SeqCst);
+        match &result {
+            Ok(r) => {
+                let what = if r.dry_run { "preview" } else { "import" };
+                let summary = format!(
+                    "{what}: {} of {} files {}, {} skipped, {} warnings",
+                    count(r.imported as u64),
+                    count(r.files as u64),
+                    if r.dry_run { "would be imported" } else { "imported" },
+                    count(r.skipped_count as u64),
+                    count(r.warning_count as u64),
+                );
+                if r.cancelled {
+                    activity.stop(Job::Import, format!("cancelled {summary}"));
+                } else {
+                    activity.finish(Job::Import, summary);
+                }
+            }
+            Err(e) => activity.fail(Job::Import, e.to_string()),
+        }
         let finished = match result {
             Ok(report) => ImportFinished::Done { report },
             Err(e) => ImportFinished::Failed { error: e.into() },

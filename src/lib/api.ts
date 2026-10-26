@@ -366,6 +366,74 @@ export const api = {
   setIndexAllCores: (on: boolean) => invoke<void>("set_index_all_cores", { on }),
   /** Notes closest in meaning, most similar first; `null` if the note isn't indexed yet. */
   relatedNotes: (id: number, limit: number) => invoke<NoteSummary[] | null>("related_notes", { id, limit }),
+
+  /** What the background jobs are doing; changes arrive as `ACTIVITY_EVENT`. */
+  activityStatus: () => invoke<ActivitySnapshot>("activity_status"),
+  /** The counts in the snapshot are only refreshed while the Activity panel is open. */
+  setActivityPanelOpen: (open: boolean) => invoke<void>("set_activity_panel_open", { open }),
+  /** What Hush stores and derives for a note. */
+  noteInternals: (id: number) => invoke<NoteInternals>("note_internals", { id }),
+};
+
+/** The background jobs (see `activity::Job`), in the order the panel lists them. */
+export type ActivityJob = "embedding" | "related" | "training" | "safetyNet" | "import" | "discover" | "migration";
+export type ActivityState = "idle" | "waiting" | "running" | "paused" | "stopped" | "failed";
+export type JobStatus = {
+  job: ActivityJob;
+  state: ActivityState;
+  /** What it is doing right now. */
+  doing: string | null;
+  /** Why it is waiting, paused, failed or idle. */
+  reason: string | null;
+  done: number | null;
+  /** `null` when the end isn't known. */
+  total: number | null;
+  /** Items per second over the last minute. */
+  rate: number | null;
+  etaSecs: number | null;
+  startedAt: number | null;
+  lastRun: { finishedAt: number; durationMs: number; summary: string } | null;
+};
+export type ActivityLogEntry = { seq: number; at: number; job: ActivityJob; error: boolean; message: string };
+/** Counted while the Activity panel is open; `null` until first counted. */
+export type ActivityStats = {
+  countedAt: number | null;
+  notes: number | null;
+  withVector: number | null;
+  queued: number | null;
+  model: string | null;
+  readyModel: string | null;
+  modelLoaded: boolean;
+  coresUsed: number | null;
+  coresTotal: number | null;
+  relatedNotes: number | null;
+  relatedBytes: number | null;
+  heads: { tag: string; model: string; trainedAt: number }[];
+  schemaVersion: number | null;
+};
+export type ActivitySnapshot = {
+  revision: number;
+  jobs: JobStatus[];
+  stats: ActivityStats;
+  /** Newest first, at most 500. Memory only: never stored. */
+  log: ActivityLogEntry[];
+};
+export type NoteInternals = {
+  id: number;
+  folder: string;
+  createdAt: number;
+  updatedAt: number;
+  words: number;
+  chars: number;
+  /** SHA-256 of the text the embedding job embeds; null when there is nothing to embed. */
+  contentHash: string | null;
+  vectors: { model: string; hash: string; current: boolean }[];
+  /** The model the job embeds with now. */
+  model: string;
+  queued: boolean;
+  backlinks: number;
+  outgoing: number;
+  tags: { tag: string; source: "manual" | "suggestion" }[];
 };
 
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
@@ -377,6 +445,8 @@ export type IndexStatus =
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";
+/** Emitted with an `ActivitySnapshot`, at most four times a second. */
+export const ACTIVITY_EVENT = "activity-changed";
 /** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
 export const RELATED_CHANGED_EVENT = "related-changed";
 /** Emitted after the training job trained or dropped a tag's classifier. */

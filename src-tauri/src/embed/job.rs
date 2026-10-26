@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::{EmbedError, Embedder, related};
+use crate::activity::{Job, count, duration_text};
 use crate::db;
 use crate::session::{Session, SessionError};
 
@@ -40,6 +41,12 @@ const STOP_CHECK: Duration = Duration::from_millis(100);
 /// Gives the job an embedder for a model ID.
 pub trait EmbedderSource: Send + Sync {
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError>;
+
+    /// Whether [`EmbedderSource::embedder`] would return at once, without loading
+    /// `model` (for the Activity panel).
+    fn is_loaded(&self, _model: &str) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -150,10 +157,12 @@ pub fn run_with(
             last = Some(status);
         }
     };
+    let activity = session.activity().reporter(generation);
     let fail = |e: JobError, report: &mut dyn FnMut(IndexStatus)| {
         if !matches!(e, JobError::Locked) {
             // No note content in the message: only file names and error kinds.
             eprintln!("hush: indexing stopped: {e}");
+            activity.fail(Job::Embedding, e.to_string());
             report(IndexStatus::Failed { message: e.to_string() });
         }
     };
@@ -161,11 +170,17 @@ pub fn run_with(
     // Where the safety-net scan continues; `None` once it is done.
     let mut scan = Some(0);
     let mut found = 0;
+    let mut checked = 0;
     let mut paused = false;
+    activity.wait(Job::SafetyNet, "runs once the queue is empty");
     loop {
         if session.import_running() {
             paused = true;
             report(IndexStatus::Paused);
+            activity.pause(Job::Embedding, "import running");
+            if scan.is_some() {
+                activity.wait(Job::SafetyNet, "import running");
+            }
             if !sleep_while_open(session, generation, poll) {
                 return;
             }
@@ -181,16 +196,40 @@ pub fn run_with(
                 Err(_) => return,
             };
             if !pending {
+                activity.idle(Job::Embedding, Some("nothing queued"));
                 if let Some(after) = scan {
                     match safety_net_page(session, generation, after) {
-                        Ok((stale, next)) => {
+                        Ok((stale, embeddable, next)) => {
                             found += stale;
+                            checked += embeddable;
                             scan = next;
-                            if scan.is_none() && found > 0 {
-                                eprintln!("hush: safety-net scan queued {found} notes that no write had queued");
+                            if scan.is_none() {
+                                if found > 0 {
+                                    eprintln!("hush: safety-net scan queued {found} notes that no write had queued");
+                                }
+                                activity.finish(
+                                    Job::SafetyNet,
+                                    format!(
+                                        "checked {} notes, queued {} that no write had queued",
+                                        count(checked as u64),
+                                        count(found as u64)
+                                    ),
+                                );
+                            } else {
+                                activity.progress(
+                                    Job::SafetyNet,
+                                    format!("checking stored hashes, {} queued so far", count(found as u64)),
+                                    checked as u64,
+                                    None,
+                                );
                             }
                         }
-                        Err(e) => return fail(e, &mut report),
+                        Err(e) => {
+                            if !matches!(e, JobError::Locked) {
+                                activity.fail(Job::SafetyNet, e.to_string());
+                            }
+                            return fail(e, &mut report);
+                        }
                     }
                     std::thread::sleep(SCAN_PAUSE);
                     continue;
@@ -199,6 +238,9 @@ pub fn run_with(
                     return;
                 }
                 continue;
+            }
+            if scan.is_some_and(|a| a > 0) {
+                activity.pause(Job::SafetyNet, "queued notes go first");
             }
         }
         first = false;
@@ -221,16 +263,16 @@ pub fn safety_net(session: &Session, generation: u64) -> Result<usize, JobError>
     let mut found = 0;
     let mut after = Some(0);
     while let Some(a) = after {
-        let (stale, next) = safety_net_page(session, generation, a)?;
+        let (stale, _, next) = safety_net_page(session, generation, a)?;
         found += stale;
         after = next;
     }
     Ok(found)
 }
 
-/// One page of the safety-net scan, after note `after`: how many notes it queued, and
-/// where to continue.
-fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(usize, Option<i64>), JobError> {
+/// One page of the safety-net scan, after note `after`: how many notes it queued, how
+/// many it checked, and where to continue.
+fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(usize, usize, Option<i64>), JobError> {
     if !session.is_open(generation) {
         return Err(JobError::Locked);
     }
@@ -238,7 +280,7 @@ fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(us
         let model = v.embedding_model()?;
         let page = v.scan_embeddings(&model, after, SCAN_PAGE)?;
         v.queue_embeddings(&page.stale)?;
-        Ok((page.stale.len(), page.next))
+        Ok((page.stale.len(), page.embeddable, page.next))
     })?)
 }
 
@@ -253,10 +295,22 @@ pub fn pass(
     source: &dyn EmbedderSource,
     report: &mut dyn FnMut(IndexStatus),
 ) -> Result<Pass, JobError> {
+    let activity = session.activity().reporter(generation);
+    let started = Instant::now();
     let (model, ready, queued) = session.with_vault_quiet(generation, |v| {
         Ok((v.embedding_model()?, v.embedding_model_ready()?, v.embedding_queue_len()?))
     })?;
+    let loading = !source.is_loaded(&model);
+    if loading {
+        activity.start(Job::Embedding, format!("loading model {model}"));
+    }
     let embedder = source.embedder(&model)?;
+    if loading {
+        activity.log(Job::Embedding, format!("model {model} loaded ({})", duration_text(started.elapsed())));
+    }
+    if queued > 0 {
+        activity.start(Job::Embedding, format!("embedding {} queued notes with {model}", count(queued as u64)));
+    }
 
     let show = queued >= PROGRESS_MIN;
     // Counting every note costs a scan of `notes`: only done for the progress line.
@@ -268,15 +322,27 @@ pub fn pass(
     let mut eta = Eta::default();
     let mut after = db::QueueCursor::default();
     let mut paused = false;
+    // The queue as this pass works through it, for the Activity panel.
+    let mut handled = 0;
+    let mut page_number = 0;
     'pages: loop {
         let page = session.with_vault_quiet(generation, |v| v.queued_embeddings(&model, &after, SCAN_PAGE))?;
+        page_number += 1;
         done += page.settled;
+        handled += page.settled + page.dropped.len();
         changed.extend(&page.dropped);
-        for batch in page.stale.chunks(BATCH) {
+        let batches = page.stale.len().div_ceil(BATCH);
+        for (b, batch) in page.stale.chunks(BATCH).enumerate() {
             if show {
                 let done = done.min(total);
                 report(IndexStatus::Indexing { done, total, eta_secs: eta.update(Instant::now(), done, total) });
             }
+            activity.progress(
+                Job::Embedding,
+                format!("embedding batch {} of {batches} on queue page {page_number}", b + 1),
+                handled as u64,
+                Some(queued.max(handled) as u64),
+            );
             if !session.is_open(generation) {
                 return Err(JobError::Locked);
             }
@@ -309,6 +375,7 @@ pub fn pass(
             changed.extend(vectors.iter().map(|v| v.id));
             done += batch.len();
             stale += batch.len();
+            handled += batch.len();
         }
         drop(page.stale);
         match page.next {
@@ -318,6 +385,8 @@ pub fn pass(
     }
     if paused {
         report(IndexStatus::Paused);
+        activity.pause(Job::Embedding, "import running");
+        activity.log(Job::Embedding, format!("paused for an import after embedding {} notes", count(stale as u64)));
         // The notes embedded so far still go into the related-notes index.
         let related_changed = related::update(session, generation, &changed)?;
         return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
@@ -331,11 +400,29 @@ pub fn pass(
     if empty && !ready_now {
         session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
         ready_now = true;
+        activity.log(Job::Embedding, format!("every note has a {model} vector: it is now the ready model"));
     }
     // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
     let descriptions = if ready_now { embed_descriptions(session, generation, &model, embedder.as_ref())? } else { 0 };
+    if descriptions > 0 {
+        activity.log(Job::Embedding, format!("embedded {} tag descriptions", count(descriptions as u64)));
+    }
+    if stale > 0 || queued > 0 {
+        let secs = started.elapsed().as_secs_f64();
+        let summary = if stale > 0 && secs > 0.0 {
+            format!("embedded {} notes ({:.1} notes/s)", count(stale as u64), stale as f64 / secs)
+        } else {
+            format!("embedded {} notes", count(stale as u64))
+        };
+        if stale >= PROGRESS_MIN {
+            activity.finish(Job::Embedding, summary);
+        } else {
+            activity.finish_quietly(Job::Embedding, summary);
+        }
+    }
     if empty {
         report(IndexStatus::Idle);
+        activity.idle(Job::Embedding, Some("nothing queued"));
     }
     // Only the notes this pass touched; a full rebuild when the ready model changed or
     // the index isn't built yet.

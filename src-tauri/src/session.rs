@@ -42,6 +42,8 @@ pub struct Session {
     running_search: Mutex<Option<rusqlite::InterruptHandle>>,
     /// Imports writing to the vault right now (see [`Session::begin_import`]).
     imports: AtomicUsize,
+    /// What the background jobs are doing, for the Activity panel. Cleared on lock.
+    activity: crate::activity::Activity,
 }
 
 /// Held while an import writes notes; see [`Session::begin_import`].
@@ -102,6 +104,7 @@ impl Session {
         self.current.store(generation, Ordering::SeqCst);
         drop(guard);
         self.drop_related_index();
+        self.activity.clear(generation);
         if let Some(previous) = previous {
             let _ = previous.vault.close();
         }
@@ -133,6 +136,7 @@ impl Session {
         }
         drop(guard);
         self.drop_related_index();
+        self.activity.clear(0);
         true
     }
 
@@ -142,6 +146,7 @@ impl Session {
         let unlocked = guard.take();
         drop(guard);
         self.drop_related_index();
+        self.activity.clear(0);
         unlocked
     }
 
@@ -170,6 +175,12 @@ impl Session {
             return None;
         }
         Some(f(&mut index))
+    }
+
+    /// What the background jobs are doing; jobs report through
+    /// [`crate::activity::Activity::reporter`] with their unlock's generation.
+    pub fn activity(&self) -> &crate::activity::Activity {
+        &self.activity
     }
 
     /// The generation of the open vault, 0 while locked.
