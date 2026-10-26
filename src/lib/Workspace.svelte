@@ -9,6 +9,7 @@
     type MetadataEditReport,
     type NoteMeta,
     type NoteSummary,
+    type DetailsSection,
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
@@ -16,12 +17,15 @@
   import { findNote, rebase } from "$lib/explorer.svelte";
   import Activity from "$lib/Activity.svelte";
   import Icon from "$lib/Icon.svelte";
+  import GraphView from "$lib/GraphView.svelte";
   import Import from "$lib/Import.svelte";
+  import LinkPanels from "$lib/LinkPanels.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
   import NoteInternals from "$lib/NoteInternals.svelte";
   import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RAIL, RIGHT, saveWidth, type Column } from "$lib/layout";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
+  import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
@@ -34,12 +38,20 @@
   // How often the "Locks in" countdown is redrawn.
   const COUNTDOWN_TICK_MS = 15_000;
 
-  let view = $state<"note" | "settings" | "import" | "trash">("note");
+  let view = $state<"note" | "graph" | "settings" | "import" | "trash">("note");
+  // The views with the details panel beside them.
+  const details = $derived(view === "note" || view === "graph");
   // The import view stays mounted once opened, so a running import keeps its progress.
   let importOpened = $state(false);
   let showLeft = $state(true);
   let showRight = $state(true);
-  let showRelated = $state(true);
+  // Details panel sections the user collapsed; stored in the vault.
+  let collapsed = $state<DetailsSection[]>([]);
+  // Bumped when the open note was saved or other notes changed, so the links panels and
+  // the related notes' reasons are read again.
+  let linksRevision = $state(0);
+  // The chooser a clicked ambiguous or unresolved link opens.
+  let linkMenu = $state<{ x: number; y: number; label: string; items: MenuItem[] } | null>(null);
   let showInternals = $state(false);
   // The Activity panel, toggled from the sidebar footer and with Ctrl+J.
   let showActivity = $state(false);
@@ -64,17 +76,17 @@
   let rightWidth = $state(loadWidth(RIGHT));
   let windowWidth = $state(window.innerWidth);
   const leftShown = $derived(showLeft);
-  const rightShown = $derived(view === "note" && showRight);
+  const rightShown = $derived(details && showRight);
   const fitted = $derived(
     fitWidths(
       windowWidth,
       leftShown ? leftWidth : null,
       rightShown ? rightWidth : null,
-      view === "note" && !showRight ? RAIL : 0,
+      details && !showRight ? RAIL : 0,
     ),
   );
   const leftColumn = $derived(leftShown ? fitted.left : 0);
-  const rightColumn = $derived(view !== "note" ? 0 : showRight ? fitted.right : RAIL);
+  const rightColumn = $derived(!details ? 0 : showRight ? fitted.right : RAIL);
   /** How wide a column may be dragged: its maximum, but never into the editor's minimum. */
   const maxWidth = (column: Column, other: number) =>
     Math.max(column.min, Math.min(column.max, windowWidth - EDITOR_MIN - other));
@@ -100,6 +112,10 @@
     const ticker = setInterval(() => (now = Date.now()), COUNTDOWN_TICK_MS);
     void loadAutoLock();
     void loadTrashCount();
+    void api
+      .collapsedSections()
+      .then((sections) => (collapsed = sections))
+      .catch(() => {});
     return () => {
       clearInterval(ticker);
       void unlisten.then((stop) => stop());
@@ -151,7 +167,7 @@
     sidebar?.focusSearch();
   }
 
-  async function toggleView(next: "settings" | "import" | "trash") {
+  async function toggleView(next: "graph" | "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
     // The auto-lock time and the recently opened count may have been changed there.
@@ -184,18 +200,83 @@
     view = "note";
   }
 
+  const isOpen = (section: DetailsSection) => !collapsed.includes(section);
+
+  function toggleSection(section: DetailsSection, open: boolean) {
+    collapsed = open ? collapsed.filter((s) => s !== section) : [...collapsed.filter((s) => s !== section), section];
+    api.setSectionCollapsed(section, !open).catch((e) => (error = errorMessage(e)));
+  }
+
+  /**
+   * Follows a `[[link]]`: opens the note it names; for an ambiguous link, a menu at the
+   * click to pick one; for an unresolved one, a menu offering to create it.
+   */
+  async function followLink(target: string, x: number, y: number) {
+    let link;
+    try {
+      link = await api.resolveLink(target);
+    } catch (e) {
+      error = errorMessage(e);
+      return;
+    }
+    if (link.resolution.kind === "unique") {
+      await select(link.resolution.ids);
+    } else if (link.resolution.kind === "ambiguous") {
+      linkMenu = {
+        x,
+        y,
+        label: `Notes matching ${target}`,
+        items: link.notes.map((n) => ({
+          label: n.folder ? `${n.folder}/${n.title}` : n.title,
+          icon: "note",
+          action: () => void select(n.id),
+        })),
+      };
+    } else {
+      linkMenu = {
+        x,
+        y,
+        label: `No note ${target}`,
+        items: [{ label: `Create “${link.target}”`, icon: "plus", action: () => void createLinked(link.target) }],
+      };
+    }
+  }
+
+  async function createLinked(target: string) {
+    await editor?.flush();
+    try {
+      const note = await api.createLinkedNote(target);
+      await sidebar?.refresh([note.note.folder]);
+      show(note, false);
+      linksRevision++;
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
   async function lock() {
     await editor?.flush();
     await api.lockVault();
   }
 
-  function show(note: OpenedNote, isNew: boolean) {
+  /** Makes `note` the open note; `stay` keeps the graph view instead of showing the editor. */
+  function show(note: OpenedNote, isNew: boolean, stay = false) {
     opened = note;
     summary = note.note;
     meta = note.meta;
     focusTitle = isNew;
-    view = "note";
+    if (!stay) view = "note";
     error = "";
+  }
+
+  /** A note clicked in the graph: it becomes the open note and the graph follows it. */
+  async function openFromGraph(id: number) {
+    if (opened?.note.id === id) return;
+    try {
+      show(await api.openNote(id), false, true);
+    } catch (e) {
+      error = errorMessage(e);
+    }
   }
 
   async function select(id: number) {
@@ -223,6 +304,7 @@
     if (summary?.id === s.id) {
       summary = s;
       meta = m;
+      linksRevision++;
     }
     sidebar?.noteSaved(s);
   }
@@ -230,6 +312,7 @@
   async function renamed(fresh: OpenedNote) {
     // A move changes both the old and the new folder.
     const changed = [fresh.note.folder];
+    linksRevision++;
     if (summary?.id === fresh.note.id) {
       changed.push(summary.folder);
       summary = fresh.note;
@@ -263,6 +346,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     await sidebar?.refresh([...sources, folder]);
     // Reopen, so its folder field and any rewritten links are current.
     if (open !== null) {
@@ -288,6 +373,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     await sidebar?.folderMoved(from, moved);
     if (open !== null) {
       try {
@@ -312,6 +399,8 @@
       return null;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (report.changed.length === 0) return report;
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
@@ -358,6 +447,8 @@
       return null;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (report.changed.length === 0) return report;
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
@@ -407,6 +498,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (open !== null) opened = summary = meta = null;
     void loadTrashCount();
     await sidebar?.refresh(sources);
@@ -432,6 +525,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (open !== null) opened = summary = meta = null;
     void loadTrashCount();
     return true;
@@ -461,7 +556,7 @@
   class="workspace"
   class:no-left={!showLeft}
   class:no-right={!showRight}
-  class:no-details={view !== "note"}
+  class:no-details={!details}
   class:with-activity={showActivity}
   style:--left="{leftColumn}px"
   style:--right="{rightColumn}px"
@@ -489,6 +584,10 @@
         <Icon name="plus" strokeWidth={2} />
         New note
         <span class="kbd">Ctrl N</span>
+      </button>
+      <button class="toggle" onclick={() => toggleView("graph")} aria-pressed={view === "graph"}>
+        <Icon name="graph" />
+        Graph
       </button>
       <button class="toggle" onclick={() => toggleView("import")} aria-pressed={view === "import"}>
         <Icon name="import" />
@@ -557,6 +656,12 @@
     {/if}
     {#if view === "settings"}
       <div class="page"><Settings onreviewtag={reviewTag} /></div>
+    {:else if view === "graph"}
+      <GraphView
+        centre={summary ? { id: summary.id, folder: summary.folder } : null}
+        onopen={openFromGraph}
+        onedit={select}
+      />
     {:else if view === "trash"}
       <Trash onrestored={restored} onrestoredfolder={restoredFolder} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
@@ -572,6 +677,7 @@
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}
+            onwikilink={followLink}
           />
         {/key}
       {:else}
@@ -586,7 +692,7 @@
     {/if}
   </main>
 
-  {#if view === "note"}
+  {#if details}
     {#if showRight}
       <div class="right">
         {#if opened && summary && meta}
@@ -597,7 +703,21 @@
             onaccept={acceptSuggestion}
             revision={suggestionRevision}
           />
-          <RelatedNotes id={summary.id} bind:open={showRelated} onopen={select} />
+          <LinkPanels
+            id={summary.id}
+            revision={linksRevision}
+            {isOpen}
+            ontoggle={toggleSection}
+            onopen={view === "graph" ? openFromGraph : select}
+            onfollow={followLink}
+          />
+          <RelatedNotes
+            id={summary.id}
+            revision={linksRevision}
+            open={isOpen("related")}
+            ontoggle={(open) => toggleSection("related", open)}
+            onopen={view === "graph" ? openFromGraph : select}
+          />
           <NoteInternals id={summary.id} updatedAt={summary.updatedAt} bind:open={showInternals} />
         {/if}
       </div>
@@ -626,6 +746,10 @@
     </div>
   {/if}
 </div>
+
+{#if linkMenu}
+  <ContextMenu {...linkMenu} onclose={() => (linkMenu = null)} />
+{/if}
 
 <style>
   /* --left and --right are set from the script (stored widths, hidden columns, the rail). */

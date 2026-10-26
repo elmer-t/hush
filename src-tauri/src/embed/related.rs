@@ -9,11 +9,12 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
+use serde::Serialize;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::descriptor;
 use crate::activity::{Job, count};
-use crate::db::{NoteSummary, StoredVector};
+use crate::db::{NoteSummary, Reasons, StoredVector};
 use crate::session::{Session, SessionError};
 
 /// Vectors read per vault access while (re)loading the index.
@@ -260,7 +261,7 @@ fn idot(a: &[i8], b: &[i8]) -> i32 {
     sums.iter().sum::<i32>() + tail
 }
 
-fn dot(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
     let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
     let tail: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();
@@ -273,10 +274,10 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// `candidates` (most similar first by the `i8` scan) reordered by the exact cosine of
-/// their `f32` vectors to `query`, the first `k`. Candidates without a vector in
-/// `vectors` (trashed or deleted since the index was synced) are left out; ties keep
-/// the scan's order.
-pub fn rerank(query: &[f32], candidates: &[i64], vectors: &[StoredVector], k: usize) -> Vec<i64> {
+/// their `f32` vectors to `query`, the first `k`, with that cosine. Candidates without
+/// a vector in `vectors` (trashed or deleted since the index was synced) are left out;
+/// ties keep the scan's order.
+pub fn rerank(query: &[f32], candidates: &[i64], vectors: &[StoredVector], k: usize) -> Vec<(i64, f32)> {
     let mut q = Zeroizing::new(query.to_vec());
     super::normalize(&mut q);
     let mut scored: Vec<(f32, usize, i64)> = candidates
@@ -293,7 +294,7 @@ pub fn rerank(query: &[f32], candidates: &[i64], vectors: &[StoredVector], k: us
         })
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().take(k).map(|(_, _, id)| id).collect()
+    scored.into_iter().take(k).map(|(score, _, id)| (id, score)).collect()
 }
 
 /// Makes room for `additional` more elements without letting `Vec` reallocate, which
@@ -456,15 +457,26 @@ pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, S
     Ok(true)
 }
 
-/// Up to `limit` live notes most similar to note `id`, most similar first. `None` when
-/// the note has no vector yet (empty, not indexed yet, or no model is ready).
+/// A related note as the Related panel shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedNote {
+    pub note: NoteSummary,
+    /// Exact cosine similarity of the two notes' stored vectors.
+    pub score: f32,
+    pub reasons: Reasons,
+}
+
+/// Up to `limit` live notes most similar to note `id`, most similar first, with their
+/// score and the other reasons they relate. `None` when the note has no vector yet
+/// (empty, not indexed yet, or no model is ready).
 ///
 /// The `i8` scan holds only the index and picks [`CANDIDATES`] (or more for a long
-/// list); the vault is taken afterwards, to rerank them by their exact vectors and look
-/// up the summaries. It does not count as activity: the frontend also asks after a
-/// background re-embed. Notes trashed or deleted since the job last synced the index
-/// are skipped.
-pub fn related_notes(session: &Session, id: i64, limit: usize) -> Result<Option<Vec<NoteSummary>>, SessionError> {
+/// list); the vault is taken afterwards, to rerank them by their exact vectors, look
+/// up the summaries and work out the reasons for the ones kept. It does not count as
+/// activity: the frontend also asks after a background re-embed. Notes trashed or
+/// deleted since the job last synced the index are skipped.
+pub fn related_notes(session: &Session, id: i64, limit: usize) -> Result<Option<Vec<RelatedNote>>, SessionError> {
     let generation = session.generation();
     if generation == 0 {
         return Err(SessionError::Locked);
@@ -477,21 +489,34 @@ pub fn related_notes(session: &Session, id: i64, limit: usize) -> Result<Option<
         };
         let Some((model, candidates)) = found else { return Ok(None) };
         let exhausted = candidates.len() < k;
-        let notes = session.with_vault_quiet(generation, |v| {
+        let related = session.with_vault_quiet(generation, |v| {
             let mut wanted = Vec::with_capacity(candidates.len() + 1);
             wanted.push(id);
             wanted.extend_from_slice(&candidates);
             let vectors = v.embedding_vectors(&model, &wanted)?;
             let Some(query) = vectors.iter().find(|v| v.id == id) else { return Ok(None) };
-            let ids = rerank(&query.vector, &candidates, &vectors, limit);
-            Ok(Some(v.note_summaries(&ids)?))
+            let ranked = rerank(&query.vector, &candidates, &vectors, limit);
+            let ids: Vec<i64> = ranked.iter().map(|(id, _)| *id).collect();
+            let notes = v.note_summaries(&ids)?;
+            if notes.len() < limit && !exhausted {
+                return Ok(Some(None));
+            }
+            let reasons = v.relation_reasons(id, &notes.iter().map(|n| n.id).collect::<Vec<_>>())?;
+            let scores: HashMap<i64, f32> = ranked.into_iter().collect();
+            Ok(Some(Some(
+                notes
+                    .into_iter()
+                    .zip(reasons)
+                    .map(|(note, reasons)| RelatedNote { score: scores[&note.id], note, reasons })
+                    .collect::<Vec<_>>(),
+            )))
         })?;
-        let Some(mut notes) = notes else { return Ok(None) };
-        if notes.len() >= limit || exhausted {
-            notes.truncate(limit);
-            return Ok(Some(notes));
+        match related {
+            None => return Ok(None),
+            Some(Some(notes)) => return Ok(Some(notes)),
+            // Some candidates were trashed since the index was synced: look further.
+            Some(None) => k *= 2,
         }
-        k *= 2;
     }
 }
 
@@ -601,7 +626,7 @@ mod tests {
             };
             let candidates = index.nearest(query as i64, CANDIDATES).unwrap();
             assert_eq!(candidates.len(), CANDIDATES);
-            let found = rerank(&vectors[query], &candidates, &stored, 10);
+            let found: Vec<i64> = rerank(&vectors[query], &candidates, &stored, 10).into_iter().map(|(id, _)| id).collect();
             // The same ten, in the same order; a different note only where it ties
             // (within float rounding) with the exact one at that place.
             for (place, (&got, &(score, want))) in found.iter().zip(&exact[..10]).enumerate() {

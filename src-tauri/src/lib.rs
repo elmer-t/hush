@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod discover;
 pub mod embed;
+pub mod graph;
 pub mod import;
 pub mod markdown;
 pub mod session;
@@ -140,6 +141,13 @@ pub fn run() {
             commands::tags::suggestion_threshold,
             commands::tags::set_suggestion_threshold,
             commands::embeddings::related_notes,
+            commands::links::backlinks,
+            commands::links::outgoing_links,
+            commands::links::resolve_link,
+            commands::links::create_linked_note,
+            commands::links::collapsed_sections,
+            commands::links::set_section_collapsed,
+            commands::links::graph,
             commands::discover::discover_tags,
             commands::discover::cancel_discover_tags,
             commands::discover::create_tag_from_group,

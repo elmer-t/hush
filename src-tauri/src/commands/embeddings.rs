@@ -11,9 +11,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config::Config;
-use crate::db::NoteSummary;
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
-use crate::embed::related;
+use crate::embed::related::{self, RelatedNote};
 use crate::embed::onnx::OnnxEmbedder;
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::Session;
@@ -144,9 +143,9 @@ pub fn index_status(indexer: State<'_, Indexer>) -> IndexStatus {
     indexer.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// Up to `limit` notes closest in meaning to note `id`, most similar first; `None` when
-/// the note has no vector yet.
+/// Up to `limit` notes closest in meaning to note `id`, most similar first, with their
+/// score and reasons; `None` when the note has no vector yet.
 #[tauri::command]
-pub fn related_notes(session: State<'_, Session>, id: i64, limit: usize) -> super::Result<Option<Vec<NoteSummary>>> {
+pub fn related_notes(session: State<'_, Session>, id: i64, limit: usize) -> super::Result<Option<Vec<RelatedNote>>> {
     Ok(related::related_notes(&session, id, limit)?)
 }

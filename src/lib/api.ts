@@ -364,9 +364,23 @@ export const api = {
   /** Whether indexing uses every core on this machine (else half). */
   indexAllCores: () => invoke<boolean>("index_all_cores"),
   setIndexAllCores: (on: boolean) => invoke<void>("set_index_all_cores", { on }),
-  /** Notes closest in meaning, most similar first; `null` if the note isn't indexed yet. */
-  relatedNotes: (id: number, limit: number) => invoke<NoteSummary[] | null>("related_notes", { id, limit }),
+  /** Notes closest in meaning, most similar first, with score and reasons; `null` if the note isn't indexed yet. */
+  relatedNotes: (id: number, limit: number) => invoke<RelatedNote[] | null>("related_notes", { id, limit }),
 
+  /** Notes that link to `id`, by title, each with the line around its link. */
+  backlinks: (id: number) => invoke<Backlink[]>("backlinks", { id }),
+  /** What note `id` links to, by target text. */
+  outgoingLinks: (id: number) => invoke<OutgoingLink[]>("outgoing_links", { id }),
+  /** What a link target (between `[[` and `]]`, without heading or alias) resolves to. */
+  resolveLink: (target: string) => invoke<OutgoingLink>("resolve_link", { target }),
+  /** Creates and opens the note an unresolved link target names (`path/Title`). */
+  createLinkedNote: (target: string) => invoke<OpenedNote>("create_linked_note", { target }),
+  /** The collapsed sections of the details panel, stored in the vault. */
+  collapsedSections: () => invoke<DetailsSection[]>("collapsed_sections"),
+  setSectionCollapsed: (section: DetailsSection, collapsed: boolean) =>
+    invoke<void>("set_section_collapsed", { section, collapsed }),
+  /** The subgraph of a scope for the graph view; never the whole vault uncapped. */
+  graph: (scope: GraphScope, options: GraphOptions) => invoke<Graph>("graph", { scope, options }),
   /** What the background jobs are doing; changes arrive as `ACTIVITY_EVENT`. */
   activityStatus: () => invoke<ActivitySnapshot>("activity_status"),
   /** The counts in the snapshot are only refreshed while the Activity panel is open. */
@@ -435,6 +449,69 @@ export type NoteInternals = {
   outgoing: number;
   tags: { tag: string; source: "manual" | "suggestion" }[];
 };
+
+/** Mirrors `graph::GraphScope`. */
+export type GraphScope = { kind: "local"; id: number; depth: number } | { kind: "global"; scope: GraphScopeNotes };
+/** Mirrors `db::GraphScopeNotes`; a tag takes its nested tags too. */
+export type GraphScopeNotes =
+  | { kind: "all" }
+  | { kind: "folder"; folder: string }
+  | { kind: "tag"; tag: string }
+  | { kind: "search"; query: SearchQuery };
+/** Mirrors `graph::GraphOptions`. */
+export type GraphOptions = {
+  meaning: boolean;
+  tags: boolean;
+  ghosts: boolean;
+  /** Lowest cosine similarity of a meaning edge. */
+  threshold: number;
+  /** Meaning edges per note, at most. */
+  neighbours: number;
+  /** Most notes in the graph. */
+  cap: number;
+};
+export type GraphNode = {
+  /** `n<id>`, `t:<tag>` or `g:<target>`. */
+  key: string;
+  kind: "note" | "tag" | "ghost";
+  id: number | null;
+  label: string;
+  folder: string;
+  topic: string | null;
+  tags: string[];
+  /** Links from the local graph's centre. */
+  depth: number | null;
+};
+export type GraphEdge = { source: string; target: string; kind: "link" | "meaning" | "tag"; score: number | null };
+export type Graph = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** Notes in the scope (for a local graph, those found before the cap stopped it). */
+  total: number;
+  capped: boolean;
+  meaningUnavailable: boolean;
+};
+
+/** Mirrors `db::Resolution`: what a link target means. */
+export type Resolution = { kind: "unique"; ids: number } | { kind: "ambiguous"; ids: number[] } | { kind: "missing" };
+export type Backlink = { note: NoteSummary; ambiguous: boolean; snippet: string };
+/** `notes` are the notes the target resolves to (none when missing). */
+export type OutgoingLink = { target: string; resolution: Resolution; notes: NoteSummary[] };
+/** Mirrors `db::Reasons`: why a related note relates to the open one, besides meaning. */
+export type Reasons = {
+  linksTo: boolean;
+  linkedFrom: boolean;
+  bothLinkTo: TitledNote[];
+  bothLinkedFrom: TitledNote[];
+  via: TitledNote[];
+  sharedTags: string[];
+  sameFolder: boolean;
+  sameAuthor: string | null;
+  sameTopic: string | null;
+};
+/** `score` is the exact cosine similarity, -1 to 1. */
+export type RelatedNote = { note: NoteSummary; score: number; reasons: Reasons };
+export type DetailsSection = "related" | "backlinks" | "outgoing";
 
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
 export type IndexStatus =

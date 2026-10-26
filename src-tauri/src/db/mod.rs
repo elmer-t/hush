@@ -3,12 +3,14 @@
 
 mod discover;
 mod embeddings;
+mod graph;
 mod heads;
 mod internals;
 mod links;
 mod lock;
 mod metadata;
 mod notes;
+mod reasons;
 mod recent;
 mod review;
 mod rules;
@@ -27,12 +29,14 @@ pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCursor, QueuePage, QueuedText, QueuedVector,
     StoredVector,
 };
+pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
 pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
-pub use links::{Backlink, OutgoingLink, Resolution};
+pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
+pub use reasons::{MAX_VIA, Reasons};
 pub use recent::{
     DEFAULT_RECENT_OPENED_COUNT, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING, RECENT_OPENED_SETTING,
 };
