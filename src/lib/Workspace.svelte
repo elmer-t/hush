@@ -45,6 +45,8 @@
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import Trash from "$lib/Trash.svelte";
+  // Same shipped Tauri icon as the unlock screen.
+  import appIcon from "../../src-tauri/icons/128x128@2x.png";
 
   let { vault }: { vault: VaultInfo } = $props();
 
@@ -615,7 +617,7 @@
       <Icon name="panelLeft" />
     </button>
     <div class="vault" title={vault.path}>
-      <span class="mark" aria-hidden="true">h</span>
+      <img class="mark" src={appIcon} alt="" width="28" height="28" />
       <span class="names">
         <strong>{vault.name}</strong>
         <span class="path">{vault.path}</span>
@@ -842,18 +844,9 @@
 
   .mark {
     flex: none;
+    display: block;
     width: 28px;
     height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 18px;
-    line-height: 1;
   }
 
   .names {
