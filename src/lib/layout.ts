@@ -7,8 +7,6 @@ export const LEFT: Column = { min: 200, max: 480, default: 280, storageKey: "hus
 export const RIGHT: Column = { min: 240, max: 520, default: 300, storageKey: "hush.layout.rightWidth" };
 /** The editor column never gets narrower than this. */
 export const EDITOR_MIN = 360;
-/** The details panel's width while hidden: a rail with the button that brings it back. */
-export const RAIL = 48;
 
 export const clamp = (width: number, column: Column) =>
   Math.round(Math.min(column.max, Math.max(column.min, width)));
@@ -39,11 +37,10 @@ export function fitWidths(
   windowWidth: number,
   left: number | null,
   right: number | null,
-  fixed = 0,
 ): { left: number; right: number } {
   let l = left ?? 0;
   let r = right ?? 0;
-  const over = l + r + fixed + EDITOR_MIN - windowWidth;
+  const over = l + r + EDITOR_MIN - windowWidth;
   if (over > 0) {
     const roomL = left === null ? 0 : l - LEFT.min;
     const roomR = right === null ? 0 : r - RIGHT.min;

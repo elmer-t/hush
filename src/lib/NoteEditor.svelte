@@ -13,9 +13,6 @@
     focusTitle: boolean;
     /** The remembered "Preview only" choice, shared across notes for the session. */
     previewOnly: boolean;
-    /** Whether the details panel beside the editor is shown. */
-    detailsShown: boolean;
-    ontoggledetails: () => void;
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
@@ -26,8 +23,6 @@
     opened,
     focusTitle,
     previewOnly = $bindable(),
-    detailsShown,
-    ontoggledetails,
     onsaved,
     onrenamed,
     ondeleted,
@@ -239,15 +234,6 @@
           </div>
         {/if}
       </div>
-      <button
-        class="ghost icon"
-        aria-label={detailsShown ? "Hide details panel" : "Show details panel"}
-        aria-pressed={detailsShown}
-        title={detailsShown ? "Hide details panel" : "Show details panel"}
-        onclick={ontoggledetails}
-      >
-        <Icon name="panelRight" />
-      </button>
     </div>
     <input
       class="title"
