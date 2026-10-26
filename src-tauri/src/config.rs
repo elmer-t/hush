@@ -1,5 +1,6 @@
 //! App config kept outside any vault. It holds vault paths only, never content or key material.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,10 @@ pub struct AppConfig {
     /// for this machine, so it lives here rather than in a vault.
     #[serde(default)]
     pub index_all_cores: bool,
+    /// Notes per second each model last embedded at on this machine, by model ID, for
+    /// the estimate shown before switching models. Holds no vault data.
+    #[serde(default)]
+    pub index_rates: BTreeMap<String, f64>,
 }
 
 impl AppConfig {

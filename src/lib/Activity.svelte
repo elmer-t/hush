@@ -11,6 +11,7 @@
     type JobStatus,
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -40,6 +41,11 @@
 
   const log = $derived(snapshot ? snapshot.log.filter((e) => filter === "all" || e.job === filter) : []);
   const stats = $derived(snapshot?.stats ?? null);
+  // Set while features that need the model are off: shown as the first row.
+  const modelReason = $derived(reducedText());
+  const modelFailed = $derived(
+    ["missing", "checksum", "unknown", "failed"].includes(model.status?.reduced?.reason ?? ""),
+  );
 
   onMount(() => {
     // Snapshots can arrive before the first status: keep the newest.
@@ -131,6 +137,17 @@
           </tr>
         </thead>
         <tbody>
+          {#if modelReason}
+            <tr class="model">
+              <th scope="row">Model</th>
+              <td><span class="state {modelFailed ? 'failed' : 'waiting'}">{modelFailed ? "off" : "not ready"}</span></td>
+              <td class="now" colspan="5">
+                <span class="reason" class:failed={modelFailed}>{modelReason}</span>
+                <span class="muted">Off until then: {MODEL_FEATURES}.</span>
+                <button class="link" onclick={() => model.open?.()}>Settings → Model</button>
+              </td>
+            </tr>
+          {/if}
           {#each snapshot?.jobs ?? [] as job (job.job)}
             {@const p = percent(job)}
             <tr class:active={job.state === "running"}>

@@ -6,6 +6,7 @@
 //! vector length or chunk size.
 
 pub mod job;
+pub mod models;
 pub mod onnx;
 pub mod related;
 
@@ -25,6 +26,9 @@ pub const MODELS: &[ModelDescriptor] = &[BGE_SMALL_EN_V15_Q8];
 /// `BAAI/bge-small-en-v1.5` (MIT), int8-quantized ONNX export from `Xenova/bge-small-en-v1.5`.
 const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     id: "bge-small-en-v1.5-q8",
+    name: "BGE small English v1.5 (int8)",
+    licence: "MIT",
+    licence_url: "https://huggingface.co/BAAI/bge-small-en-v1.5",
     model: ModelFile {
         name: "bge-small-en-v1.5-q8.onnx",
         url: "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/onnx/model_quantized.onnx",
@@ -53,6 +57,11 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
 pub struct ModelDescriptor {
     /// Stored with every vector, and in the vault's model settings.
     pub id: &'static str,
+    /// What Settings → Model calls it.
+    pub name: &'static str,
+    /// The licence's short name, and where to read it.
+    pub licence: &'static str,
+    pub licence_url: &'static str,
     pub model: ModelFile,
     pub tokenizer: ModelFile,
     /// Length of each vector.

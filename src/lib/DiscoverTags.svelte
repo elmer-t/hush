@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api, errorMessage, type DiscoverGroup, type DiscoverScope, type Discovery, type TagInfo } from "$lib/api";
   import { currentSearch } from "$lib/currentSearch.svelte";
+  import ModelNotice from "$lib/ModelNotice.svelte";
+  import { reducedText } from "$lib/modelStatus.svelte";
 
   // Settings → Tags → Discover tags: groups notes by meaning so the user can see which
   // tags the archive needs, and turns a group into a tag. Results live only in this
@@ -206,8 +208,12 @@
   <div class="body" aria-busy={running}>
     {#if running && !result}
       <p class="muted">Grouping notes…</p>
+    {:else if result && result.model === null && reducedText()}
+      <ModelNotice what="Discover tags" />
     {:else if result && result.model === null}
       <p class="muted">Notes are still being indexed. Try again once indexing has finished.</p>
+    {:else if !result && !running && reducedText()}
+      <ModelNotice what="Discover tags" />
     {:else if result && result.notes === 0}
       <p class="muted">
         {resultScope === "untagged"

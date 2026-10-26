@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
+  import ModelSettings from "$lib/ModelSettings.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
 
   type Props = {
@@ -173,6 +174,8 @@
     </div>
   </form>
 
+  <ModelSettings />
+
   <section class="card">
     <h2>Indexing</h2>
     <p class="muted">
@@ -261,7 +264,8 @@
     letter-spacing: -0.01em;
   }
 
-  form {
+  form,
+  section {
     display: flex;
     flex-direction: column;
     gap: 12px;

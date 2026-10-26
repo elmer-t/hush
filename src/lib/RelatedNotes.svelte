@@ -4,6 +4,8 @@
   import { api, errorMessage, RELATED_CHANGED_EVENT, type RelatedNote, type TitledNote } from "$lib/api";
   import DetailsSection from "$lib/DetailsSection.svelte";
   import Icon from "$lib/Icon.svelte";
+  import ModelNotice from "$lib/ModelNotice.svelte";
+  import { reducedText } from "$lib/modelStatus.svelte";
 
   // Notes shown, most similar first.
   const LIMIT = 10;
@@ -115,6 +117,8 @@
     <p class="error">{error}</p>
   {:else if !loaded}
     <!-- Usually a few milliseconds: nothing, rather than a flash of text. -->
+  {:else if (notes === null || notes.length === 0) && reducedText()}
+    <ModelNotice what="Related notes" />
   {:else if notes === null}
     <p class="muted">Not indexed yet</p>
   {:else if notes.length === 0}

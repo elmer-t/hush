@@ -15,6 +15,7 @@
   } from "$lib/api";
   import { confirmFolderTrash, confirmTrash } from "$lib/confirmTrash";
   import { findNote, rebase } from "$lib/explorer.svelte";
+  import { model, watchModel } from "$lib/modelStatus.svelte";
   import Activity from "$lib/Activity.svelte";
   import Icon from "$lib/Icon.svelte";
   import GraphView from "$lib/GraphView.svelte";
@@ -105,6 +106,8 @@
       await api.exitApp();
     });
     const ticker = setInterval(() => (now = Date.now()), COUNTDOWN_TICK_MS);
+    watchModel();
+    model.open = () => void openModelSettings();
     void loadAutoLock();
     void loadTrashCount();
     void api
@@ -173,6 +176,13 @@
     // After showNote, whose reopen may have recorded the note.
     if (leavingSettings) void sidebar?.refreshRecent();
     if (next === "import") importOpened = true;
+  }
+
+  /** Settings, scrolled to the Model section (from a "why is this off" link). */
+  async function openModelSettings() {
+    if (view !== "settings") await toggleView("settings");
+    await tick();
+    document.getElementById("model-settings")?.scrollIntoView({ block: "start" });
   }
 
   /**
