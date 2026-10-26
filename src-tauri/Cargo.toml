@@ -37,6 +37,9 @@ htmd = "0.5.6"
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs", "api-24"] }
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
 sha2 = "0.10"
+# The only HTTP client: downloads an optional model when the user clicks Download, to the
+# descriptor's pinned URL (see docs/decisions.md, Optional models). Nothing else uses it.
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
 
 [dev-dependencies]
 insta = "1.49.0"

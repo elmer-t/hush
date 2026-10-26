@@ -24,12 +24,30 @@ use crate::session::{Session, SessionError};
 /// model on the Windows dev machine (`docs/decisions.md`, Scale).
 pub const DEFAULT_RATE: f64 = 2.5;
 
+/// Where model files are: the app's resource folder (the bundled default) and the
+/// app data `models` folder (downloaded or imported models, per machine, outside any
+/// vault).
+#[derive(Debug, Clone)]
+pub struct ModelDirs {
+    pub bundled: PathBuf,
+    pub user: PathBuf,
+}
+
+impl ModelDirs {
+    /// The folders a model's files are looked for in, most likely first. Both are
+    /// searched, so a damaged install can be fixed by importing the default model's files.
+    pub fn search(&self, model: &ModelDescriptor) -> [&Path; 2] {
+        if model.bundled { [&self.bundled, &self.user] } else { [&self.user, &self.bundled] }
+    }
+}
+
 /// Whether a model's files are on this computer, intact.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Availability {
-    /// `bytes`: the files' size on disk.
-    Available { bytes: u64 },
+    /// `bytes`: the files' size on disk; `downloaded`: they are in the app data folder
+    /// (downloaded or imported), so they can be removed.
+    Available { bytes: u64, downloaded: bool },
     Missing { file: String },
     Checksum { file: String },
     Unreadable { file: String, message: String },
@@ -38,6 +56,13 @@ pub enum Availability {
 impl Availability {
     pub fn is_available(&self) -> bool {
         matches!(self, Self::Available { .. })
+    }
+
+    fn downloaded(self, downloaded: bool) -> Self {
+        match self {
+            Self::Available { bytes, .. } => Self::Available { bytes, downloaded },
+            other => other,
+        }
     }
 
     /// Why the model can't be used, for an error message; `None` when it can.
@@ -63,6 +88,22 @@ pub struct FileChecks {
 type Checked = HashMap<(PathBuf, &'static str), (u64, Option<SystemTime>, bool)>;
 
 impl FileChecks {
+    /// Looks for `descriptor`'s files in `dirs`: the folder that has all of them intact,
+    /// or why none does (as found in the most likely folder).
+    pub fn locate(&self, dirs: &ModelDirs, descriptor: &ModelDescriptor) -> (Availability, Option<PathBuf>) {
+        let [first, second] = dirs.search(descriptor);
+        let found = self.availability(first, descriptor);
+        if found.is_available() {
+            return (found.downloaded(first == dirs.user), Some(first.to_path_buf()));
+        }
+        let other = self.availability(second, descriptor);
+        if other.is_available() {
+            return (other.downloaded(second == dirs.user), Some(second.to_path_buf()));
+        }
+        (found, None)
+    }
+
+    /// Checks `descriptor`'s files in one folder.
     pub fn availability(&self, dir: &Path, descriptor: &ModelDescriptor) -> Availability {
         let mut bytes = 0;
         for file in [descriptor.tokenizer, descriptor.model] {
@@ -92,7 +133,7 @@ impl FileChecks {
             }
             bytes += meta.len();
         }
-        Availability::Available { bytes }
+        Availability::Available { bytes, downloaded: false }
     }
 
     /// Forgets every result (the user asked to check again).
@@ -131,22 +172,37 @@ pub enum SwitchError {
     Session(#[from] SessionError),
 }
 
-/// Switches the open vault to model `id` from `catalogue`, whose files must be in `dir`
-/// with the right checksums. Every live note is queued for it; until the new vectors
+/// Switches the open vault to model `id` from `catalogue`, whose files must be in one of
+/// `dirs` with the right checksums. Every live note is queued for it; until the new vectors
 /// are complete the old model's keep serving.
 pub fn switch(
     session: &Session,
     checks: &FileChecks,
-    dir: &Path,
+    dirs: &ModelDirs,
     catalogue: &[ModelDescriptor],
     id: &str,
 ) -> Result<(), SwitchError> {
     let descriptor = catalogue.iter().find(|m| m.id == id).ok_or_else(|| SwitchError::Unknown(id.to_string()))?;
-    if let Some(problem) = checks.availability(dir, descriptor).problem() {
+    if let Some(problem) = checks.locate(dirs, descriptor).0.problem() {
         return Err(SwitchError::Unavailable(problem));
     }
     session.with_vault(|v| v.set_embedding_model(descriptor.id))?;
     Ok(())
+}
+
+/// Why `model`'s files can't be removed, if they can't: it ships with Hush, or the open
+/// vault embeds with it or its vectors serve (named by the vault's file name).
+pub fn removal_blocked(session: &Session, model: &ModelDescriptor) -> Result<Option<String>, SessionError> {
+    if model.bundled {
+        return Ok(Some(format!("{} ships with Hush and can't be removed", model.name)));
+    }
+    let Some(path) = session.path() else { return Ok(None) };
+    let (active, ready) = session.with_vault(|v| Ok((v.embedding_model()?, v.embedding_model_ready()?)))?;
+    if active == model.id || ready.as_deref() == Some(model.id) {
+        let name = path.file_stem().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        return Ok(Some(format!("the open vault “{name}” uses {}; switch it to another model first", model.name)));
+    }
+    Ok(None)
 }
 
 /// How loading a model went, this session.
@@ -309,12 +365,14 @@ mod tests {
             name: "Stub",
             licence: "MIT",
             licence_url: "",
-            model: ModelFile { name: "stub.onnx", url: "", sha256: model_sha },
+            bundled: false,
+            model: ModelFile { name: "stub.onnx", url: "", sha256: model_sha, size: 5 },
             // sha256("{}")
             tokenizer: ModelFile {
                 name: "stub.tokenizer.json",
                 url: "",
                 sha256: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                size: 2,
             },
             dims: 4,
             max_tokens: 8,
@@ -338,7 +396,9 @@ mod tests {
         std::fs::write(dir.path().join("stub.tokenizer.json"), b"{}").unwrap();
         assert_eq!(checks.availability(dir.path(), &d), Availability::Missing { file: "stub.onnx".into() });
         std::fs::write(dir.path().join("stub.onnx"), b"hello").unwrap();
-        assert_eq!(checks.availability(dir.path(), &d), Availability::Available { bytes: 7 });
+        assert_eq!(checks.availability(dir.path(), &d), Availability::Available { bytes: 7, downloaded: false });
+        let dirs = ModelDirs { bundled: dir.path().join("none"), user: dir.path().to_path_buf() };
+        assert_eq!(checks.locate(&dirs, &d), (Availability::Available { bytes: 7, downloaded: true }, Some(dirs.user.clone())));
         // A different size can't hit the cached result.
         std::fs::write(dir.path().join("stub.onnx"), b"hello, world").unwrap();
         assert_eq!(checks.availability(dir.path(), &d), Availability::Checksum { file: "stub.onnx".into() });

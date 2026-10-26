@@ -5,6 +5,7 @@ pub mod discover;
 pub mod embeddings;
 pub mod import;
 pub mod links;
+pub mod models;
 pub mod notes;
 pub mod review;
 pub mod search;
@@ -40,6 +41,9 @@ pub enum CommandError {
     UnknownModel(String),
     #[error("{0}")]
     ModelUnavailable(String),
+    /// Downloading, importing or removing a model's files.
+    #[error("{0}")]
+    ModelFiles(String),
 }
 
 impl From<crate::import::ImportError> for CommandError {
@@ -92,6 +96,7 @@ impl CommandError {
             Self::StaleGroups => "staleGroups",
             Self::UnknownModel(_) => "unknownModel",
             Self::ModelUnavailable(_) => "modelUnavailable",
+            Self::ModelFiles(_) => "modelFiles",
         }
     }
 }
