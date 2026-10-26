@@ -1,9 +1,9 @@
 //! The indexing job (embeddings) as the app runs it: started on unlock, with the
-//! bundled model, reporting its status to the frontend. Also the related-notes lookup
+//! vault's model from this computer's model folders, reporting its status to the
+//! frontend. Also the related-notes lookup
 //! the job's vectors feed.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,7 +17,7 @@ use crate::config::Config;
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
 use crate::embed::related::{self, RelatedNote};
 use crate::embed::onnx::OnnxEmbedder;
-use crate::embed::models::{self, Availability, FileChecks, LoadState, ModelStatus, ModelTracker, SwitchError};
+use crate::embed::models::{self, Availability, FileChecks, LoadState, ModelDirs, ModelStatus, ModelTracker, SwitchError};
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::Session;
 
@@ -36,7 +36,7 @@ pub const MODEL_STATUS_EVENT: &str = "model-status";
 
 pub struct Indexer {
     status: Mutex<IndexStatus>,
-    models: BundledModels,
+    pub(super) models: LocalModels,
     /// The unlock whose job is running (0: none), so a switch or a re-check can start
     /// the job again after it stopped on a model that couldn't load; and the unlock
     /// the job last started for.
@@ -44,14 +44,14 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    /// `models_dir` is the app's `models` resource folder; `all_cores` the
+    /// `dirs` are the bundled and the downloaded models' folders; `all_cores` the
     /// "use all cores while indexing" choice.
-    pub fn new(app: AppHandle, models_dir: PathBuf, all_cores: bool) -> Self {
+    pub fn new(app: AppHandle, dirs: ModelDirs, all_cores: bool) -> Self {
         Self {
             status: Mutex::new(IndexStatus::Idle),
-            models: BundledModels {
+            models: LocalModels {
                 app,
-                dir: models_dir,
+                dirs,
                 all_cores: AtomicBool::new(all_cores),
                 loaded: Mutex::default(),
                 tracker: ModelTracker::default(),
@@ -62,20 +62,20 @@ impl Indexer {
     }
 }
 
-/// The models shipped with the app. A loaded model holds no note data, so it is kept
-/// across lock and unlock, once per core count: the job asks for its model at the
-/// start of every pass, so a change of [`BundledModels::all_cores`] applies from the
-/// next pass.
-struct BundledModels {
+/// The models on this computer: bundled with the app, downloaded or imported. A loaded
+/// model holds no note data, so it is kept across lock and unlock, once per core count:
+/// the job asks for its model at the start of every pass, so a change of
+/// [`LocalModels::all_cores`] applies from the next pass.
+pub(super) struct LocalModels {
     app: AppHandle,
-    dir: PathBuf,
+    pub(super) dirs: ModelDirs,
     all_cores: AtomicBool,
     loaded: Mutex<HashMap<(&'static str, usize), Arc<dyn Embedder>>>,
-    tracker: ModelTracker,
-    checks: FileChecks,
+    pub(super) tracker: ModelTracker,
+    pub(super) checks: FileChecks,
 }
 
-impl BundledModels {
+impl LocalModels {
     /// The threads a model gets, and the machine's cores.
     fn threads(&self) -> (usize, usize) {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -83,8 +83,13 @@ impl BundledModels {
         (threads, cores)
     }
 
+    /// Drops `model` from memory (its files are being removed).
+    pub(super) fn unload(&self, model: &str) {
+        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| k.0 != model);
+    }
+
     /// Sends the model status when `changed`.
-    fn emit_if(&self, changed: bool) {
+    pub(super) fn emit_if(&self, changed: bool) {
         if changed {
             let _ = self.app.emit(MODEL_STATUS_EVENT, self.tracker.status());
         }
@@ -100,7 +105,7 @@ impl Indexer {
     }
 }
 
-impl EmbedderSource for BundledModels {
+impl EmbedderSource for LocalModels {
     fn is_loaded(&self, model: &str) -> bool {
         let Some(descriptor) = embed::descriptor(model) else { return false };
         let (threads, _) = self.threads();
@@ -120,7 +125,9 @@ impl EmbedderSource for BundledModels {
         // Only one core count is kept loaded.
         loaded.clear();
         self.emit_if(self.tracker.load(model, LoadState::Loading));
-        match OnnxEmbedder::load_with_threads(&self.dir, descriptor, threads) {
+        // The folder that has the files intact, else the likeliest one (for the error).
+        let dir = self.checks.locate(&self.dirs, descriptor).1.unwrap_or_else(|| self.dirs.search(descriptor)[0].to_path_buf());
+        match OnnxEmbedder::load_with_threads(&dir, descriptor, threads) {
             Ok(e) => {
                 let embedder: Arc<dyn Embedder> = Arc::new(e);
                 loaded.insert((descriptor.id, threads), embedder.clone());
@@ -235,6 +242,12 @@ pub struct ModelInfo {
     pub licence_url: &'static str,
     pub dims: usize,
     pub max_tokens: usize,
+    /// Shipped with the app; otherwise it can be downloaded or imported.
+    pub bundled: bool,
+    /// Bytes to download.
+    pub size: u64,
+    /// Where a download comes from.
+    pub host: String,
     pub availability: Availability,
     /// Notes per second last measured on this machine.
     pub rate: Option<f64>,
@@ -272,7 +285,10 @@ pub async fn model_overview(
             licence_url: d.licence_url,
             dims: d.dims,
             max_tokens: d.max_tokens,
-            availability: indexer.models.checks.availability(&indexer.models.dir, d),
+            bundled: d.bundled,
+            size: d.model.size + d.tokenizer.size,
+            host: host(d.model.url),
+            availability: indexer.models.checks.locate(&indexer.models.dirs, d).0,
             rate: rates.get(d.id).copied(),
         })
         .collect();
@@ -288,7 +304,7 @@ pub async fn set_embedding_model(
     indexer: State<'_, Indexer>,
     model: String,
 ) -> super::Result<()> {
-    models::switch(&session, &indexer.models.checks, &indexer.models.dir, embed::MODELS, &model).map_err(|e| match e {
+    models::switch(&session, &indexer.models.checks, &indexer.models.dirs, embed::MODELS, &model).map_err(|e| match e {
         SwitchError::Unknown(id) => CommandError::UnknownModel(id),
         SwitchError::Unavailable(problem) => CommandError::ModelUnavailable(problem),
         SwitchError::Session(e) => CommandError::Session(e),
@@ -301,11 +317,22 @@ pub async fn set_embedding_model(
 /// Checks the model files again (after the user put them back) and, if the job had
 /// stopped on them, starts it again.
 #[tauri::command]
-pub fn recheck_models(app: AppHandle, session: State<'_, Session>, indexer: State<'_, Indexer>) {
+pub fn recheck_models(app: AppHandle) {
+    models_changed(&app);
+}
+
+/// Model files were added, removed or put back: checks them again, and starts the job
+/// if it had stopped on a model that couldn't load.
+pub(super) fn models_changed(app: &AppHandle) {
+    let indexer = app.state::<Indexer>();
     indexer.models.checks.forget();
     indexer.models.emit_if(indexer.models.tracker.forget_failures());
-    let generation = session.generation();
+    let generation = app.state::<Session>().generation();
     if generation != 0 {
-        start(&app, generation);
+        start(app, generation);
     }
+}
+
+fn host(url: &str) -> String {
+    url.split("://").nth(1).and_then(|rest| rest.split('/').next()).unwrap_or_default().to_string()
 }

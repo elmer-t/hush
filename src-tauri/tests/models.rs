@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use hush_lib::db::Vault;
 use hush_lib::embed::job::{self, EmbedderSource};
-use hush_lib::embed::models::{self, FileChecks, LoadState, ModelTracker, ReducedReason, SwitchError};
+use hush_lib::embed::models::{self, FileChecks, LoadState, ModelDirs, ModelTracker, ReducedReason, SwitchError};
 use hush_lib::embed::{self, ChunkPooling, EmbedError, Embedder, ModelDescriptor, ModelFile, TokenPooling};
 use hush_lib::session::Session;
 
@@ -22,8 +22,9 @@ const fn stub(id: &'static str, model: &'static str, tokenizer: &'static str, di
         name: id,
         licence: "MIT",
         licence_url: "",
-        model: ModelFile { name: model, url: "", sha256: HELLO },
-        tokenizer: ModelFile { name: tokenizer, url: "", sha256: BRACES },
+        bundled: false,
+        model: ModelFile { name: model, url: "", sha256: HELLO, size: 5 },
+        tokenizer: ModelFile { name: tokenizer, url: "", sha256: BRACES, size: 2 },
         dims,
         max_tokens: 16,
         token_pooling: TokenPooling::Mean,
@@ -36,6 +37,11 @@ const fn stub(id: &'static str, model: &'static str, tokenizer: &'static str, di
 
 const CATALOGUE: &[ModelDescriptor] =
     &[stub("stub-4", "stub-4.onnx", "stub-4.json", 4), stub("stub-8", "stub-8.onnx", "stub-8.json", 8)];
+
+/// Optional models live in the user folder; nothing is bundled here.
+fn dirs(user: &Path) -> ModelDirs {
+    ModelDirs { bundled: user.join("bundled"), user: user.to_path_buf() }
+}
 
 fn install(dir: &Path, d: &ModelDescriptor) {
     std::fs::write(dir.join(d.model.name), b"hello").unwrap();
@@ -136,15 +142,15 @@ fn switching_between_two_available_models_works_end_to_end() {
     assert_eq!(source.tracker.status().reduced, None);
 
     // Not on this computer, or unknown: refused, and the vault keeps its model.
-    let refused = models::switch(&session, &source.checks, models.path(), CATALOGUE, "stub-8");
+    let refused = models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-8");
     assert!(matches!(&refused, Err(SwitchError::Unavailable(p)) if p.contains("stub-8.json is missing")), "{refused:?}");
-    let unknown = models::switch(&session, &source.checks, models.path(), CATALOGUE, "nope");
+    let unknown = models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "nope");
     assert!(matches!(unknown, Err(SwitchError::Unknown(_))));
     assert_eq!(session.with_vault(|v| v.embedding_model()).unwrap(), "stub-4");
 
     // Installed: the switch queues every note; the old vectors serve meanwhile.
     install(models.path(), &CATALOGUE[1]);
-    models::switch(&session, &source.checks, models.path(), CATALOGUE, "stub-8").unwrap();
+    models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-8").unwrap();
     assert_eq!(session.with_vault(|v| v.embedding_queue_len()).unwrap(), ids.len());
     assert_eq!(session.with_vault(|v| v.note_embedding(ids[0])).unwrap().unwrap().len(), 4);
     source.tracker.vault_models("stub-8", Some("stub-4"));
@@ -158,7 +164,7 @@ fn switching_between_two_available_models_works_end_to_end() {
     }
 
     // And back again.
-    models::switch(&session, &source.checks, models.path(), CATALOGUE, "stub-4").unwrap();
+    models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-4").unwrap();
     index(&session, g, &source);
     assert_eq!(ready(&session).as_deref(), Some("stub-4"));
 }

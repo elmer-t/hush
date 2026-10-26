@@ -19,8 +19,10 @@ use crate::commands::activity::ActivityPanel;
 use crate::commands::discover::DiscoverJob;
 use crate::commands::embeddings::Indexer;
 use crate::commands::import::ImportJob;
+use crate::commands::models::Downloads;
 use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
 use crate::config::Config;
+use crate::embed::models::ModelDirs;
 use crate::session::Session;
 
 const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
@@ -43,12 +45,19 @@ pub fn run() {
         .manage(ImportJob::default())
         .manage(DiscoverJob::default())
         .manage(ActivityPanel::default())
+        .manage(Downloads::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = Config::new(config_path);
             let all_cores = config.get().index_all_cores;
             app.manage(config);
-            app.manage(Indexer::new(app.handle().clone(), app.path().resource_dir()?.join("models"), all_cores));
+            // Downloaded and imported models go to the local (not roaming) app data
+            // folder: they are large, and per machine.
+            let dirs = ModelDirs {
+                bundled: app.path().resource_dir()?.join("models"),
+                user: app.path().app_local_data_dir()?.join("models"),
+            };
+            app.manage(Indexer::new(app.handle().clone(), dirs, all_cores));
             commands::activity::start_emitter(app.handle());
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
@@ -150,6 +159,11 @@ pub fn run() {
             commands::embeddings::model_overview,
             commands::embeddings::set_embedding_model,
             commands::embeddings::recheck_models,
+            commands::models::model_downloads,
+            commands::models::download_model,
+            commands::models::cancel_model_download,
+            commands::models::import_model_files,
+            commands::models::remove_model,
             commands::tags::tag_list,
             commands::tags::set_tag_description,
             commands::tags::tag_suggestions,

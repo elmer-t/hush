@@ -1,10 +1,12 @@
-//! Local embeddings: every note gets a vector computed in-process by a bundled model and
-//! stored in the vault (see `docs/decisions.md`, AI classification). Nothing here
-//! touches the network or writes outside the vault.
+//! Local embeddings: every note gets a vector computed in-process by a local model and
+//! stored in the vault (see `docs/decisions.md`, AI classification). The default model
+//! is bundled; optional ones are downloaded only when the user asks ([`download`]).
+//! Nothing else here touches the network or writes outside the vault.
 //!
 //! Everything model-specific lives in a [`ModelDescriptor`]; no other code assumes a
 //! vector length or chunk size.
 
+pub mod download;
 pub mod job;
 pub mod models;
 pub mod onnx;
@@ -20,8 +22,9 @@ use crate::markdown;
 /// The model a vault embeds with until its `embedding_model` setting says otherwise.
 pub const DEFAULT_MODEL: &str = BGE_SMALL_EN_V15_Q8.id;
 
-/// Every model Hush knows. Only the default ships with the app for now.
-pub const MODELS: &[ModelDescriptor] = &[BGE_SMALL_EN_V15_Q8];
+/// Every model Hush knows. Only the default ships with the app; the others can be
+/// downloaded or imported from Settings → Model.
+pub const MODELS: &[ModelDescriptor] = &[BGE_SMALL_EN_V15_Q8, MULTILINGUAL_E5_SMALL_Q8, ALL_MINILM_L6_V2_Q8];
 
 /// `BAAI/bge-small-en-v1.5` (MIT), int8-quantized ONNX export from `Xenova/bge-small-en-v1.5`.
 const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
@@ -29,15 +32,18 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     name: "BGE small English v1.5 (int8)",
     licence: "MIT",
     licence_url: "https://huggingface.co/BAAI/bge-small-en-v1.5",
+    bundled: true,
     model: ModelFile {
         name: "bge-small-en-v1.5-q8.onnx",
         url: "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/onnx/model_quantized.onnx",
         sha256: "6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4",
+        size: BGE_MODEL_SIZE,
     },
     tokenizer: ModelFile {
         name: "bge-small-en-v1.5-q8.tokenizer.json",
         url: "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/tokenizer.json",
         sha256: "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        size: BGE_TOKENIZER_SIZE,
     },
     dims: 384,
     max_tokens: 512,
@@ -52,6 +58,85 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     suggestion_threshold: 0.67,
 };
 
+/// `intfloat/multilingual-e5-small` (MIT), int8-quantized ONNX export from
+/// `Xenova/multilingual-e5-small`: about 100 languages, for vaults that aren't in
+/// English. Optional.
+const MULTILINGUAL_E5_SMALL_Q8: ModelDescriptor = ModelDescriptor {
+    id: "multilingual-e5-small-q8",
+    name: "Multilingual E5 small (int8)",
+    licence: "MIT",
+    licence_url: "https://huggingface.co/intfloat/multilingual-e5-small",
+    bundled: false,
+    model: ModelFile {
+        name: "multilingual-e5-small-q8.onnx",
+        url: "https://huggingface.co/Xenova/multilingual-e5-small/resolve/main/onnx/model_quantized.onnx",
+        sha256: E5_MODEL_SHA256,
+        size: E5_MODEL_SIZE,
+    },
+    tokenizer: ModelFile {
+        name: "multilingual-e5-small-q8.tokenizer.json",
+        url: "https://huggingface.co/Xenova/multilingual-e5-small/resolve/main/tokenizer.json",
+        sha256: E5_TOKENIZER_SHA256,
+        size: E5_TOKENIZER_SIZE,
+    },
+    dims: 384,
+    max_tokens: 512,
+    token_pooling: TokenPooling::Mean,
+    chunk_pooling: ChunkPooling::Mean,
+    // E5 was trained with these prefixes; without them its vectors are worse.
+    prefix: "passage: ",
+    query_prefix: "query: ",
+    suggestion_threshold: E5_SUGGESTION_THRESHOLD,
+};
+
+/// `sentence-transformers/all-MiniLM-L6-v2` (Apache-2.0), int8-quantized ONNX export
+/// from `Xenova/all-MiniLM-L6-v2`: English, 6 layers instead of bge-small's 12, so
+/// roughly twice as fast, for a quicker first index of a large vault. Optional.
+const ALL_MINILM_L6_V2_Q8: ModelDescriptor = ModelDescriptor {
+    id: "all-minilm-l6-v2-q8",
+    name: "MiniLM L6 v2, fast English (int8)",
+    licence: "Apache-2.0",
+    licence_url: "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+    bundled: false,
+    model: ModelFile {
+        name: "all-minilm-l6-v2-q8.onnx",
+        url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx",
+        sha256: MINILM_MODEL_SHA256,
+        size: MINILM_MODEL_SIZE,
+    },
+    tokenizer: ModelFile {
+        name: "all-minilm-l6-v2-q8.tokenizer.json",
+        url: "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+        sha256: MINILM_TOKENIZER_SHA256,
+        size: MINILM_TOKENIZER_SIZE,
+    },
+    dims: 384,
+    // Trained on sequences of up to 256 word pieces; longer input loses quality.
+    max_tokens: 256,
+    token_pooling: TokenPooling::Mean,
+    chunk_pooling: ChunkPooling::Mean,
+    prefix: "",
+    query_prefix: "",
+    suggestion_threshold: MINILM_SUGGESTION_THRESHOLD,
+};
+
+// Checksums and sizes of the optional files, taken from the files as Hugging Face served
+// them on 2026-10-26. The bundled files' sizes aren't needed (they are never downloaded).
+const BGE_MODEL_SIZE: u64 = 0;
+const BGE_TOKENIZER_SIZE: u64 = 0;
+const E5_MODEL_SHA256: &str = "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193";
+const E5_MODEL_SIZE: u64 = 118_308_185;
+const E5_TOKENIZER_SHA256: &str = "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39";
+const E5_TOKENIZER_SIZE: u64 = 17_082_730;
+// Not measured yet: E5 similarities sit high (0.7–0.9 for unrelated text is common),
+// MiniLM's lower. Re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
+const E5_SUGGESTION_THRESHOLD: f32 = 0.8;
+const MINILM_MODEL_SHA256: &str = "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1";
+const MINILM_MODEL_SIZE: u64 = 22_972_370;
+const MINILM_TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
+const MINILM_TOKENIZER_SIZE: u64 = 711_661;
+const MINILM_SUGGESTION_THRESHOLD: f32 = 0.4;
+
 /// One model: its files, the shape of its vectors and how text is fed to it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelDescriptor {
@@ -62,6 +147,9 @@ pub struct ModelDescriptor {
     /// The licence's short name, and where to read it.
     pub licence: &'static str,
     pub licence_url: &'static str,
+    /// Shipped with the app (in the resource folder) rather than downloaded or imported
+    /// into the app data `models` folder.
+    pub bundled: bool,
     pub model: ModelFile,
     pub tokenizer: ModelFile,
     /// Length of each vector.
@@ -83,15 +171,18 @@ pub struct ModelDescriptor {
     pub suggestion_threshold: f32,
 }
 
-/// A bundled file, fetched at build time and checked again before it is loaded.
+/// A model file, checked against its SHA-256 before it is loaded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelFile {
-    /// File name in the app's `models` resource folder.
+    /// File name in a `models` folder.
     pub name: &'static str,
-    /// Where the build step fetches it from. Never used at runtime.
+    /// Where it comes from: for a bundled model the build step fetches it from here; for
+    /// an optional one, the only URL Hush downloads it from, and only when asked.
     pub url: &'static str,
     /// Lowercase hex SHA-256 of the file.
     pub sha256: &'static str,
+    /// Size in bytes, shown before a download.
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -259,10 +350,28 @@ mod tests {
             .collect();
         let expected: Vec<(String, String, String)> = MODELS
             .iter()
+            .filter(|m| m.bundled)
             .flat_map(|m| [m.model, m.tokenizer])
             .map(|f| (f.name.into(), f.url.into(), f.sha256.into()))
             .collect();
         assert_eq!(listed, expected);
+    }
+
+    /// Every optional model is pinned: an HTTPS URL, a checksum and a size for each file,
+    /// and file names no other model uses.
+    #[test]
+    fn optional_models_are_pinned() {
+        let mut names = std::collections::HashSet::new();
+        for m in MODELS {
+            assert_eq!(MODELS.iter().filter(|x| x.id == m.id).count(), 1, "{}", m.id);
+            for f in [m.model, m.tokenizer] {
+                assert!(names.insert(f.name), "{} is used twice", f.name);
+                assert!(f.url.starts_with("https://"), "{}", f.url);
+                assert!(f.sha256.len() == 64 && f.sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{}", f.name);
+                assert!(m.bundled || f.size > 0, "{} has no size", f.name);
+            }
+        }
+        assert!(MODELS.iter().filter(|m| m.bundled).count() == 1 && descriptor(DEFAULT_MODEL).unwrap().bundled);
     }
 
     #[test]
@@ -283,7 +392,7 @@ mod tests {
     #[test]
     fn wrong_checksum_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let file = ModelFile { name: "m.onnx", url: "", sha256: BGE_SMALL_EN_V15_Q8.model.sha256 };
+        let file = ModelFile { name: "m.onnx", url: "", sha256: BGE_SMALL_EN_V15_Q8.model.sha256, size: 0 };
         assert!(matches!(read_verified(dir.path(), &file), Err(EmbedError::Missing(_))));
         std::fs::write(dir.path().join("m.onnx"), b"not the model").unwrap();
         assert!(matches!(read_verified(dir.path(), &file), Err(EmbedError::Checksum(_))));

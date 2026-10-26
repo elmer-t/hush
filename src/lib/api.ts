@@ -381,6 +381,16 @@ export const api = {
   setEmbeddingModel: (model: string) => invoke<void>("set_embedding_model", { model }),
   /** Checks the model files again and restarts indexing if it had stopped on them. */
   recheckModels: () => invoke<void>("recheck_models"),
+  /** How each model's last download this run went; changes arrive as `MODEL_DOWNLOAD_EVENT`. */
+  modelDownloads: () => invoke<DownloadStatus[]>("model_downloads"),
+  /** Downloads an optional model from its pinned URL. The only thing that makes Hush go online. */
+  downloadModel: (model: string) => invoke<void>("download_model", { model }),
+  /** Stops a download; the next one continues where it stopped. */
+  cancelModelDownload: (model: string) => invoke<void>("cancel_model_download", { model }),
+  /** Copies picked files into the models folder if they match the model's checksums; resolves to the names stored. */
+  importModelFiles: (model: string, paths: string[]) => invoke<string[]>("import_model_files", { model, paths }),
+  /** Deletes a downloaded or imported model; resolves to the bytes freed. */
+  removeModel: (model: string) => invoke<number>("remove_model", { model }),
   /** Notes closest in meaning, most similar first, with score and reasons; `null` if the note isn't indexed yet. */
   relatedNotes: (id: number, limit: number) => invoke<RelatedNote[] | null>("related_notes", { id, limit }),
 
@@ -558,7 +568,8 @@ export type ModelStatus = {
   reduced: { reason: ReducedReason; message: string } | null;
 };
 export type Availability =
-  | { state: "available"; bytes: number }
+  /** `downloaded`: in the app data folder (downloaded or imported), so it can be removed. */
+  | { state: "available"; bytes: number; downloaded: boolean }
   | { state: "missing"; file: string }
   | { state: "checksum"; file: string }
   | { state: "unreadable"; file: string; message: string };
@@ -569,6 +580,12 @@ export type ModelInfo = {
   licenceUrl: string;
   dims: number;
   maxTokens: number;
+  /** Ships with Hush; the others can be downloaded or imported. */
+  bundled: boolean;
+  /** Bytes to download. */
+  size: number;
+  /** Where a download comes from. */
+  host: string;
   availability: Availability;
   /** Notes per second last measured on this machine. */
   rate: number | null;
@@ -582,6 +599,13 @@ export type ModelOverview = {
   defaultRate: number;
 };
 export const MODEL_STATUS_EVENT = "model-status";
+export type DownloadStatus = { model: string } & (
+  | { state: "running"; done: number; total: number; bytesPerSec: number | null }
+  | { state: "done" }
+  | { state: "cancelled"; done: number; total: number }
+  | { state: "failed"; message: string }
+);
+export const MODEL_DOWNLOAD_EVENT = "model-download";
 /** Emitted with an `ActivitySnapshot`, at most four times a second. */
 export const ACTIVITY_EVENT = "activity-changed";
 /** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
