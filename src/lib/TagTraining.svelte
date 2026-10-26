@@ -2,6 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { api, errorMessage, TAGS_TRAINED_EVENT, type TagInfo, type TagTraining } from "$lib/api";
+  import ModelNotice from "$lib/ModelNotice.svelte";
 
   type Props = {
     /** The Tags settings' list; reloaded whenever it changes (a description was saved). */
@@ -58,6 +59,7 @@
     teaches it. Precision is how often a suggestion was right, recall how many of the tagged notes it found
     (tested on notes it wasn't trained on).
   </p>
+  <ModelNotice what="Tag classifiers" />
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if rows.length > 0}
     <div class="scroll">

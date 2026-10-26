@@ -2,6 +2,7 @@
   import { api, errorMessage, type NoteMeta, type NoteSummary, type TagSuggestion } from "$lib/api";
   import { longDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
+  import ModelNotice from "$lib/ModelNotice.svelte";
   import StarRating from "$lib/StarRating.svelte";
 
   type Props = {
@@ -179,6 +180,8 @@
           </li>
         {/each}
       </ul>
+    {:else}
+      <ModelNotice what="Tag suggestions" />
     {/if}
     {#if suggestionError}<p class="error">{suggestionError}</p>{/if}
   </div>

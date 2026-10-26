@@ -29,6 +29,7 @@
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import { currentSearch } from "$lib/currentSearch.svelte";
+  import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
   import Icon from "$lib/Icon.svelte";
   import NoteList from "$lib/NoteList.svelte";
@@ -143,6 +144,10 @@
 
   // The background indexing job (embeddings): a progress line while it works.
   let indexStatus = $state<IndexStatus>({ state: "idle" });
+  // Why features that need the model are off, if they are: the footer says so until
+  // they work again (no pop-up to dismiss).
+  const modelReason = $derived(reducedText());
+  const firstIndex = $derived(model.status?.reduced?.reason === "firstIndex");
 
   onMount(() => {
     void Promise.all([loadFolders(), loadFacets()]);
@@ -812,7 +817,11 @@
   <div class="footer">
     <!-- The status line opens the Activity panel, which says what every job is doing. -->
     <div role="status">
-      {#if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
+      {#if modelReason && !firstIndex}
+        <button class="ghost index failed wrap" onclick={() => model.open?.()} title="Off: {MODEL_FEATURES}. Open Settings → Model">
+          Model off: {modelReason}. Settings → Model
+        </button>
+      {:else if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
         <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
           Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}{#if indexStatus.etaSecs != null},
             {timeLeft(indexStatus.etaSecs)}{/if}
@@ -820,9 +829,18 @@
             <span class="pause">Indexing pauses when the vault locks.</span>
           {/if}
         </button>
+        {#if firstIndex}
+          <button class="ghost index wrap" onclick={() => model.open?.()} title="Off until then: {MODEL_FEATURES}">
+            Related notes and suggestions start after the first index. Settings → Model
+          </button>
+        {/if}
       {:else if indexStatus.state === "paused"}
         <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
           Indexing paused while importing.
+        </button>
+      {:else if modelReason}
+        <button class="ghost index wrap" onclick={() => model.open?.()} title="Off: {MODEL_FEATURES}. Open Settings → Model">
+          Model not ready: {modelReason}. Settings → Model
         </button>
       {:else if indexStatus.state === "failed"}
         <button class="ghost index failed" onclick={onactivity} title={indexStatus.message}>
@@ -1109,6 +1127,11 @@
 
   .index.failed {
     color: var(--warn);
+  }
+
+  /* The model lines must show their reason and the Settings link in full. */
+  .index.wrap {
+    white-space: normal;
   }
   .broad {
     margin: 0;

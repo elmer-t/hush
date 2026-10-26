@@ -364,6 +364,14 @@ export const api = {
   /** Whether indexing uses every core on this machine (else half). */
   indexAllCores: () => invoke<boolean>("index_all_cores"),
   setIndexAllCores: (on: boolean) => invoke<void>("set_index_all_cores", { on }),
+  /** The vault's model as the indexing job last saw it; changes arrive as `MODEL_STATUS_EVENT`. */
+  modelStatus: () => invoke<ModelStatus>("model_status"),
+  /** Everything Settings → Model shows; checks each model's files. */
+  modelOverview: () => invoke<ModelOverview>("model_overview"),
+  /** Switches the vault to an available model; every note is re-embedded with it. */
+  setEmbeddingModel: (model: string) => invoke<void>("set_embedding_model", { model }),
+  /** Checks the model files again and restarts indexing if it had stopped on them. */
+  recheckModels: () => invoke<void>("recheck_models"),
   /** Notes closest in meaning, most similar first, with score and reasons; `null` if the note isn't indexed yet. */
   relatedNotes: (id: number, limit: number) => invoke<RelatedNote[] | null>("related_notes", { id, limit }),
 
@@ -522,6 +530,49 @@ export type IndexStatus =
   | { state: "failed"; message: string };
 
 export const INDEX_STATUS_EVENT = "index-status";
+
+/** How loading a model went this session (see `LoadState` in embed/models.rs). */
+export type LoadState =
+  | { state: "notLoaded" }
+  | { state: "loading" }
+  | { state: "ready" }
+  | { state: "missing"; file: string }
+  | { state: "checksum"; file: string }
+  | { state: "unknown" }
+  | { state: "failed"; message: string };
+export type ReducedReason = "missing" | "checksum" | "unknown" | "failed" | "loading" | "firstIndex";
+/** Mirrors `embed::models::ModelStatus`. `reduced` is set while features that need a model are off. */
+export type ModelStatus = {
+  model: string | null;
+  readyModel: string | null;
+  load: LoadState;
+  reduced: { reason: ReducedReason; message: string } | null;
+};
+export type Availability =
+  | { state: "available"; bytes: number }
+  | { state: "missing"; file: string }
+  | { state: "checksum"; file: string }
+  | { state: "unreadable"; file: string; message: string };
+export type ModelInfo = {
+  id: string;
+  name: string;
+  licence: string;
+  licenceUrl: string;
+  dims: number;
+  maxTokens: number;
+  availability: Availability;
+  /** Notes per second last measured on this machine. */
+  rate: number | null;
+};
+export type ModelOverview = {
+  status: ModelStatus;
+  /** The vault's model, from its settings. */
+  model: string;
+  notes: number;
+  models: ModelInfo[];
+  defaultRate: number;
+};
+export const MODEL_STATUS_EVENT = "model-status";
 /** Emitted with an `ActivitySnapshot`, at most four times a second. */
 export const ACTIVITY_EVENT = "activity-changed";
 /** The related-notes index changed (a note was re-embedded, trashed, restored or deleted). */
