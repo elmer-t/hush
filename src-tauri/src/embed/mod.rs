@@ -120,18 +120,21 @@ const ALL_MINILM_L6_V2_Q8: ModelDescriptor = ModelDescriptor {
     suggestion_threshold: MINILM_SUGGESTION_THRESHOLD,
 };
 
-// PINNED-VALUES (filled in from the real files)
+// Checksums and sizes of the optional files, taken from the files as Hugging Face served
+// them on 2026-10-26. The bundled files' sizes aren't needed (they are never downloaded).
 const BGE_MODEL_SIZE: u64 = 0;
 const BGE_TOKENIZER_SIZE: u64 = 0;
-const E5_MODEL_SHA256: &str = "";
-const E5_MODEL_SIZE: u64 = 0;
-const E5_TOKENIZER_SHA256: &str = "";
-const E5_TOKENIZER_SIZE: u64 = 0;
+const E5_MODEL_SHA256: &str = "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193";
+const E5_MODEL_SIZE: u64 = 118_308_185;
+const E5_TOKENIZER_SHA256: &str = "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39";
+const E5_TOKENIZER_SIZE: u64 = 17_082_730;
+// Not measured yet: E5 similarities sit high (0.7–0.9 for unrelated text is common),
+// MiniLM's lower. Re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
 const E5_SUGGESTION_THRESHOLD: f32 = 0.8;
-const MINILM_MODEL_SHA256: &str = "";
-const MINILM_MODEL_SIZE: u64 = 0;
-const MINILM_TOKENIZER_SHA256: &str = "";
-const MINILM_TOKENIZER_SIZE: u64 = 0;
+const MINILM_MODEL_SHA256: &str = "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1";
+const MINILM_MODEL_SIZE: u64 = 22_972_370;
+const MINILM_TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
+const MINILM_TOKENIZER_SIZE: u64 = 711_661;
 const MINILM_SUGGESTION_THRESHOLD: f32 = 0.4;
 
 /// One model: its files, the shape of its vectors and how text is fed to it.
