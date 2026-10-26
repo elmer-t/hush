@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod discover;
 pub mod embed;
+pub mod graph;
 pub mod import;
 pub mod markdown;
 pub mod session;
@@ -142,6 +143,7 @@ pub fn run() {
             commands::links::create_linked_note,
             commands::links::collapsed_sections,
             commands::links::set_section_collapsed,
+            commands::links::graph,
             commands::discover::discover_tags,
             commands::discover::cancel_discover_tags,
             commands::discover::create_tag_from_group,

@@ -249,7 +249,7 @@ fn idot(a: &[i8], b: &[i8]) -> i32 {
     sums.iter().sum::<i32>() + tail
 }
 
-fn dot(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
     let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
     let tail: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();

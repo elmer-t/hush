@@ -1,9 +1,10 @@
 //! Wikilinks between notes: the details panel's backlinks and outgoing links, and
 //! following a link from the preview.
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use super::Result;
+use crate::graph::{self, Graph, GraphOptions, GraphScope};
 use super::notes::{OpenedNote, new_note_body, opened};
 use crate::db::{Backlink, OutgoingLink};
 use crate::markdown;
@@ -63,4 +64,13 @@ pub fn set_section_collapsed(session: State<'_, Session>, section: String, colla
         }
         v.set_setting(DETAILS_COLLAPSED_SETTING, &sections.join(","))
     })?)
+}
+
+/// The subgraph of `scope` for the graph view, built off the main thread.
+#[tauri::command]
+pub async fn graph(app: AppHandle, scope: GraphScope, options: GraphOptions) -> Result<Graph> {
+    let graph = tauri::async_runtime::spawn_blocking(move || graph::build(&app.state::<Session>(), &scope, &options))
+        .await
+        .expect("graph build panicked")?;
+    Ok(graph)
 }

@@ -16,6 +16,7 @@
   import { confirmFolderTrash, confirmTrash } from "$lib/confirmTrash";
   import { findNote, rebase } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
+  import GraphView from "$lib/GraphView.svelte";
   import Import from "$lib/Import.svelte";
   import LinkPanels from "$lib/LinkPanels.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
@@ -35,7 +36,9 @@
   // How often the "Locks in" countdown is redrawn.
   const COUNTDOWN_TICK_MS = 15_000;
 
-  let view = $state<"note" | "settings" | "import" | "trash">("note");
+  let view = $state<"note" | "graph" | "settings" | "import" | "trash">("note");
+  // The views with the details panel beside them.
+  const details = $derived(view === "note" || view === "graph");
   // The import view stays mounted once opened, so a running import keeps its progress.
   let importOpened = $state(false);
   let showLeft = $state(true);
@@ -68,17 +71,17 @@
   let rightWidth = $state(loadWidth(RIGHT));
   let windowWidth = $state(window.innerWidth);
   const leftShown = $derived(showLeft);
-  const rightShown = $derived(view === "note" && showRight);
+  const rightShown = $derived(details && showRight);
   const fitted = $derived(
     fitWidths(
       windowWidth,
       leftShown ? leftWidth : null,
       rightShown ? rightWidth : null,
-      view === "note" && !showRight ? RAIL : 0,
+      details && !showRight ? RAIL : 0,
     ),
   );
   const leftColumn = $derived(leftShown ? fitted.left : 0);
-  const rightColumn = $derived(view !== "note" ? 0 : showRight ? fitted.right : RAIL);
+  const rightColumn = $derived(!details ? 0 : showRight ? fitted.right : RAIL);
   /** How wide a column may be dragged: its maximum, but never into the editor's minimum. */
   const maxWidth = (column: Column, other: number) =>
     Math.max(column.min, Math.min(column.max, windowWidth - EDITOR_MIN - other));
@@ -155,7 +158,7 @@
     sidebar?.focusSearch();
   }
 
-  async function toggleView(next: "settings" | "import" | "trash") {
+  async function toggleView(next: "graph" | "settings" | "import" | "trash") {
     // Leaving the note unmounts the editor, which would drop an unsaved edit.
     await editor?.flush();
     // The auto-lock time and the recently opened count may have been changed there.
@@ -247,13 +250,24 @@
     await api.lockVault();
   }
 
-  function show(note: OpenedNote, isNew: boolean) {
+  /** Makes `note` the open note; `stay` keeps the graph view instead of showing the editor. */
+  function show(note: OpenedNote, isNew: boolean, stay = false) {
     opened = note;
     summary = note.note;
     meta = note.meta;
     focusTitle = isNew;
-    view = "note";
+    if (!stay) view = "note";
     error = "";
+  }
+
+  /** A note clicked in the graph: it becomes the open note and the graph follows it. */
+  async function openFromGraph(id: number) {
+    if (opened?.note.id === id) return;
+    try {
+      show(await api.openNote(id), false, true);
+    } catch (e) {
+      error = errorMessage(e);
+    }
   }
 
   async function select(id: number) {
@@ -533,7 +547,7 @@
   class="workspace"
   class:no-left={!showLeft}
   class:no-right={!showRight}
-  class:no-details={view !== "note"}
+  class:no-details={!details}
   style:--left="{leftColumn}px"
   style:--right="{rightColumn}px"
 >
@@ -560,6 +574,10 @@
         <Icon name="plus" strokeWidth={2} />
         New note
         <span class="kbd">Ctrl N</span>
+      </button>
+      <button class="toggle" onclick={() => toggleView("graph")} aria-pressed={view === "graph"}>
+        <Icon name="graph" />
+        Graph
       </button>
       <button class="toggle" onclick={() => toggleView("import")} aria-pressed={view === "import"}>
         <Icon name="import" />
@@ -626,6 +644,12 @@
     {/if}
     {#if view === "settings"}
       <div class="page"><Settings onreviewtag={reviewTag} /></div>
+    {:else if view === "graph"}
+      <GraphView
+        centre={summary ? { id: summary.id, folder: summary.folder } : null}
+        onopen={openFromGraph}
+        onedit={select}
+      />
     {:else if view === "trash"}
       <Trash onrestored={restored} onrestoredfolder={restoredFolder} oncount={(n) => (trashCount = n)} />
     {:else if view === "note"}
@@ -656,7 +680,7 @@
     {/if}
   </main>
 
-  {#if view === "note"}
+  {#if details}
     {#if showRight}
       <div class="right">
         {#if opened && summary && meta}
@@ -672,7 +696,7 @@
             revision={linksRevision}
             {isOpen}
             ontoggle={toggleSection}
-            onopen={select}
+            onopen={view === "graph" ? openFromGraph : select}
             onfollow={followLink}
           />
           <RelatedNotes
@@ -680,7 +704,7 @@
             revision={linksRevision}
             open={isOpen("related")}
             ontoggle={(open) => toggleSection("related", open)}
-            onopen={select}
+            onopen={view === "graph" ? openFromGraph : select}
           />
         {/if}
       </div>

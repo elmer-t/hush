@@ -3,6 +3,7 @@
 
 mod discover;
 mod embeddings;
+mod graph;
 mod heads;
 mod links;
 mod lock;
@@ -27,6 +28,7 @@ pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCursor, QueuePage, QueuedText, QueuedVector,
     StoredVector,
 };
+pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;

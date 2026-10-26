@@ -379,6 +379,50 @@ export const api = {
   collapsedSections: () => invoke<DetailsSection[]>("collapsed_sections"),
   setSectionCollapsed: (section: DetailsSection, collapsed: boolean) =>
     invoke<void>("set_section_collapsed", { section, collapsed }),
+  /** The subgraph of a scope for the graph view; never the whole vault uncapped. */
+  graph: (scope: GraphScope, options: GraphOptions) => invoke<Graph>("graph", { scope, options }),
+};
+
+/** Mirrors `graph::GraphScope`. */
+export type GraphScope = { kind: "local"; id: number; depth: number } | { kind: "global"; scope: GraphScopeNotes };
+/** Mirrors `db::GraphScopeNotes`; a tag takes its nested tags too. */
+export type GraphScopeNotes =
+  | { kind: "all" }
+  | { kind: "folder"; folder: string }
+  | { kind: "tag"; tag: string }
+  | { kind: "search"; query: SearchQuery };
+/** Mirrors `graph::GraphOptions`. */
+export type GraphOptions = {
+  meaning: boolean;
+  tags: boolean;
+  ghosts: boolean;
+  /** Lowest cosine similarity of a meaning edge. */
+  threshold: number;
+  /** Meaning edges per note, at most. */
+  neighbours: number;
+  /** Most notes in the graph. */
+  cap: number;
+};
+export type GraphNode = {
+  /** `n<id>`, `t:<tag>` or `g:<target>`. */
+  key: string;
+  kind: "note" | "tag" | "ghost";
+  id: number | null;
+  label: string;
+  folder: string;
+  topic: string | null;
+  tags: string[];
+  /** Links from the local graph's centre. */
+  depth: number | null;
+};
+export type GraphEdge = { source: string; target: string; kind: "link" | "meaning" | "tag"; score: number | null };
+export type Graph = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** Notes in the scope (for a local graph, those found before the cap stopped it). */
+  total: number;
+  capped: boolean;
+  meaningUnavailable: boolean;
 };
 
 /** Mirrors `db::Resolution`: what a link target means. */
