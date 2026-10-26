@@ -58,6 +58,10 @@
     onaccepttag: (ids: number[], tag: string, sources: string[]) => Promise<MetadataEditReport | null>;
     /** Rejects a tag on notes in the Suggestions view. Resolves to whether it worked. */
     onrejecttag: (ids: number[], tag: string) => Promise<boolean>;
+    /** Whether the Activity panel is open. */
+    activityOpen: boolean;
+    /** Toggles the Activity panel (the footer status line and its button). */
+    onactivity: () => void;
   };
   let {
     selected,
@@ -72,6 +76,8 @@
     onedit,
     onaccepttag,
     onrejecttag,
+    activityOpen,
+    onactivity,
   }: Props = $props();
   const selectedId = $derived(selected?.id ?? null);
 
@@ -804,21 +810,31 @@
     />
   {/if}
   <div class="footer">
-    {#if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
-      <div class="index" role="status">
-        Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}{#if indexStatus.etaSecs != null},
-          {timeLeft(indexStatus.etaSecs)}{/if}
-        {#if indexStatus.total - indexStatus.done >= PAUSE_NOTICE_MIN}
-          <span class="pause">Indexing pauses when the vault locks.</span>
-        {/if}
-      </div>
-    {:else if indexStatus.state === "paused"}
-      <div class="index" role="status">Indexing paused while importing.</div>
-    {:else if indexStatus.state === "failed"}
-      <div class="index failed" role="status" title={indexStatus.message}>
-        Indexing stopped: {indexStatus.message}
-      </div>
-    {/if}
+    <!-- The status line opens the Activity panel, which says what every job is doing. -->
+    <div role="status">
+      {#if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
+        <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
+          Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}{#if indexStatus.etaSecs != null},
+            {timeLeft(indexStatus.etaSecs)}{/if}
+          {#if indexStatus.total - indexStatus.done >= PAUSE_NOTICE_MIN}
+            <span class="pause">Indexing pauses when the vault locks.</span>
+          {/if}
+        </button>
+      {:else if indexStatus.state === "paused"}
+        <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
+          Indexing paused while importing.
+        </button>
+      {:else if indexStatus.state === "failed"}
+        <button class="ghost index failed" onclick={onactivity} title={indexStatus.message}>
+          Indexing stopped: {indexStatus.message}
+        </button>
+      {/if}
+    </div>
+    <button class="trash" class:open={activityOpen} aria-pressed={activityOpen} onclick={onactivity}>
+      <Icon name="activity" />
+      <span>Activity</span>
+      <span class="n kbd">Ctrl J</span>
+    </button>
     <button class="trash" class:open={trashOpen} aria-current={trashOpen ? "page" : undefined} onclick={ontrash}>
       <Icon name="trash" />
       <span>Trash</span>
@@ -1077,6 +1093,11 @@
   }
 
   .index {
+    display: block;
+    width: 100%;
+    height: auto;
+    text-align: left;
+    font-weight: normal;
     padding: 2px 8px 6px;
     font-size: 12px;
     color: var(--muted);

@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod classify;
 pub mod commands;
 pub mod config;
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use crate::commands::activity::ActivityPanel;
 use crate::commands::discover::DiscoverJob;
 use crate::commands::embeddings::Indexer;
 use crate::commands::import::ImportJob;
@@ -31,12 +33,14 @@ pub fn run() {
         .manage(Session::default())
         .manage(ImportJob::default())
         .manage(DiscoverJob::default())
+        .manage(ActivityPanel::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = Config::new(config_path);
             let all_cores = config.get().index_all_cores;
             app.manage(config);
             app.manage(Indexer::new(app.path().resource_dir()?.join("models"), all_cores));
+            commands::activity::start_emitter(app.handle());
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
             // while the window is hidden.
@@ -150,6 +154,9 @@ pub fn run() {
             commands::review::accept_tag_suggestions,
             commands::review::reject_tag_suggestions,
             commands::review::retrain_tags,
+            commands::activity::activity_status,
+            commands::activity::set_activity_panel_open,
+            commands::activity::note_internals,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

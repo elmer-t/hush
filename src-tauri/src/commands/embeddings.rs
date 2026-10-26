@@ -53,11 +53,34 @@ struct BundledModels {
     loaded: Mutex<HashMap<(&'static str, usize), Arc<dyn Embedder>>>,
 }
 
-impl EmbedderSource for BundledModels {
-    fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
-        let descriptor = embed::descriptor(model).ok_or_else(|| EmbedError::UnknownModel(model.to_string()))?;
+impl BundledModels {
+    /// The threads a model gets, and the machine's cores.
+    fn threads(&self) -> (usize, usize) {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         let threads = if self.all_cores.load(Ordering::SeqCst) { cores } else { (cores / 2).max(1) };
+        (threads, cores)
+    }
+}
+
+impl Indexer {
+    /// For the Activity panel: whether `model` is loaded with the current core count,
+    /// the threads it uses and the machine's cores.
+    pub fn model_state(&self, model: &str) -> (bool, usize, usize) {
+        let (threads, cores) = self.models.threads();
+        (self.models.is_loaded(model), threads, cores)
+    }
+}
+
+impl EmbedderSource for BundledModels {
+    fn is_loaded(&self, model: &str) -> bool {
+        let Some(descriptor) = embed::descriptor(model) else { return false };
+        let (threads, _) = self.threads();
+        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&(descriptor.id, threads))
+    }
+
+    fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        let descriptor = embed::descriptor(model).ok_or_else(|| EmbedError::UnknownModel(model.to_string()))?;
+        let (threads, _) = self.threads();
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(e) = loaded.get(&(descriptor.id, threads)) {
             return Ok(e.clone());

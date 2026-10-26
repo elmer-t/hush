@@ -4,6 +4,7 @@
 mod discover;
 mod embeddings;
 mod heads;
+mod internals;
 mod links;
 mod lock;
 mod metadata;
@@ -28,6 +29,7 @@ pub use embeddings::{
     StoredVector,
 };
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
+pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
