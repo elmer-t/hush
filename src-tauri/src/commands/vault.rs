@@ -6,7 +6,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use zeroize::Zeroizing;
 
-use super::{LOCKED_EVENT, Result, embeddings, training};
+use std::time::Instant;
+
+use super::{LOCKED_EVENT, Result, activity, embeddings, training};
+use crate::activity::{Job, count};
 use crate::config::Config;
 use crate::db::Vault;
 use crate::session::{self, Session};
@@ -74,16 +77,31 @@ pub async fn open_vault(
     passphrase: String,
 ) -> Result<VaultInfo> {
     let passphrase = Zeroizing::new(passphrase);
+    let started = Instant::now();
+    let mut upgraded = None;
     let vault = Vault::open_with_progress(&path, &passphrase, &mut |progress| {
+        upgraded = Some(progress);
         let _ = app.emit(VAULT_UPGRADE_EVENT, progress);
     })?;
-    unlock(&app, &session, &config, vault, path)
+    let opened = started.elapsed();
+    let info = unlock(&app, &session, &config, vault, path)?;
+    // The migration ran before the workspace (and its Activity panel) existed: it shows
+    // as the last run.
+    if let Some(upgrade) = upgraded {
+        session.activity().reporter(session.generation()).record(
+            Job::Migration,
+            opened,
+            format!("upgraded the vault, rebuilding the search index for {} notes", count(upgrade.total as u64)),
+        );
+    }
+    Ok(info)
 }
 
 fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
     training::start(app, generation);
+    activity::start(app, generation);
     // A config write failure must not keep the user out of an unlocked vault.
     let _ = config.update(|c| c.remember(&path));
     Ok(VaultInfo::new(path))

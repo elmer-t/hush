@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use super::{CommandError, Result};
+use crate::activity::{Job, count};
 use crate::db::MetadataEditReport;
 use crate::discover::{self, DiscoverError, Discovery, Options};
 use crate::session::{Session, SessionError};
@@ -18,6 +19,9 @@ use crate::session::{Session, SessionError};
 #[derive(Default)]
 pub struct DiscoverJob {
     runs: AtomicU64,
+    /// The latest run started (a cancel bumps `runs` without starting one), so a run
+    /// cancelled by a newer one doesn't mark that one stopped in the Activity panel.
+    started: AtomicU64,
     last: Mutex<Option<LastRun>>,
 }
 
@@ -58,7 +62,10 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
     session.touch();
     let job = app.state::<DiscoverJob>();
     let run = job.runs.fetch_add(1, Ordering::SeqCst) + 1;
+    job.started.store(run, Ordering::SeqCst);
     *job.last.lock().unwrap() = None;
+    let activity = session.activity().reporter(generation);
+    activity.start(Job::Discover, "grouping notes by meaning");
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let job = handle.state::<DiscoverJob>();
@@ -66,6 +73,19 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
         discover::run(&handle.state::<Session>(), generation, &options, &cancelled)
     })
     .await;
+    // A run that a newer one replaced leaves the panel to the newer one.
+    if app.state::<DiscoverJob>().started.load(Ordering::SeqCst) == run {
+        match &result {
+            Ok(Ok(d)) => activity.finish(
+                Job::Discover,
+                format!("{} groups from {} notes ({} sampled)", count(d.groups.len() as u64), count(d.notes as u64), count(d.sampled as u64)),
+            ),
+            Ok(Err(DiscoverError::Cancelled)) => activity.stop(Job::Discover, "cancelled"),
+            Ok(Err(DiscoverError::Locked)) => {}
+            Ok(Err(e)) => activity.fail(Job::Discover, e.to_string()),
+            Err(_) => activity.fail(Job::Discover, "the grouping thread failed"),
+        }
+    }
     match result {
         Ok(Ok(mut discovery)) => {
             let members = discovery.groups.iter_mut().map(|g| std::mem::take(&mut g.members)).collect();

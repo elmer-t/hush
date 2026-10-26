@@ -21,6 +21,7 @@ use super::{
     Config, Example, FOLDS, Head, MIN_NEGATIVES, MIN_POSITIVES, REJECTED_WEIGHT, TRAINING_VERSION, UNTAGGED_WEIGHT,
     balance, cross_validate, seed_for, train,
 };
+use crate::activity::{Job, count, duration_text};
 use crate::db::{self, StoredHead, new_stored_head};
 use crate::embed::job::sleep_while_open;
 use crate::session::{Session, SessionError};
@@ -69,6 +70,7 @@ pub struct TrainPass {
 /// whether the vault changed, and trains once it has been unchanged for `quiet`.
 /// `report` gets every pass that changed a head.
 pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, report: impl Fn(&TrainPass)) {
+    let activity = session.activity().reporter(generation);
     let mut seen = None;
     // A pass on unlock, for heads that went stale while locked (or never were trained).
     let mut changed_at = Some(Instant::now() - quiet);
@@ -84,6 +86,9 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
         // The notes an import brings have no vectors yet: wait until it is over.
         if session.import_running() {
             changed_at = Some(Instant::now());
+            activity.wait(Job::Training, "import running");
+        } else if changed_at.is_some_and(|t| t.elapsed() < quiet) {
+            activity.wait(Job::Training, format!("vault changed; trains after {} s of quiet", quiet.as_secs()));
         }
         if changed_at.is_some_and(|t| t.elapsed() >= quiet) {
             changed_at = None;
@@ -95,7 +100,10 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
                 }
                 Err(TrainError::Locked) => return,
                 // Not fatal: suggestions fall back to descriptions; the next change retries.
-                Err(e) => eprintln!("hush: tag training failed: {e}"),
+                Err(e) => {
+                    eprintln!("hush: tag training failed: {e}");
+                    activity.fail(Job::Training, e.to_string());
+                }
             }
             // Its own writes aren't a reason to train again.
             match session.with_vault_quiet(generation, |v| Ok(v.change_count())) {
@@ -113,14 +121,17 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
 /// examples whose inputs changed. Each head is written as soon as it is trained.
 pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError> {
     let _one_at_a_time = PASSES.lock().unwrap_or_else(|e| e.into_inner());
+    let activity = session.activity().reporter(generation);
     let mut result = TrainPass::default();
     let Some((model, labels, heads)) = session.with_vault_quiet(generation, |v| {
         let Some(model) = v.embedding_model_ready()? else { return Ok(None) };
         Ok(Some((model, v.training_labels()?, v.tag_heads()?)))
     })?
     else {
+        activity.idle(Job::Training, Some("no model is ready yet"));
         return Ok(result);
     };
+    activity.start(Job::Training, "reading note vectors");
 
     let mut ids: Vec<i64> = Vec::new();
     let mut vectors: Vec<Zeroizing<Vec<f32>>> = Vec::new();
@@ -137,6 +148,7 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
             ids.push(id);
             vectors.push(vector);
         }
+        activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
         match page.next {
             Some(next) => after = next,
             None => break,
@@ -173,12 +185,23 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     }
     result.dropped = session.with_vault_quiet(generation, |v| v.retain_tag_heads(&model, &keep))?;
 
+    if result.dropped > 0 {
+        activity.log(Job::Training, format!("dropped {} heads", count(result.dropped as u64)));
+    }
+
     let config = Config::default();
     let keep_going = || session.is_open(generation);
-    for (tag, positives, rejected, negatives, inputs) in stale {
+    let heads_to_train = stale.len();
+    for (i, (tag, positives, rejected, negatives, inputs)) in stale.into_iter().enumerate() {
         if !keep_going() {
             return Err(TrainError::Locked);
         }
+        activity.progress(
+            Job::Training,
+            format!("training head {tag} ({} positives, {} negatives)", count(positives.len() as u64), count(negatives as u64)),
+            i as u64,
+            Some(heads_to_train as u64),
+        );
         let started = Instant::now();
         let mut weight = vec![UNTAGGED_WEIGHT; ids.len()];
         rejected.iter().for_each(|i| weight[*i] = REJECTED_WEIGHT);
@@ -202,10 +225,23 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         let stored = new_stored_head(&tag, &model, head, (positives.len(), negatives), quality, inputs);
         if !session.with_vault_quiet(generation, |v| v.write_tag_head(&stored))? {
             // The ready model changed meanwhile; the next pass starts over with it.
+            activity.finish(Job::Training, "stopped: the ready model changed");
             return Ok(result);
         }
+        activity.log(Job::Training, format!("head {tag} trained ({})", duration_text(elapsed)));
         result.trained.push(tag);
         result.durations.push(elapsed);
+    }
+    let summary = format!(
+        "{} heads trained, {} dropped, {} up to date",
+        count(result.trained.len() as u64),
+        count(result.dropped as u64),
+        count(result.current as u64)
+    );
+    if result.trained.is_empty() && result.dropped == 0 {
+        activity.finish_quietly(Job::Training, summary);
+    } else {
+        activity.finish(Job::Training, summary);
     }
     Ok(result)
 }
