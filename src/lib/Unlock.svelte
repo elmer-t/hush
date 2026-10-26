@@ -13,6 +13,8 @@
     type VaultUpgrade,
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  // The 256 px Tauri app icon, so the unlock screen always matches the installed icon.
+  import appIcon from "../../src-tauri/icons/128x128@2x.png";
 
   let { lockReason, onunlock }: { lockReason: LockReason | null; onunlock: (vault: VaultInfo) => void } = $props();
 
@@ -170,10 +172,9 @@
 {/snippet}
 
 <main>
-  <div class="brand">
-    <span class="mark" aria-hidden="true">h</span>
-    <h1>Hush</h1>
-  </div>
+  <h1 class="brand">
+    <img src={appIcon} alt="Hush" width="96" height="96" />
+  </h1>
 
   {#if creating && target}
     <form class="card" onsubmit={submit}>
@@ -326,32 +327,14 @@
   }
 
   .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .mark {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 11px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-family: var(--serif);
-    font-style: italic;
-    font-size: 26px;
-    line-height: 1;
-  }
-
-  h1 {
     margin: 0;
-    font-family: var(--serif);
-    font-size: 30px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    line-height: 0;
+  }
+
+  .brand img {
+    display: block;
+    width: 96px;
+    height: 96px;
   }
 
   .card {
