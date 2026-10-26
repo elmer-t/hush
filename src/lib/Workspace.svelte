@@ -9,6 +9,7 @@
     type MetadataEditReport,
     type NoteMeta,
     type NoteSummary,
+    type DetailsSection,
     type OpenedNote,
     type VaultInfo,
   } from "$lib/api";
@@ -16,10 +17,12 @@
   import { findNote, rebase } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
   import Import from "$lib/Import.svelte";
+  import LinkPanels from "$lib/LinkPanels.svelte";
   import MetadataPanel from "$lib/MetadataPanel.svelte";
   import NoteEditor from "$lib/NoteEditor.svelte";
   import { EDITOR_MIN, fitWidths, LEFT, loadWidth, RAIL, RIGHT, saveWidth, type Column } from "$lib/layout";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
+  import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
@@ -37,7 +40,13 @@
   let importOpened = $state(false);
   let showLeft = $state(true);
   let showRight = $state(true);
-  let showRelated = $state(true);
+  // Details panel sections the user collapsed; stored in the vault.
+  let collapsed = $state<DetailsSection[]>([]);
+  // Bumped when the open note was saved or other notes changed, so the links panels and
+  // the related notes' reasons are read again.
+  let linksRevision = $state(0);
+  // The chooser a clicked ambiguous or unresolved link opens.
+  let linkMenu = $state<{ x: number; y: number; label: string; items: MenuItem[] } | null>(null);
   let opened = $state<OpenedNote | null>(null);
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
@@ -95,6 +104,10 @@
     const ticker = setInterval(() => (now = Date.now()), COUNTDOWN_TICK_MS);
     void loadAutoLock();
     void loadTrashCount();
+    void api
+      .collapsedSections()
+      .then((sections) => (collapsed = sections))
+      .catch(() => {});
     return () => {
       clearInterval(ticker);
       void unlisten.then((stop) => stop());
@@ -175,6 +188,60 @@
     view = "note";
   }
 
+  const isOpen = (section: DetailsSection) => !collapsed.includes(section);
+
+  function toggleSection(section: DetailsSection, open: boolean) {
+    collapsed = open ? collapsed.filter((s) => s !== section) : [...collapsed.filter((s) => s !== section), section];
+    api.setSectionCollapsed(section, !open).catch((e) => (error = errorMessage(e)));
+  }
+
+  /**
+   * Follows a `[[link]]`: opens the note it names; for an ambiguous link, a menu at the
+   * click to pick one; for an unresolved one, a menu offering to create it.
+   */
+  async function followLink(target: string, x: number, y: number) {
+    let link;
+    try {
+      link = await api.resolveLink(target);
+    } catch (e) {
+      error = errorMessage(e);
+      return;
+    }
+    if (link.resolution.kind === "unique") {
+      await select(link.resolution.ids);
+    } else if (link.resolution.kind === "ambiguous") {
+      linkMenu = {
+        x,
+        y,
+        label: `Notes matching ${target}`,
+        items: link.notes.map((n) => ({
+          label: n.folder ? `${n.folder}/${n.title}` : n.title,
+          icon: "note",
+          action: () => void select(n.id),
+        })),
+      };
+    } else {
+      linkMenu = {
+        x,
+        y,
+        label: `No note ${target}`,
+        items: [{ label: `Create “${link.target}”`, icon: "plus", action: () => void createLinked(link.target) }],
+      };
+    }
+  }
+
+  async function createLinked(target: string) {
+    await editor?.flush();
+    try {
+      const note = await api.createLinkedNote(target);
+      await sidebar?.refresh([note.note.folder]);
+      show(note, false);
+      linksRevision++;
+    } catch (e) {
+      error = errorMessage(e);
+    }
+  }
+
   async function lock() {
     await editor?.flush();
     await api.lockVault();
@@ -214,6 +281,7 @@
     if (summary?.id === s.id) {
       summary = s;
       meta = m;
+      linksRevision++;
     }
     sidebar?.noteSaved(s);
   }
@@ -221,6 +289,7 @@
   async function renamed(fresh: OpenedNote) {
     // A move changes both the old and the new folder.
     const changed = [fresh.note.folder];
+    linksRevision++;
     if (summary?.id === fresh.note.id) {
       changed.push(summary.folder);
       summary = fresh.note;
@@ -254,6 +323,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     await sidebar?.refresh([...sources, folder]);
     // Reopen, so its folder field and any rewritten links are current.
     if (open !== null) {
@@ -279,6 +350,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     await sidebar?.folderMoved(from, moved);
     if (open !== null) {
       try {
@@ -303,6 +376,8 @@
       return null;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (report.changed.length === 0) return report;
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
@@ -349,6 +424,8 @@
       return null;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (report.changed.length === 0) return report;
     await sidebar?.refresh(sources);
     if (open !== null && report.changed.includes(open)) {
@@ -398,6 +475,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (open !== null) opened = summary = meta = null;
     void loadTrashCount();
     await sidebar?.refresh(sources);
@@ -423,6 +502,8 @@
       return false;
     }
     error = "";
+    // Links may have been rewritten, or their notes trashed.
+    linksRevision++;
     if (open !== null) opened = summary = meta = null;
     void loadTrashCount();
     return true;
@@ -560,6 +641,7 @@
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}
+            onwikilink={followLink}
           />
         {/key}
       {:else}
@@ -585,7 +667,21 @@
             onaccept={acceptSuggestion}
             revision={suggestionRevision}
           />
-          <RelatedNotes id={summary.id} bind:open={showRelated} onopen={select} />
+          <LinkPanels
+            id={summary.id}
+            revision={linksRevision}
+            {isOpen}
+            ontoggle={toggleSection}
+            onopen={select}
+            onfollow={followLink}
+          />
+          <RelatedNotes
+            id={summary.id}
+            revision={linksRevision}
+            open={isOpen("related")}
+            ontoggle={(open) => toggleSection("related", open)}
+            onopen={select}
+          />
         {/if}
       </div>
       <ResizeHandle
@@ -607,6 +703,10 @@
     {/if}
   {/if}
 </div>
+
+{#if linkMenu}
+  <ContextMenu {...linkMenu} onclose={() => (linkMenu = null)} />
+{/if}
 
 <style>
   /* --left and --right are set from the script (stored widths, hidden columns, the rail). */

@@ -161,3 +161,70 @@ fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
     assert_eq!(vault.resolve_link("q/T/M").unwrap(), Resolution::Unique(m));
     assert!(vault.note(src).unwrap().updated_at >= before);
 }
+
+#[test]
+fn backlinks_carry_the_line_around_the_link() {
+    let (_dir, mut vault) = common::vault();
+    let target = vault.create_note("", "Target", "").unwrap();
+    let long = format!("{} then [[Target]] and {}", "a".repeat(200), "b".repeat(200));
+    vault.create_note("", "Short", "---\nx: 1\n---\nfirst line\n  see [[Other]] and [[target|it]] here  \nlast").unwrap();
+    vault.create_note("", "Long", &long).unwrap();
+    let back: Vec<_> = vault.backlinks(target).unwrap().into_iter().map(|b| (b.note.title, b.snippet)).collect();
+    assert_eq!(back[1], ("Short".into(), "see [[Other]] and [[target|it]] here".into()));
+    let (title, snippet) = &back[0];
+    assert_eq!(title, "Long");
+    assert!(snippet.starts_with('…') && snippet.ends_with('…'), "{snippet}");
+    assert!(snippet.contains("then [[Target]] and"), "{snippet}");
+    assert!(snippet.chars().count() <= hush_lib::db::SNIPPET_CHARS + 2);
+}
+
+#[test]
+fn outgoing_and_resolved_links_name_their_notes() {
+    let (_dir, mut vault) = common::vault();
+    let a = vault.create_note("a", "Dup", "").unwrap();
+    let src = vault.create_note("", "Src", "").unwrap();
+    let b = vault.create_note("b", "Dup", "").unwrap();
+    vault.update_body(src, "[[Dup]] [[a/Dup]] [[Nope]]").unwrap();
+    let mut out: Vec<_> =
+        vault.outgoing_links(src).unwrap().into_iter().map(|l| (l.target, l.notes.iter().map(|n| n.id).collect::<Vec<_>>())).collect();
+    out.sort();
+    assert_eq!(out, vec![("Dup".into(), vec![a, b]), ("Nope".into(), vec![]), ("a/Dup".into(), vec![a])]);
+    let resolved = vault.resolve_link_notes("b/Dup.md").unwrap();
+    assert_eq!(resolved.resolution, Resolution::Unique(b));
+    assert_eq!(resolved.notes[0].folder, "b");
+}
+
+#[test]
+fn reasons_report_direct_and_two_step_links_tags_and_shared_fields() {
+    let (_dir, mut vault) = common::vault();
+    vault.create_note("", "Hub", "").unwrap();
+    let mid = vault.create_note("", "Mid", "").unwrap();
+    let fan = vault.create_note("", "Fan", "").unwrap();
+    let open = vault
+        .create_note("work", "Open", "---\nauthor: Ann\ntopic: Plans\ntags: [shared, mine]\n---\n[[Hub]] [[Mid]] [[B]]")
+        .unwrap();
+    let b = vault.create_note("work", "B", "---\nauthor: ann\ntags: [shared]\n---\n#theirs [[Hub]] [[Open]]").unwrap();
+    let c = vault.create_note("else", "C", "nothing in common").unwrap();
+    vault.update_body(mid, "[[C]]").unwrap();
+    vault.update_body(fan, "[[Open]] [[B]] [[C]]").unwrap();
+
+    let reasons = vault.relation_reasons(open, &[b, c, 999]).unwrap();
+    let titles = |v: &[hush_lib::db::TitledNote]| v.iter().map(|n| n.title.clone()).collect::<Vec<_>>();
+
+    let rb = &reasons[0];
+    assert!(rb.links_to && rb.linked_from);
+    assert_eq!(titles(&rb.both_link_to), vec!["Hub"]);
+    assert_eq!(titles(&rb.both_linked_from), vec!["Fan"]);
+    assert_eq!(rb.shared_tags, vec!["shared"]);
+    assert!(rb.same_folder);
+    assert_eq!(rb.same_author.as_deref(), Some("ann"));
+    assert_eq!(rb.same_topic, None);
+
+    let rc = &reasons[1];
+    assert!(!rc.links_to && !rc.linked_from);
+    assert_eq!(titles(&rc.via), vec!["Mid"], "Open links to Mid, which links to C");
+    assert_eq!(titles(&rc.both_linked_from), vec!["Fan"]);
+    assert!(rc.shared_tags.is_empty() && !rc.same_folder);
+
+    assert_eq!(reasons[2], hush_lib::db::Reasons::default(), "an unknown note has no reasons");
+}

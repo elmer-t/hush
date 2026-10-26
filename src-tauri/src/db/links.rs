@@ -28,13 +28,21 @@ pub struct Backlink {
     pub note: NoteSummary,
     /// The linking note's target also matches other notes.
     pub ambiguous: bool,
+    /// The line around the first such link in the linking note, at most
+    /// [`SNIPPET_CHARS`] characters.
+    pub snippet: String,
 }
+
+/// Longest backlink snippet, in characters.
+pub const SNIPPET_CHARS: usize = 160;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutgoingLink {
     pub target: String,
     pub resolution: Resolution,
+    /// The notes the target resolves to, in the order of `resolution`'s ids.
+    pub notes: Vec<NoteSummary>,
 }
 
 impl Vault {
@@ -42,6 +50,22 @@ impl Vault {
     pub fn resolve_link(&self, target: &str) -> Result<Resolution> {
         let (path, title) = markdown::split_target(target);
         resolve(&self.conn, &path, &title)
+    }
+
+    /// [`Vault::resolve_link`] with the summaries of the notes it resolves to.
+    pub fn resolve_link_notes(&self, target: &str) -> Result<OutgoingLink> {
+        let (path, title) = markdown::split_target(target);
+        self.outgoing(&path, &title)
+    }
+
+    fn outgoing(&self, path: &str, title: &str) -> Result<OutgoingLink> {
+        let resolution = resolve(&self.conn, path, title)?;
+        let ids = match &resolution {
+            Resolution::Unique(id) => vec![*id],
+            Resolution::Ambiguous(ids) => ids.clone(),
+            Resolution::Missing => Vec::new(),
+        };
+        Ok(OutgoingLink { target: join(path, title), resolution, notes: self.note_summaries(&ids)? })
     }
 
     pub fn backlinks(&self, id: i64) -> Result<Vec<Backlink>> {
@@ -64,10 +88,15 @@ impl Vault {
             *entry &= ambiguous;
         }
 
-        let mut stmt = self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.id = ?1"))?;
+        let mut stmt =
+            self.conn.prepare_cached(&format!("SELECT {SUMMARY_COLUMNS}, n.body FROM notes n WHERE n.id = ?1"))?;
         let mut backlinks = sources
             .into_iter()
-            .map(|(from, ambiguous)| Ok(Backlink { note: stmt.query_row([from], NoteSummary::from_row)?, ambiguous }))
+            .map(|(from, ambiguous)| {
+                let (note, body) = stmt.query_row([from], |r| Ok((NoteSummary::from_row(r)?, r.get::<_, String>(8)?)))?;
+                let snippet = self.link_snippet(&body, id, &title)?;
+                Ok(Backlink { note, ambiguous, snippet })
+            })
             .collect::<Result<Vec<_>>>()?;
         backlinks.sort_by_key(|b| b.note.title.to_lowercase());
         Ok(backlinks)
@@ -79,12 +108,26 @@ impl Vault {
         )?;
         let targets: Vec<(String, String)> =
             stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-        targets
-            .into_iter()
-            .map(|(path, title)| {
-                Ok(OutgoingLink { resolution: resolve(&self.conn, &path, &title)?, target: join(&path, &title) })
-            })
-            .collect()
+        targets.into_iter().map(|(path, title)| self.outgoing(&path, &title)).collect()
+    }
+
+    /// The line around the first link in `body` that can mean note `id` (titled `title`).
+    fn link_snippet(&self, body: &str, id: i64, title: &str) -> Result<String> {
+        for link in markdown::parse(body).links {
+            // `NOCASE`, as the links table compares titles.
+            if !link.title.eq_ignore_ascii_case(title) {
+                continue;
+            }
+            let means = match resolve(&self.conn, &link.path, &link.title)? {
+                Resolution::Unique(target) => target == id,
+                Resolution::Ambiguous(ids) => ids.contains(&id),
+                Resolution::Missing => false,
+            };
+            if means {
+                return Ok(snippet_around(body, link.target_range));
+            }
+        }
+        Ok(String::new())
     }
 
     /// Links from the given notes that match more than one note, as
@@ -149,6 +192,34 @@ fn shortest_link(conn: &Connection, id: i64) -> Result<String> {
     }
     // The full path always resolves uniquely: folder equality wins and (folder, title) is unique.
     Ok(join(&folder, &title))
+}
+
+/// The line of `body` that holds `range`, trimmed, cut to [`SNIPPET_CHARS`] characters
+/// around `range` with `…` where something was cut.
+fn snippet_around(body: &str, range: std::ops::Range<usize>) -> String {
+    let start = body[..range.start].rfind('\n').map_or(0, |i| i + 1);
+    let end = body[range.end..].find('\n').map_or(body.len(), |i| range.end + i);
+    let line = &body[start..end];
+    let at = range.start - start;
+    let before: Vec<char> = line[..at].chars().collect();
+    let after: Vec<char> = line[at..].chars().collect();
+    if before.len() + after.len() <= SNIPPET_CHARS {
+        return line.trim().to_string();
+    }
+    // A third of the room before the link, the rest from it on.
+    let lead = (SNIPPET_CHARS / 3).min(before.len());
+    let tail = (SNIPPET_CHARS - lead).min(after.len());
+    let lead = (SNIPPET_CHARS - tail).min(before.len());
+    let mut out = String::new();
+    if lead < before.len() {
+        out.push('…');
+    }
+    out.extend(&before[before.len() - lead..]);
+    out.extend(&after[..tail]);
+    if tail < after.len() {
+        out.push('…');
+    }
+    out.trim().to_string()
 }
 
 fn join(path: &str, title: &str) -> String {

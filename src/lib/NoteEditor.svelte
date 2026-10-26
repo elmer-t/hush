@@ -19,6 +19,8 @@
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
+    /** A `[[wikilink]]` in the preview was clicked. */
+    onwikilink: (target: string, x: number, y: number) => void;
   };
   let {
     opened,
@@ -29,6 +31,7 @@
     onsaved,
     onrenamed,
     ondeleted,
+    onwikilink,
   }: Props = $props();
 
   const SAVE_DELAY_MS = 500;
@@ -263,7 +266,7 @@
       <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} />
     </div>
     <div class="rendered">
-      <Preview {body} large={showPreviewOnly} />
+      <Preview {body} large={showPreviewOnly} {onwikilink} />
     </div>
   </div>
 </section>

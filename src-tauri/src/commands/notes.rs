@@ -102,14 +102,19 @@ pub fn set_confirm_trash(session: State<'_, Session>, confirm: bool) -> Result<(
     Ok(session.with_vault(|v| v.set_setting(CONFIRM_TRASH_SETTING, if confirm { "true" } else { "false" }))?)
 }
 
+/// The body a new note starts with: the vault's default author in its frontmatter.
+pub(super) fn new_note_body(vault: &Vault) -> crate::db::Result<String> {
+    Ok(match vault.setting(DEFAULT_AUTHOR_SETTING)? {
+        Some(author) if !author.trim().is_empty() => markdown::set_frontmatter_field("", "author", &[author]),
+        _ => String::new(),
+    })
+}
+
 /// Creates an untitled note in `folder`, with the vault's default author in its frontmatter.
 #[tauri::command]
 pub fn create_note(session: State<'_, Session>, folder: String) -> Result<OpenedNote> {
     Ok(session.with_vault(|v| {
-        let body = match v.setting(DEFAULT_AUTHOR_SETTING)? {
-            Some(author) if !author.trim().is_empty() => markdown::set_frontmatter_field("", "author", &[author]),
-            _ => String::new(),
-        };
+        let body = new_note_body(v)?;
         let id = v.create_untitled(&folder, &body)?;
         let note = opened(v, id)?;
         v.record_opened(id)?;

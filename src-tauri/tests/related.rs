@@ -75,7 +75,7 @@ fn note(session: &Session, title: &str, vector: &str) -> i64 {
 
 /// Titles of the notes related to `id`, or `None` if it isn't indexed.
 fn related(session: &Session, id: i64, limit: usize) -> Option<Vec<String>> {
-    related::related_notes(session, id, limit).unwrap().map(|notes| notes.into_iter().map(|n| n.title).collect())
+    related::related_notes(session, id, limit).unwrap().map(|notes| notes.into_iter().map(|n| n.note.title).collect())
 }
 
 fn indexed(session: &Session) -> usize {
@@ -109,6 +109,24 @@ fn related_notes_are_ordered_by_similarity_and_skip_self_and_unindexed_notes() {
     assert_eq!(related(&session, a, 1).unwrap(), ["Near"]);
     index(&session, g, &source);
     assert_eq!(related(&session, a, 1).unwrap(), ["Late"]);
+}
+
+#[test]
+fn related_notes_carry_the_exact_score_and_reasons() {
+    let (_dir, _path, session, g) = session("ctl-4");
+    let source = source(&[4]);
+    let a = session.with_vault(|v| v.create_note("f", "A", "v 1 0 0 0\n#shared [[Near]]")).unwrap();
+    session.with_vault(|v| v.create_note("f", "Near", "v 0.6 0.8 0 0\n#shared")).unwrap();
+    note(&session, "Far", "0 1 0 0");
+    index(&session, g, &source);
+
+    let notes = related::related_notes(&session, a, 10).unwrap().unwrap();
+    assert_eq!(notes[0].note.title, "Near");
+    assert!((notes[0].score - 0.6).abs() < 1e-6, "exact cosine, not the i8 estimate: {}", notes[0].score);
+    assert!(notes[0].reasons.links_to && notes[0].reasons.same_folder);
+    assert_eq!(notes[0].reasons.shared_tags, ["shared"]);
+    assert!(notes[1].score.abs() < 1e-6);
+    assert!(!notes[1].reasons.same_folder);
 }
 
 #[test]
@@ -282,7 +300,10 @@ fn related_notes_on_10k_notes_is_fast() {
     const N: usize = 10_000;
     const DIMS: usize = 384;
     let (_dir, _path, session, g) = session("ctl-384");
-    let bodies: Vec<(String, String)> = (0..N).map(|i| (format!("Note {i}"), format!("body {i}"))).collect();
+    // Tags and links, so the reasons for the shown notes have something to find.
+    let bodies: Vec<(String, String)> = (0..N)
+        .map(|i| (format!("Note {i}"), format!("body {i} #t{} [[Note {}]] [[Note {}]]", i % 50, (i * 7) % N, (i + 1) % N)))
+        .collect();
     let notes: Vec<NewNote> = bodies
         .iter()
         .map(|(t, b)| NewNote { folder: "f", title: t, body: b, created_at: 0, updated_at: 0 })

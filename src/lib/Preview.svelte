@@ -2,16 +2,27 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "$lib/markdown";
 
-  /** `large` is the reading layout of "Preview only": one centred column in a bigger size. */
-  let { body, large = false }: { body: string; large?: boolean } = $props();
+  type Props = {
+    body: string;
+    /** The reading layout of "Preview only": one centred column in a bigger size. */
+    large?: boolean;
+    /** A `[[wikilink]]` was clicked at viewport position `x`, `y`. */
+    onwikilink?: (target: string, x: number, y: number) => void;
+  };
+  let { body, large = false, onwikilink }: Props = $props();
 
   const html = $derived(renderMarkdown(body));
 
-  // Nothing in the preview navigates the app; external links open in the system browser.
+  // Wikilinks open notes; external links open in the system browser; nothing else navigates.
   function onclick(e: MouseEvent) {
     const link = (e.target as Element).closest("a");
     if (!link) return;
     e.preventDefault();
+    const target = link.classList.contains("wikilink") ? link.dataset.target : undefined;
+    if (target) {
+      onwikilink?.(target, e.clientX, e.clientY);
+      return;
+    }
     const href = link.getAttribute("href") ?? "";
     if (/^(https?:|mailto:)/i.test(href)) void openUrl(href);
   }
@@ -79,6 +90,10 @@
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
+  }
+
+  .preview :global(a.wikilink) {
+    text-decoration-style: dotted;
   }
 
   .preview :global(code) {
