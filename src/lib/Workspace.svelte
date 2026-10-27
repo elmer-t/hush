@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import {
     api,
@@ -38,6 +38,16 @@
     saveWidth,
     type Column,
   } from "$lib/layout";
+  import {
+    canGo,
+    current,
+    emptyHistory,
+    moveTo,
+    push,
+    replace,
+    step,
+    type NavEntry,
+  } from "$lib/navHistory";
   import { flushGraphSettings, persistGraphSettings, restoreGraphScope } from "$lib/graph/settings.svelte";
   import RelatedNotes from "$lib/RelatedNotes.svelte";
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
@@ -130,8 +140,103 @@
   });
   persistGraphSettings();
 
+  // Back/forward history, browser-style. In memory only, and cleared on lock.
+  let nav = $state.raw(emptyHistory());
+  // Notes found trashed or deleted since they were visited; back/forward skips them.
+  let gone = $state.raw(new Set<number>());
+  // Recording starts once the restored layout is in place, so that is the first entry.
+  let navReady = false;
+  let navBusy = false;
+  const navValid = (entry: NavEntry) => entry.noteId === null || !gone.has(entry.noteId);
+  const canBack = $derived(canGo(nav, -1, navValid));
+  const canForward = $derived(canGo(nav, 1, navValid));
+  // Alt+Left/Right is word movement on macOS; Cmd+[ and Cmd+] are its back and forward.
+  const isMac = /Mac/.test(navigator.userAgent);
+
+  const navEntry = (): NavEntry => ({
+    view,
+    noteId: view === "note" || view === "graph" ? (opened?.note.id ?? null) : null,
+  });
+
+  // Every change of the view or the open note is a step; going back or forward moves
+  // the position first, so the step it makes is already the current entry.
+  $effect(() => {
+    const entry = navEntry();
+    untrack(() => {
+      if (!navReady) return;
+      const at = current(nav);
+      // The open note being trashed or deleted closes it in place: that isn't a step.
+      const closed = entry.noteId === null && at !== null && at.noteId !== null && at.view === entry.view;
+      nav = closed ? replace(nav, entry) : push(nav, entry);
+    });
+  });
+
+  /** Goes back (-1) or forward (1), skipping notes that were trashed or deleted since. */
+  async function navigate(direction: -1 | 1) {
+    if (navBusy) return;
+    navBusy = true;
+    try {
+      // Leaving the note unmounts the editor, which would drop an unsaved edit.
+      await editor?.flush();
+      for (let found = step(nav, direction, navValid); found; found = step(nav, direction, navValid)) {
+        if (await showEntry(found.entry, found.index)) return;
+        gone = new Set(gone).add(found.entry.noteId!);
+      }
+    } finally {
+      navBusy = false;
+    }
+  }
+
+  /** Shows history entry `index`; false if its note can't be opened any more. */
+  async function showEntry(entry: NavEntry, index: number): Promise<boolean> {
+    const leavingSettings = view === "settings" && entry.view !== "settings";
+    if (entry.noteId !== null) {
+      let note: OpenedNote;
+      try {
+        // Opening counts as an open, as with any other way of reaching the note.
+        note = await api.openNote(entry.noteId);
+      } catch {
+        return false;
+      }
+      // In the same synchronous block as the change, so the recording effect sees the
+      // new position and adds nothing.
+      nav = moveTo(nav, index);
+      show(note, false, true);
+    } else {
+      nav = moveTo(nav, index);
+      if (entry.view === "note" || entry.view === "graph") opened = summary = meta = null;
+    }
+    view = entry.view;
+    if (entry.view === "import") importOpened = true;
+    // The auto-lock time and the recently opened count may have been changed there.
+    if (leavingSettings) {
+      void loadAutoLock();
+      void sidebar?.refreshRecent();
+    }
+    return true;
+  }
+
+  function isSideButton(e: MouseEvent) {
+    return e.button === 3 || e.button === 4;
+  }
+
+  // The webview runs its own history navigation on the side buttons; it must not.
+  function suppressSideButton(e: MouseEvent) {
+    if (isSideButton(e)) e.preventDefault();
+  }
+
+  // Once per press, on release.
+  function onmouseup(e: MouseEvent) {
+    if (!isSideButton(e)) return;
+    e.preventDefault();
+    void navigate(e.button === 3 ? -1 : 1);
+  }
+
   onMount(() => {
-    void restoreLastOpened();
+    void restoreLastOpened().then(() => {
+      navReady = true;
+      nav = push(emptyHistory(), navEntry());
+    });
     void restoreGraphScope();
     // The backend holds the window open briefly so pending edits can be saved.
     const unlisten = listen(CLOSE_EVENT, async () => {
@@ -177,6 +282,16 @@
   // Capture phase, so shortcuts win over the editor's own (CodeMirror binds Ctrl+L).
   function onkeydown(e: KeyboardEvent) {
     activity();
+    const arrows = !isMac && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    const brackets = isMac && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    const back = (arrows && e.key === "ArrowLeft") || (brackets && e.key === "[");
+    const forward = (arrows && e.key === "ArrowRight") || (brackets && e.key === "]");
+    if (back || forward) {
+      e.preventDefault();
+      e.stopPropagation();
+      void navigate(back ? -1 : 1);
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
     const key = e.key.toLowerCase();
     if (key === "l") {
@@ -299,6 +414,9 @@
   }
 
   async function lock() {
+    // Lock reloads the page today, which clears it too; this keeps it so if that changes.
+    nav = emptyHistory();
+    gone = new Set();
     await editor?.flush();
     await flushGraphSettings();
     await api.lockVault();
@@ -367,6 +485,8 @@
   }
 
   async function restored(note: OpenedNote) {
+    // Restored notes can be gone back to again.
+    gone = new Set();
     await sidebar?.refresh();
     show(note, false);
   }
@@ -546,6 +666,7 @@
     // Links may have been rewritten, or their notes trashed.
     linksRevision++;
     if (open !== null) opened = summary = meta = null;
+    gone = new Set([...gone, ...ids]);
     void loadTrashCount();
     await sidebar?.refresh(sources);
     return true;
@@ -578,12 +699,14 @@
   }
 
   async function restoredFolder() {
+    gone = new Set();
     await sidebar?.refresh();
   }
 
   async function deleted(id: number) {
     const changed = summary?.id === id ? [summary.folder] : [];
     if (opened?.note.id === id) opened = summary = meta = null;
+    gone = new Set(gone).add(id);
     void loadTrashCount();
     await sidebar?.refresh(changed);
   }
@@ -592,6 +715,9 @@
 <svelte:window
   bind:innerWidth={windowWidth}
   onkeydowncapture={onkeydown}
+  onmousedowncapture={suppressSideButton}
+  onauxclickcapture={suppressSideButton}
+  onmouseupcapture={onmouseup}
   onpointerdown={activity}
   onpointermove={activity}
   onwheel={activity}
@@ -616,6 +742,26 @@
     >
       <Icon name="panelLeft" />
     </button>
+    <div class="nav">
+      <button
+        class="ghost icon"
+        onclick={() => navigate(-1)}
+        disabled={!canBack}
+        aria-label="Back"
+        title={isMac ? "Back (Cmd [)" : "Back (Alt ←)"}
+      >
+        <Icon name="arrowLeft" />
+      </button>
+      <button
+        class="ghost icon"
+        onclick={() => navigate(1)}
+        disabled={!canForward}
+        aria-label="Forward"
+        title={isMac ? "Forward (Cmd ])" : "Forward (Alt →)"}
+      >
+        <Icon name="arrowRight" />
+      </button>
+    </div>
     <div class="vault" title={vault.path}>
       <img class="mark" src={appIcon} alt="" width="28" height="28" />
       <span class="names">
@@ -833,6 +979,11 @@
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
   }
 
   .vault {
