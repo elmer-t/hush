@@ -25,7 +25,10 @@
   import NoteEditor from "$lib/NoteEditor.svelte";
   import NoteInternals from "$lib/NoteInternals.svelte";
   import {
+    ABOVE_ACTIVITY_MIN,
+    ACTIVITY,
     EDITOR_MIN,
+    fitHeight,
     fitWidths,
     isBoolean,
     KEYS,
@@ -122,6 +125,12 @@
     else rightWidth = RIGHT.default;
     saveWidth(column, column.default);
   }
+
+  // The Activity panel's height, stored and shown, the same way as the column widths.
+  let activityHeight = $state(loadWidth(ACTIVITY));
+  let windowHeight = $state(window.innerHeight);
+  const activityRow = $derived(fitHeight(windowHeight, activityHeight));
+  const activityMax = $derived(Math.max(ACTIVITY.min, Math.min(ACTIVITY.max, windowHeight - ABOVE_ACTIVITY_MIN)));
 
   const locksIn = $derived(
     autoLockMinutes === null
@@ -714,6 +723,7 @@
 
 <svelte:window
   bind:innerWidth={windowWidth}
+  bind:innerHeight={windowHeight}
   onkeydowncapture={onkeydown}
   onmousedowncapture={suppressSideButton}
   onauxclickcapture={suppressSideButton}
@@ -731,6 +741,7 @@
   class:with-activity={showActivity}
   style:--left="{leftColumn}px"
   style:--right="{rightColumn}px"
+  style:--activity="{activityRow}px"
 >
   <header>
     <button
@@ -842,7 +853,7 @@
     <ResizeHandle
       edge="right"
       label="Resize sidebar"
-      width={leftColumn}
+      size={leftColumn}
       min={LEFT.min}
       max={maxWidth(LEFT, rightColumn)}
       onresize={(w) => (leftWidth = w)}
@@ -924,7 +935,7 @@
       <ResizeHandle
         edge="left"
         label="Resize details panel"
-        width={rightColumn}
+        size={rightColumn}
         min={RIGHT.min}
         max={maxWidth(RIGHT, leftColumn)}
         onresize={(w) => (rightWidth = w)}
@@ -938,6 +949,19 @@
     <div class="activity-panel">
       <Activity onclose={() => (showActivity = false)} />
     </div>
+    <ResizeHandle
+      edge="top"
+      label="Resize activity panel"
+      size={activityRow}
+      min={ACTIVITY.min}
+      max={activityMax}
+      onresize={(h) => (activityHeight = h)}
+      oncommit={(h) => saveWidth(ACTIVITY, h)}
+      onreset={() => {
+        activityHeight = ACTIVITY.default;
+        saveWidth(ACTIVITY, ACTIVITY.default);
+      }}
+    />
   {/if}
 </div>
 
@@ -946,7 +970,7 @@
 {/if}
 
 <style>
-  /* --left and --right are set from the script (stored widths, hidden columns). */
+  /* --left, --right and --activity are set from the script (stored sizes, hidden columns). */
   .workspace {
     display: grid;
     grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
@@ -958,7 +982,7 @@
   }
 
   .workspace.with-activity {
-    grid-template-rows: auto minmax(0, 1fr) min(300px, 40vh);
+    grid-template-rows: auto minmax(0, 1fr) var(--activity);
     grid-template-areas:
       "header header header"
       "left main right"
@@ -1064,6 +1088,10 @@
 
   .workspace > :global(.handle.left) {
     grid-area: right;
+  }
+
+  .workspace > :global(.handle.top) {
+    grid-area: activity;
   }
 
   .left {

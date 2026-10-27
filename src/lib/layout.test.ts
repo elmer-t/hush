@@ -1,5 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { debounced, fitWidths, isBoolean, KEYS, LEFT, loadStored, loadWidth, oneOf, RIGHT, saveStored } from "$lib/layout";
+import {
+  ABOVE_ACTIVITY_MIN,
+  ACTIVITY,
+  debounced,
+  fitHeight,
+  fitWidths,
+  isBoolean,
+  isSplit,
+  jobsWidth,
+  KEYS,
+  LEFT,
+  loadStored,
+  loadWidth,
+  oneOf,
+  RIGHT,
+  saveStored,
+  SPLIT,
+} from "$lib/layout";
 import { loadDisplay } from "$lib/graph/settings.svelte";
 
 /** A Map-backed localStorage; `broken` makes every access throw, as in a locked-down webview. */
@@ -126,5 +143,48 @@ describe("fitWidths", () => {
     expect(left + right).toBe(800 - 360);
     expect(left).toBeGreaterThanOrEqual(LEFT.min);
     expect(right).toBeGreaterThanOrEqual(RIGHT.min);
+  });
+});
+
+describe("fitHeight (Activity panel)", () => {
+  it("shows the stored height when the window has room", () => {
+    expect(fitHeight(1000, 300)).toBe(300);
+  });
+
+  it("gives a short window's header and editor their minimum, down to the panel's minimum", () => {
+    expect(fitHeight(500, 400)).toBe(500 - ABOVE_ACTIVITY_MIN);
+    expect(fitHeight(300, 400)).toBe(ACTIVITY.min);
+  });
+
+  it("stores and loads the height like a width", () => {
+    const data = fakeStorage();
+    expect(loadWidth(ACTIVITY)).toBe(ACTIVITY.default);
+    data.set(ACTIVITY.storageKey, "5000");
+    expect(loadWidth(ACTIVITY)).toBe(ACTIVITY.max);
+  });
+});
+
+describe("jobsWidth (Activity panel split)", () => {
+  it("is the stored share of the width when both sides have room", () => {
+    expect(jobsWidth(1000, SPLIT.default)).toBe(600);
+    expect(jobsWidth(1000, 0.4)).toBe(400);
+  });
+
+  it("keeps each side's minimum, the Event log's first", () => {
+    expect(jobsWidth(1000, 0.1)).toBe(SPLIT.jobsMin);
+    expect(jobsWidth(1000, 0.95)).toBe(1000 - SPLIT.logMin);
+    expect(jobsWidth(500, 0.6)).toBe(500 - SPLIT.logMin);
+    expect(jobsWidth(200, 0.6)).toBe(0);
+  });
+
+  it("only loads a share between 0 and 1", () => {
+    const data = fakeStorage();
+    expect(loadStored(KEYS.activitySplit, SPLIT.default as number, isSplit)).toBe(SPLIT.default);
+    for (const raw of ["0", "1", "-0.2", '"0.5"', "null"]) {
+      data.set(KEYS.activitySplit, raw);
+      expect(loadStored(KEYS.activitySplit, SPLIT.default as number, isSplit), raw).toBe(SPLIT.default);
+    }
+    saveStored(KEYS.activitySplit, 0.35);
+    expect(loadStored(KEYS.activitySplit, SPLIT.default as number, isSplit)).toBe(0.35);
   });
 });
