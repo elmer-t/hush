@@ -11,6 +11,8 @@
     type JobStatus,
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  import { isSplit, jobsWidth, KEYS, loadStored, saveStored, SPLIT } from "$lib/layout";
+  import ResizeHandle from "$lib/ResizeHandle.svelte";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
 
   let { onclose }: { onclose: () => void } = $props();
@@ -37,6 +39,15 @@
   let error = $state("");
   let filter = $state<ActivityJob | "all">("all");
   let copied = $state(false);
+
+  // The share of the panel's width the Jobs side gets, stored per device; the pixel width
+  // follows the panel's width. Until the panel is measured the grid uses the share alone.
+  let split = $state(loadStored(KEYS.activitySplit, SPLIT.default as number, isSplit));
+  let bodyWidth = $state(0);
+  const jobs = $derived(jobsWidth(bodyWidth, split));
+  const setJobs = (w: number) => {
+    if (bodyWidth > 0) split = Math.min(0.95, Math.max(0.05, w / bodyWidth));
+  };
   let now = $state(Date.now());
 
   const log = $derived(snapshot ? snapshot.log.filter((e) => filter === "all" || e.job === filter) : []);
@@ -122,7 +133,13 @@
     </button>
   </header>
 
-  <div class="body">
+  <div
+    class="body"
+    bind:clientWidth={bodyWidth}
+    style:grid-template-columns={bodyWidth > 0
+      ? `${jobs}px minmax(0, 1fr)`
+      : `minmax(0, ${split}fr) minmax(${SPLIT.logMin}px, ${1 - split}fr)`}
+  >
     <div class="left">
       <table class="jobs">
         <thead>
@@ -231,6 +248,23 @@
       </dl>
     </div>
 
+    <ResizeHandle
+      edge="right"
+      label="Resize jobs and event log"
+      size={jobs}
+      min={Math.min(SPLIT.jobsMin, jobs)}
+      max={Math.max(jobs, bodyWidth - SPLIT.logMin)}
+      onresize={setJobs}
+      oncommit={(w) => {
+        setJobs(w);
+        saveStored(KEYS.activitySplit, split);
+      }}
+      onreset={() => {
+        split = SPLIT.default;
+        saveStored(KEYS.activitySplit, split);
+      }}
+    />
+
     <div class="log">
       <div class="log-head">
         <h3>Event log</h3>
@@ -310,7 +344,13 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  /* The split handle shares the Jobs cell and sits over its right border. */
+  .left,
+  .body > :global(.handle) {
+    grid-area: 1 / 1;
   }
 
   .left {
@@ -433,6 +473,7 @@
   }
 
   .log {
+    grid-area: 1 / 2;
     min-height: 0;
     display: flex;
     flex-direction: column;

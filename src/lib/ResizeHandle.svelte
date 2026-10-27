@@ -1,26 +1,30 @@
 <script lang="ts">
   type Props = {
-    /** The column's width now. */
-    width: number;
+    /** The panel's width now, or its height for a handle on its top edge. */
+    size: number;
     min: number;
     max: number;
     label: string;
-    /** Which edge of its column the handle is on: dragging away from the column widens it. */
-    edge: "right" | "left";
-    /** Called with each new width while it changes. */
-    onresize: (width: number) => void;
-    /** Called once a drag or key press is done, with the final width. */
-    oncommit: (width: number) => void;
+    /** Which edge of its panel the handle is on: dragging away from the panel grows it. */
+    edge: "right" | "left" | "top";
+    /** Called with each new size while it changes. */
+    onresize: (size: number) => void;
+    /** Called once a drag or key press is done, with the final size. */
+    oncommit: (size: number) => void;
     onreset: () => void;
   };
-  let { width, min, max, label, edge, onresize, oncommit, onreset }: Props = $props();
+  let { size, min, max, label, edge, onresize, oncommit, onreset }: Props = $props();
 
   const STEP = 16;
 
-  let drag: { x: number; width: number } | null = $state(null);
+  let drag: { at: number; size: number } | null = $state(null);
 
   const clamp = (w: number) => Math.round(Math.min(max, Math.max(min, w)));
-  // Pointer movement to the right widens a column whose handle is on its right edge.
+  // A handle on a top edge resizes rows and follows the pointer's y; the others follow x.
+  const rows = $derived(edge === "top");
+  const pointerAt = (e: PointerEvent) => (rows ? e.clientY : e.clientX);
+  // Pointer movement to the right widens a column whose handle is on its right edge;
+  // movement up or to the left grows a panel whose handle is on its top or left edge.
   const sign = $derived(edge === "right" ? 1 : -1);
 
   function pointerdown(e: PointerEvent) {
@@ -28,13 +32,14 @@
     e.preventDefault();
     // Capture keeps the pointer events here, away from the editor, until the drag ends.
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag = { x: e.clientX, width };
+    drag = { at: pointerAt(e), size };
     document.body.classList.add("resizing");
+    document.body.classList.toggle("rows", rows);
   }
 
   function pointermove(e: PointerEvent) {
     if (!drag) return;
-    onresize(clamp(drag.width + sign * (e.clientX - drag.x)));
+    onresize(clamp(drag.size + sign * (pointerAt(e) - drag.at)));
   }
 
   function pointerup(e: PointerEvent) {
@@ -42,14 +47,14 @@
     const el = e.currentTarget as HTMLElement;
     if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     drag = null;
-    document.body.classList.remove("resizing");
-    oncommit(width);
+    document.body.classList.remove("resizing", "rows");
+    oncommit(size);
   }
 
   function keydown(e: KeyboardEvent) {
     let next: number | null = null;
-    if (e.key === "ArrowLeft") next = width - sign * STEP;
-    else if (e.key === "ArrowRight") next = width + sign * STEP;
+    if (e.key === (rows ? "ArrowUp" : "ArrowLeft")) next = size + (rows ? STEP : -sign * STEP);
+    else if (e.key === (rows ? "ArrowDown" : "ArrowRight")) next = size - (rows ? STEP : -sign * STEP);
     else if (e.key === "Home") next = min;
     else if (e.key === "End") next = max;
     else if (e.key === "Enter") {
@@ -70,11 +75,11 @@
   class="handle {edge}"
   class:dragging={drag !== null}
   role="separator"
-  aria-orientation="vertical"
+  aria-orientation={rows ? "horizontal" : "vertical"}
   aria-label={label}
   aria-valuemin={min}
   aria-valuemax={max}
-  aria-valuenow={width}
+  aria-valuenow={size}
   tabindex="0"
   title="Drag to resize, double-click to reset"
   onpointerdown={pointerdown}
@@ -107,6 +112,14 @@
     margin-left: -4px;
   }
 
+  .handle.top {
+    align-self: start;
+    width: auto;
+    height: 8px;
+    margin-top: -4px;
+    cursor: row-resize;
+  }
+
   /* The visible line, centred on the column border. */
   .handle::after {
     content: "";
@@ -114,6 +127,10 @@
     inset: 0 3px;
     border-radius: 1px;
     transition: background 0.12s;
+  }
+
+  .handle.top::after {
+    inset: 3px 0;
   }
 
   .handle:hover::after,
@@ -130,5 +147,9 @@
   :global(body.resizing) {
     cursor: col-resize;
     user-select: none;
+  }
+
+  :global(body.resizing.rows) {
+    cursor: row-resize;
   }
 </style>

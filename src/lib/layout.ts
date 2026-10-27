@@ -12,6 +12,33 @@ export const RIGHT: Column = { min: 240, max: 520, default: 300, storageKey: "hu
 /** The editor column never gets narrower than this. */
 export const EDITOR_MIN = 360;
 
+/** The Activity panel's height; `loadWidth` and `saveWidth` store it like a width. */
+export const ACTIVITY: Column = { min: 120, max: 900, default: 300, storageKey: "hush.layout.activityHeight" };
+/** The header and editor above the Activity panel never get shorter than this together. */
+export const ABOVE_ACTIVITY_MIN = 240;
+
+/**
+ * The Activity panel height to show: the stored height, less what a short window needs
+ * for the header and editor, but never below the panel's minimum. The stored height is
+ * left alone.
+ */
+export const fitHeight = (windowHeight: number, height: number) =>
+  Math.round(Math.max(ACTIVITY.min, Math.min(height, windowHeight - ABOVE_ACTIVITY_MIN)));
+
+/** The Activity panel's split: the share of its width the Jobs side gets. */
+export const SPLIT = { default: 0.6, jobsMin: 320, logMin: 260 } as const;
+
+export const isSplit = (value: unknown): value is number =>
+  typeof value === "number" && value > 0 && value < 1;
+
+/**
+ * The Jobs side's width in an Activity panel `width` wide, from the stored share. The
+ * Event log keeps its minimum first, as it did before the split could be dragged; the
+ * Jobs side then keeps its own if there is room.
+ */
+export const jobsWidth = (width: number, share: number) =>
+  Math.round(Math.max(0, Math.min(Math.max(width * share, SPLIT.jobsMin), width - SPLIT.logMin)));
+
 export const clamp = (width: number, column: Column) =>
   Math.round(Math.min(column.max, Math.max(column.min, width)));
 
@@ -65,6 +92,7 @@ export const KEYS = {
   showRight: "hush.layout.showRight",
   showInternals: "hush.layout.showInternals",
   showActivity: "hush.layout.showActivity",
+  activitySplit: "hush.layout.activitySplit",
   view: "hush.layout.view",
   graph: "hush.graph.display",
 } as const;
