@@ -232,6 +232,26 @@ fn the_index_is_empty_after_lock_and_rebuilt_after_unlock() {
     assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
 }
 
+/// An unchanged vault: Related must not wait for the model to load or for the first
+/// pass. Here the model can't load at all, and the index is still built.
+#[test]
+fn the_job_builds_the_index_from_stored_vectors_before_loading_the_model() {
+    let (_dir, path, session, g) = session("ctl-4");
+    let a = note(&session, "A", "1 0 0 0");
+    note(&session, "B", "0.9 0.1 0 0");
+    index(&session, g, &source(&[4]));
+    session.lock();
+
+    let g2 = session.unlock(Vault::open(&path, common::PASS).unwrap(), path.clone()).unwrap();
+    let changed = std::sync::atomic::AtomicUsize::new(0);
+    // No embedder for `ctl-4`: the first pass fails and the job stops.
+    job::run_with(&session, g2, &source(&[]), Duration::from_millis(10), |_| {}, || {
+        changed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
+    assert_eq!(changed.load(std::sync::atomic::Ordering::SeqCst), 1, "the UI is told once");
+}
+
 #[test]
 fn the_index_is_rebuilt_when_the_ready_model_changes() {
     let (_dir, path, session, g) = session("ctl-4");
