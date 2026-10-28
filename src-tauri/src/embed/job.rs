@@ -148,7 +148,9 @@ pub fn run(
 
 /// [`run`], also calling `related_changed` whenever the related-notes index changed.
 ///
-/// The first pass runs at once (it builds the related-notes index); after that a pass
+/// The related-notes index is built from the stored vectors first, before the model
+/// loads or anything queued is embedded: those vectors are valid without the model, so
+/// Related works right after unlock. The first pass runs at once; after that a pass
 /// runs only when [`crate::db::Vault::embedding_pending`] says so, so the job's own
 /// writes never wake it. Once the queue is empty it runs the safety-net scan
 /// ([`safety_net`]) once per unlock, a page at a time, and lets queued notes go first.
@@ -183,6 +185,10 @@ pub fn run_with(
     let mut checked = 0;
     let mut paused = false;
     activity.wait(Job::SafetyNet, "runs once the queue is empty");
+    // A failure here is left to the first pass, whose `related::update` tries again.
+    if let Ok(true) = related::sync(session, generation) {
+        related_changed();
+    }
     loop {
         if session.import_running() {
             paused = true;
