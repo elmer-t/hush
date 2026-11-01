@@ -12,6 +12,7 @@
     type ModelOverview,
   } from "$lib/api";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
+  import { indexText, indexing } from "$lib/indexing";
 
   let overview = $state<ModelOverview | null>(null);
   let error = $state("");
@@ -67,8 +68,9 @@
     if (!overview) return "";
     const s = status;
     const i = model.index;
-    const indexing = i.state === "indexing" && i.done < i.total ? `indexing ${i.done.toLocaleString()} of ${i.total.toLocaleString()}` : null;
-    if (!s || s.model !== overview.model) return indexing ?? "not loaded yet";
+    const progress = indexing(i);
+    const indexingText = progress ? `indexing: ${indexText(progress)}` : null;
+    if (!s || s.model !== overview.model) return indexingText ?? "not loaded yet";
     switch (s.load.state) {
       case "missing":
         return `missing (${s.load.file})`;
@@ -81,7 +83,7 @@
       case "loading":
         return "loading";
     }
-    if (indexing) return indexing;
+    if (indexingText) return indexingText;
     if (s.readyModel !== s.model) return s.load.state === "ready" ? "loaded, indexing" : "not loaded yet";
     return s.load.state === "ready" ? "ready" : "ready (loads when needed)";
   }

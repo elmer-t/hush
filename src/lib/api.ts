@@ -543,7 +543,9 @@ export type DetailsSection = "related" | "backlinks" | "outgoing";
 /** The embedding job's state (see `IndexStatus` in embed/job.rs). */
 export type IndexStatus =
   | { state: "idle" }
-  | { state: "indexing"; done: number; total: number; etaSecs: number | null }
+  /** `done` of `total` notes have a vector, `complete` of them from all of the note
+   * rather than just its first chunk. */
+  | { state: "indexing"; done: number; complete: number; total: number; etaSecs: number | null }
   /** An import is running; indexing carries on when it ends. */
   | { state: "paused" }
   | { state: "failed"; message: string };

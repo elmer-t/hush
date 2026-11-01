@@ -27,8 +27,8 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
-    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCursor, QueuePage, QueuedText, QueuedVector,
-    StoredVector,
+    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCounts, QueueCursor, QueuePage, QueuePhase, QueuedText,
+    QueuedVector, StoredVector,
 };
 pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};

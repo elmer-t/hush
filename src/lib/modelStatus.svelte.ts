@@ -29,6 +29,7 @@ export function reducedText(): string | null {
   if (!reduced) return null;
   const i = model.index;
   if (reduced.reason === "firstIndex" && i.state === "indexing" && i.done < i.total) {
+    // Only the first phase: the model is ready once every note has a vector.
     return `first index running, ${i.done.toLocaleString()} of ${i.total.toLocaleString()} notes`;
   }
   return reduced.message;

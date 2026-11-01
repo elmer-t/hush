@@ -242,6 +242,21 @@ pub trait Embedder: Send + Sync {
             .map(|t| if stop() { Err(EmbedError::Stopped) } else { self.embed(t) })
             .collect()
     }
+    /// The vector of each text's first chunk only (the first indexing phase, see
+    /// [`job`]), asking `stop` as [`Embedder::embed_batch`] does. `complete` says the
+    /// first chunk was the whole text, so the vector is the one
+    /// [`Embedder::embed_batch`] gives. A model that doesn't split text embeds it whole.
+    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
+        Ok(self.embed_batch(texts, stop)?.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect())
+    }
+}
+
+/// A text's vector from its first chunk (see [`Embedder::embed_first_batch`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FirstChunk {
+    pub vector: Vec<f32>,
+    /// The text had one chunk: this is its full vector.
+    pub complete: bool,
 }
 
 /// The text embedded for a note: title and body, without frontmatter (it holds the
@@ -261,6 +276,17 @@ pub fn note_text(title: &str, body: &str) -> Option<Zeroizing<String>> {
 
 pub fn content_hash(text: &str) -> [u8; 32] {
     Sha256::digest(text.as_bytes()).into()
+}
+
+/// What is stored as the content hash of a vector made from the first chunk of the text
+/// whose [`content_hash`] is `hash`. It never equals `hash`, so a vector stored with it
+/// is never taken for the complete one; and only the job's own write can produce it, so
+/// a stored hash that matches it means "the first chunk of exactly this text".
+pub fn partial_hash(hash: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"hush first chunk\0");
+    h.update(hash);
+    h.finalize().into()
 }
 
 /// Little-endian `f32`s.

@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use hush_lib::db::{MetadataEdit, NewNote, Vault};
+use hush_lib::db::{MetadataEdit, NewNote, QueueCounts, QueuePhase, Vault};
 use hush_lib::embed::job::{self, EmbedderSource, IndexStatus};
 use hush_lib::embed::onnx::OnnxEmbedder;
-use hush_lib::embed::{self, EmbedError, Embedder};
+use hush_lib::embed::{self, EmbedError, Embedder, FirstChunk};
 use hush_lib::session::Session;
 use tempfile::TempDir;
 
@@ -83,10 +83,13 @@ fn session(model: &str) -> (TempDir, PathBuf, Session, u64) {
     (dir, path, session, generation)
 }
 
-/// Runs passes until one finds nothing to do.
+/// Runs passes until one finds nothing to do and nothing is left queued (a pass can move
+/// notes to the second indexing phase without embedding anything).
 fn index(session: &Session, generation: u64, source: &dyn EmbedderSource) {
     for _ in 0..10 {
-        if job::pass(session, generation, source, &mut |_| {}).unwrap().stale == 0 {
+        if job::pass(session, generation, source, &mut |_| {}).unwrap().stale == 0
+            && session.with_vault_quiet(generation, |v| v.embedding_queue_len()).unwrap() == 0
+        {
             return;
         }
     }
@@ -541,13 +544,13 @@ fn a_save_during_embedding_is_not_lost() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
     let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
-    let page = session.with_vault(|v| v.queued_embeddings("fake-4", &Default::default(), 10)).unwrap();
+    let page = session.with_vault(|v| v.queued_embeddings("fake-4", &Default::default(), 10, QueuePhase::First)).unwrap();
     assert_eq!(page.stale.len(), 1);
     // Saved after the job read the text, before it wrote the vector.
     session.with_vault(|v| v.update_body(id, "second text")).unwrap();
     let q = &page.stale[0];
     let embedded = fake.embed(&q.note.text).unwrap();
-    let written = hush_lib::db::QueuedVector { id, version: q.version, hash: q.note.hash, vector: embedded };
+    let written = hush_lib::db::QueuedVector { id, version: q.version, hash: q.note.hash, vector: embedded, partial: false };
     session.with_vault(|v| v.write_queued_embeddings("fake-4", &[written])).unwrap();
     assert_eq!(queued(&session), 1, "still queued for the second text");
 
@@ -646,4 +649,271 @@ fn a_model_switch_queues_every_live_note_once() {
     assert_eq!(queued(&session), 0, "setting the same model queues nothing");
     session.with_vault(|v| v.set_embedding_model("fake-8")).unwrap();
     assert_eq!(queued(&session), 4);
+}
+
+/// The real model's first-chunk vectors: a one-chunk text gets exactly its full vector
+/// and is complete; a longer one gets a different, unit-length vector and isn't. Needs
+/// the files from `npm run fetch-model`.
+#[test]
+fn bundled_model_embeds_first_chunks() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+    let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
+    if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
+        eprintln!("SKIPPED: model files missing in {}; run `npm run fetch-model`", dir.display());
+        return;
+    }
+    let model = OnnxEmbedder::load(&dir, d).unwrap();
+    let long = "The quick brown fox jumps over the lazy dog. ".repeat(150);
+    let texts = ["Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.", long.as_str()];
+    let first = model.embed_first_batch(&texts, &|| false).unwrap();
+    let full = model.embed_batch(&texts, &|| false).unwrap();
+    assert!(first[0].complete && !first[1].complete);
+    let worst = first[0].vector.iter().zip(&full[0]).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+    assert!(worst < 1e-6, "{worst}");
+    assert_ne!(first[1].vector, full[1]);
+    assert!((first[1].vector.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
+    assert!(matches!(model.embed_first_batch(&texts, &|| true), Err(EmbedError::Stopped)));
+}
+
+/// Which call a [`Chunked`] embedder got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Call {
+    First,
+    Full,
+}
+
+/// A deterministic embedder that splits text into chunks of `words` words, like the
+/// real model splits it into token windows. Logs every note it embeds, by title.
+struct Chunked {
+    words: usize,
+    full_delay: Duration,
+    log: std::sync::Mutex<Vec<(Call, String)>>,
+}
+
+impl Chunked {
+    fn new(words: usize, full_delay: Duration) -> Arc<Self> {
+        Arc::new(Self { words, full_delay, log: std::sync::Mutex::new(Vec::new()) })
+    }
+
+    fn vector_of(words: &[&str]) -> Vec<f32> {
+        let mut v = vec![0.0; 8];
+        for word in words {
+            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
+            v[h as usize % 8] += 1.0;
+        }
+        v[0] += 0.01;
+        embed::normalize(&mut v);
+        v
+    }
+
+    fn first(&self, text: &str) -> Vec<f32> {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        Self::vector_of(&words[..words.len().min(self.words)])
+    }
+
+    fn full(text: &str) -> Vec<f32> {
+        Self::vector_of(&text.split_whitespace().collect::<Vec<_>>())
+    }
+
+    fn log(&self) -> Vec<(Call, String)> {
+        self.log.lock().unwrap().clone()
+    }
+
+    fn calls(&self, call: Call, title: &str) -> usize {
+        self.log().iter().filter(|(c, t)| *c == call && t == title).count()
+    }
+}
+
+fn title_of(text: &str) -> String {
+    text.lines().next().unwrap_or("").to_string()
+}
+
+impl Embedder for Chunked {
+    fn model_id(&self) -> &str {
+        "chunked"
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.log.lock().unwrap().push((Call::Full, title_of(text)));
+        std::thread::sleep(self.full_delay);
+        Ok(Self::full(text))
+    }
+
+    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
+        texts
+            .iter()
+            .map(|t| {
+                if stop() {
+                    return Err(EmbedError::Stopped);
+                }
+                self.log.lock().unwrap().push((Call::First, title_of(t)));
+                let complete = t.split_whitespace().count() <= self.words;
+                Ok(FirstChunk { vector: if complete { Self::full(t) } else { self.first(t) }, complete })
+            })
+            .collect()
+    }
+}
+
+struct ChunkedSource(Arc<Chunked>);
+
+impl EmbedderSource for ChunkedSource {
+    fn embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        Ok(self.0.clone())
+    }
+}
+
+fn counts(session: &Session) -> QueueCounts {
+    session.with_vault(|v| v.embedding_queue_counts()).unwrap()
+}
+
+/// `n` notes of 12 words each (three 4-word chunks) and `n` of 3 words (one chunk).
+fn long_and_short(session: &Session, n: usize) -> (Vec<i64>, Vec<i64>) {
+    session
+        .with_vault(|v| {
+            let long = (0..n)
+                .map(|i| v.create_note("", &format!("L{i}"), &format!("alpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let short = (0..n).map(|i| v.create_note("", &format!("S{i}"), &format!("short{i} note"))).collect::<Result<Vec<_>, _>>()?;
+            Ok((long, short))
+        })
+        .unwrap()
+}
+
+/// Every queued note gets a first-chunk vector before any note gets its remaining
+/// chunks; a one-chunk note is complete at once; each note is embedded once per phase.
+#[test]
+fn every_note_gets_its_first_chunk_before_any_note_is_completed() {
+    let (_dir, _path, session, g) = session("chunked");
+    let chunked = Chunked::new(4, Duration::ZERO);
+    let source = ChunkedSource(chunked.clone());
+    let (long, short) = long_and_short(&session, 20);
+    assert_eq!(counts(&session), QueueCounts { first: 40, rest: 0 });
+
+    // First phase.
+    let p = job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    assert_eq!(p.stale, 40);
+    assert_eq!(counts(&session), QueueCounts { first: 0, rest: 20 }, "long notes wait for their remaining chunks");
+    assert!(chunked.log().iter().all(|(c, _)| *c == Call::First));
+    assert_eq!(
+        session.with_vault(|v| v.embedding_model_ready()).unwrap().as_deref(),
+        Some("chunked"),
+        "every note has a vector: the model is ready"
+    );
+    for (i, &id) in long.iter().enumerate() {
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, id).unwrap(), chunked.first(&text), "L{i} has its first-chunk vector");
+    }
+    for (i, &id) in short.iter().enumerate() {
+        assert_eq!(vector(&session, id).unwrap(), Chunked::full(&format!("S{i}\n\nshort{i} note")));
+    }
+
+    // Second phase.
+    index(&session, g, &source);
+    assert_eq!(counts(&session), QueueCounts::default());
+    for (i, &id) in long.iter().enumerate() {
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, id).unwrap(), Chunked::full(&text), "L{i} is complete");
+    }
+    let log = chunked.log();
+    let first_full = log.iter().position(|(c, _)| *c == Call::Full).unwrap();
+    assert!(log[first_full..].iter().all(|(c, _)| *c == Call::Full), "no first chunk after the second phase began");
+    for i in 0..20 {
+        assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1);
+        assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1);
+        assert_eq!(chunked.calls(Call::First, &format!("S{i}")), 1);
+        assert_eq!(chunked.calls(Call::Full, &format!("S{i}")), 0, "a one-chunk note isn't embedded twice");
+    }
+
+    // Nothing left: another pass embeds nothing.
+    assert_eq!(job::pass(&session, g, &source, &mut |_| {}).unwrap().stale, 0);
+}
+
+/// A note saved while long notes are being completed gets its first chunk before the
+/// next note's remaining chunks, and is completed again afterwards.
+#[test]
+fn a_save_during_the_second_phase_goes_first() {
+    let (_dir, _path, session, g) = session("chunked");
+    let chunked = Chunked::new(4, Duration::from_millis(30));
+    let source = ChunkedSource(chunked.clone());
+    let (long, _) = long_and_short(&session, 30);
+    job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    assert_eq!(counts(&session).rest, 30);
+
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
+        wait_for(|| chunked.log().iter().filter(|(c, _)| *c == Call::Full).count() >= 3);
+        // The last-created note is completed first (most recently updated), so pick
+        // one from the far end of the queue.
+        let saved_at = chunked.log().len();
+        session.with_vault(|v| v.update_body(long[0], "changed words one two three four five six seven eight")).unwrap();
+        wait_for(|| chunked.calls(Call::First, "L0") == 2);
+        let log = chunked.log();
+        let first = log.iter().rposition(|(c, t)| *c == Call::First && t == "L0").unwrap();
+        let fulls_between = log[saved_at..first].iter().filter(|(c, _)| *c == Call::Full).count();
+        assert!(fulls_between <= 1, "{fulls_between} notes were completed before the saved note's first chunk");
+        wait_for(|| counts(&session) == QueueCounts::default());
+        session.lock();
+    });
+    let log = chunked.log();
+    assert_eq!(chunked.calls(Call::Full, "L0"), 1, "the saved note is completed once, with its new text");
+    for i in 1..30 {
+        assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1);
+        assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1, "L{i}");
+    }
+    assert!(log.iter().filter(|(c, _)| *c == Call::Full).count() == 30);
+}
+
+/// Locking between the phases keeps the first-chunk vectors: after unlock only the
+/// remaining chunks are embedded. A save that doesn't change the text (only the
+/// frontmatter) sends the note back without embedding its first chunk again.
+#[test]
+fn first_chunk_vectors_survive_a_lock() {
+    let (_dir, path, session, g) = session("chunked");
+    let chunked = Chunked::new(4, Duration::ZERO);
+    let source = ChunkedSource(chunked.clone());
+    let (long, _) = long_and_short(&session, 10);
+    job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    session.lock();
+
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    assert_eq!(vault.embedding_queue_counts().unwrap(), QueueCounts { first: 0, rest: 10 });
+    assert_eq!(vault.embedding_count("chunked").unwrap(), 20);
+    assert_eq!(vault.embedding_model_ready().unwrap().as_deref(), Some("chunked"));
+    let g = session.unlock(vault, path).unwrap();
+
+    session
+        .with_vault(|v| v.update_body(long[3], "---\ntags: [x]\n---\nalpha3 beta gamma delta epsilon zeta eta theta iota kappa lambda"))
+        .unwrap();
+    assert_eq!(counts(&session), QueueCounts { first: 1, rest: 9 }, "the save queues it again");
+
+    index(&session, g, &source);
+    assert_eq!(counts(&session), QueueCounts::default());
+    for i in 0..10 {
+        assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1, "L{i}: first chunk not embedded again");
+        assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1, "L{i}");
+    }
+}
+
+/// The progress line counts both phases.
+#[test]
+fn progress_counts_indexed_and_complete_notes() {
+    let (_dir, _path, session, g) = session("chunked");
+    let chunked = Chunked::new(4, Duration::ZERO);
+    let source = ChunkedSource(chunked.clone());
+    long_and_short(&session, 20);
+    let mut statuses = Vec::new();
+    for _ in 0..3 {
+        job::pass(&session, g, &source, &mut |s| statuses.push(s)).unwrap();
+    }
+    let indexing: Vec<(usize, usize, usize)> = statuses
+        .iter()
+        .filter_map(|s| match s {
+            IndexStatus::Indexing { done, complete, total, .. } => Some((*done, *complete, *total)),
+            _ => None,
+        })
+        .collect();
+    assert!(indexing.iter().all(|&(d, c, t)| c <= d && d <= t && t == 40), "{indexing:?}");
+    assert!(indexing.contains(&(40, 20, 40)), "after the first phase: all indexed, the short ones complete: {indexing:?}");
+    assert_eq!(indexing.last(), Some(&(40, 40, 40)));
+    assert_eq!(statuses.last(), Some(&IndexStatus::Idle));
 }
