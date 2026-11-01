@@ -441,8 +441,9 @@ impl Vault {
     }
 
     /// A counter that grows with every row this connection inserts, updates or deletes,
-    /// so the job can tell cheaply whether anything changed since it last looked.
+    /// so the job can tell cheaply whether anything changed since it last looked. Plain
+    /// settings writes (the recently opened notes, preferences) don't count.
     pub fn change_count(&self) -> u64 {
-        self.conn.total_changes()
+        self.conn.total_changes() - self.setting_changes.get()
     }
 }
