@@ -1,7 +1,7 @@
 //! The background job that keeps every tag's head up to date. It runs a pass on unlock,
 //! then again whenever the vault has changed and been quiet for a while (30 s in the
 //! app), so an import or a burst of edits trains once; it doesn't start while an import
-//! runs. Same rules as the embedding job: it reaches the vault only through
+//! runs or notes are queued for embedding. Same rules as the embedding job: it reaches the vault only through
 //! [`Session::with_vault_quiet`] (no activity, so it never postpones auto-lock), never
 //! while it computes, and it stops on lock.
 //!
@@ -28,6 +28,9 @@ use crate::session::{Session, SessionError};
 
 /// How long the vault must be unchanged before the app's job retrains.
 pub const QUIET: Duration = Duration::from_secs(30);
+/// Quiet periods an embedding queue may go without shrinking before the job stops
+/// waiting for it (5 min in the app).
+const STALLED_QUIETS: u32 = 10;
 /// Note vectors read per vault access.
 const PAGE: u32 = 500;
 /// Held for a whole pass, so a pass asked for on demand (the Suggestions view, after
@@ -69,24 +72,39 @@ pub struct TrainPass {
 /// Runs the job for unlock `generation` until the vault locks. It checks every `poll`
 /// whether the vault changed, and trains once it has been unchanged for `quiet`.
 /// `report` gets every pass that changed a head.
+///
+/// While notes are queued for embedding it waits too: every batch of new vectors
+/// changes every head's inputs, and batches can be more than `quiet` apart. A queue
+/// that hasn't shrunk for [`STALLED_QUIETS`] times `quiet` (the model can't load, say)
+/// no longer holds it back.
 pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, report: impl Fn(&TrainPass)) {
     let activity = session.activity().reporter(generation);
     let mut seen = None;
+    // The queue length, and since when it has been that.
+    let mut queue: Option<(usize, Instant)> = None;
     // A pass on unlock, for heads that went stale while locked (or never were trained).
     let mut changed_at = Some(Instant::now() - quiet);
     loop {
-        let changes = match session.with_vault_quiet(generation, |v| Ok(v.change_count())) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+        let (changes, queued) =
+            match session.with_vault_quiet(generation, |v| Ok((v.change_count(), v.embedding_queue_len()?))) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
         if seen.is_some_and(|s| s != changes) {
             changed_at = Some(Instant::now());
         }
         seen = Some(changes);
+        if queue.is_none_or(|(n, _)| n != queued) {
+            queue = Some((queued, Instant::now()));
+        }
+        let embedding = queued > 0 && queue.is_some_and(|(_, since)| since.elapsed() < quiet * STALLED_QUIETS);
         // The notes an import brings have no vectors yet: wait until it is over.
         if session.import_running() {
             changed_at = Some(Instant::now());
             activity.wait(Job::Training, "import running");
+        } else if embedding {
+            changed_at = Some(Instant::now());
+            activity.wait(Job::Training, format!("notes being embedded ({} queued)", count(queued as u64)));
         } else if changed_at.is_some_and(|t| t.elapsed() < quiet) {
             activity.wait(Job::Training, format!("vault changed; trains after {} s of quiet", quiet.as_secs()));
         }
@@ -231,6 +249,9 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         activity.log(Job::Training, format!("head {tag} trained ({})", duration_text(elapsed)));
         result.trained.push(tag);
         result.durations.push(elapsed);
+    }
+    if heads_to_train > 0 {
+        activity.progress(Job::Training, "trained", heads_to_train as u64, Some(heads_to_train as u64));
     }
     let summary = format!(
         "{} heads trained, {} dropped, {} up to date",
