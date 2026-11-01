@@ -277,6 +277,64 @@ fn the_running_job_retrains_after_changes() {
     });
 }
 
+/// Every batch the embedding job writes changes every head's inputs: the job waits for
+/// the queue to empty instead of retraining between batches.
+#[test]
+fn the_running_job_waits_while_notes_are_queued_for_embedding() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    notes(&session, "dream", 10, 12);
+    index(&session, g, &source);
+    create(&session, "Queued", "dream sleep night moon");
+    let head = || session.with_vault(|v| v.tag_head("dream")).unwrap();
+    std::thread::scope(|s| {
+        // A stall counts after 10 quiet periods: 1 s.
+        s.spawn(|| training::run(&session, g, Duration::from_millis(5), Duration::from_millis(100), |_| {}));
+        let _stop = LockOnDrop(&session);
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(head().is_none(), "trained while a note was queued");
+        let status = session.activity().status(hush_lib::activity::Job::Training);
+        assert_eq!(status.reason.as_deref(), Some("notes being embedded (1 queued)"));
+
+        index(&session, g, &source);
+        let start = Instant::now();
+        while head().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(10), "never trained after the queue emptied");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(head().unwrap().negatives, 13, "trained on the embedded note too");
+    });
+}
+
+/// A queue that stops shrinking (the model can't load) doesn't hold training back for good.
+#[test]
+fn the_running_job_trains_anyway_once_the_queue_stalls() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    notes(&session, "dream", 10, 12);
+    index(&session, g, &source);
+    create(&session, "Queued", "dream sleep night moon");
+    std::thread::scope(|s| {
+        s.spawn(|| training::run(&session, g, Duration::from_millis(5), Duration::from_millis(20), |_| {}));
+        let _stop = LockOnDrop(&session);
+        let start = Instant::now();
+        while session.with_vault(|v| v.tag_head("dream")).unwrap().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(10), "a stalled queue blocked training");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(start.elapsed() >= Duration::from_millis(200), "didn't wait for the stall");
+    });
+}
+
+/// Locks the vault when dropped, so a failed assertion stops the job instead of hanging the test.
+struct LockOnDrop<'a>(&'a Session);
+
+impl Drop for LockOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.lock();
+    }
+}
+
 /// How long training takes and how good heads get, with the real model. See
 /// `docs/decisions.md` (Tag classifiers). Needs the bundled model (`npm run fetch-model`),
 /// or `HUSH_MEASURE_ONNX=<file in src-tauri/models>` for another export of it. Run in

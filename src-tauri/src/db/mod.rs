@@ -19,6 +19,7 @@ mod search;
 mod tags;
 mod trash;
 
+use std::cell::Cell;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -98,6 +99,10 @@ pub struct Vault {
     /// Held as long as the vault is open, so no other process opens it too. Released
     /// when dropped, and by the OS if the process exits or crashes.
     lock: lock::VaultLock,
+    /// Rows changed through [`Vault::set_setting`] and [`Vault::delete_setting`], which
+    /// [`Vault::change_count`] leaves out: opening a note records it there, and that
+    /// is no reason for a background job to start over.
+    setting_changes: Cell<u64>,
 }
 
 impl Vault {
@@ -129,7 +134,7 @@ impl Vault {
     fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
         schema::migrate(&mut conn, progress)?;
         notes::reset_bulk_writes(&conn)?;
-        Ok(Self { conn, lock })
+        Ok(Self { conn, lock, setting_changes: Cell::new(0) })
     }
 
     /// Lets another thread stop the statement running on this connection.
@@ -157,7 +162,7 @@ impl Vault {
 
     /// Closes the connection; SQLCipher wipes its key material on close.
     pub fn close(self) -> Result<()> {
-        let Self { conn, lock } = self;
+        let Self { conn, lock, .. } = self;
         let closed = conn.close().map_err(|(_, e)| e.into());
         // Only after the connection is closed, so the next owner never sees it open.
         drop(lock);
@@ -172,16 +177,18 @@ impl Vault {
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
+        let n = self.conn.execute(
             "INSERT INTO settings(key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, value],
         )?;
+        self.setting_changes.set(self.setting_changes.get() + n as u64);
         Ok(())
     }
 
     pub fn delete_setting(&self, key: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        let n = self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        self.setting_changes.set(self.setting_changes.get() + n as u64);
         Ok(())
     }
 }

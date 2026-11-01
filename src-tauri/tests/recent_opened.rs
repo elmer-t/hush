@@ -247,3 +247,18 @@ fn history_off_stores_no_last_opened_note_and_clears_it() {
     vault.record_opened(ids[1]).unwrap();
     assert_eq!(vault.last_opened().unwrap(), Some(ids[1]));
 }
+
+#[test]
+fn opening_notes_is_not_a_vault_change() {
+    let (_dir, mut vault) = common::vault();
+    let ids = notes(&mut vault, 3);
+    let before = vault.change_count();
+    for &id in &ids {
+        vault.record_opened(id).unwrap();
+    }
+    vault.clear_recent_opened().unwrap();
+    vault.clear_last_opened().unwrap();
+    assert_eq!(vault.change_count(), before, "background jobs would retrain on every click");
+    vault.create_note("", "New", "").unwrap();
+    assert!(vault.change_count() > before);
+}
