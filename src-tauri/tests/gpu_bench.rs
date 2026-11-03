@@ -32,12 +32,16 @@ type Vectors = Vec<Vec<f32>>;
 enum Device {
     Cpu,
     DirectMl,
+    /// DirectML on the NPU (Intel AI Boost), every run padded to [`MAX_TOKENS`].
+    Npu,
 }
 
 struct Model {
     tokenizer: Tokenizer,
     session: Session,
     token_types: bool,
+    /// Pads every run to this many tokens (fixed shapes for the NPU).
+    pad_to: Option<usize>,
 }
 
 fn environment() -> &'static Environment {
@@ -63,15 +67,16 @@ impl Model {
                 b = b.with_intra_threads(threads).map_err(s)?;
                 b = b.with_inter_threads(1).map_err(s)?;
             }
-            Device::DirectMl => {
+            Device::DirectMl | Device::Npu => {
                 b = b.with_memory_pattern(false).map_err(s)?;
                 b = b.with_parallel_execution(false).map_err(s)?;
-                b = directml(b)?;
+                b = directml(b, device == Device::Npu)?;
             }
         }
         let session = b.commit_from_memory(&bytes).map_err(s)?;
         let token_types = session.inputs().iter().any(|i| i.name() == "token_type_ids");
-        Ok(Self { tokenizer, session, token_types })
+        let pad_to = (device == Device::Npu).then_some(MAX_TOKENS);
+        Ok(Self { tokenizer, session, token_types, pad_to })
     }
 
     /// Token windows of at most [`MAX_TOKENS`] (special tokens included), as `embed/onnx.rs`.
@@ -90,7 +95,7 @@ impl Model {
     /// One unit-length CLS vector per chunk, padded to the longest chunk of the run.
     fn run(&mut self, chunks: &[&Encoding]) -> Result<Vectors, String> {
         let rows = chunks.len();
-        let len = chunks.iter().map(|c| c.len()).max().unwrap_or(0);
+        let len = chunks.iter().map(|c| c.len()).max().unwrap_or(0).max(self.pad_to.unwrap_or(0));
         let mut ids = vec![0i64; rows * len];
         let mut mask = vec![0i64; rows * len];
         let types = vec![0i64; rows * len];
@@ -155,13 +160,15 @@ impl Model {
 }
 
 #[cfg(windows)]
-fn directml(b: SessionBuilder) -> Result<SessionBuilder, String> {
-    b.with_execution_providers([ort::ep::DirectML::default().build().error_on_failure()])
+fn directml(b: SessionBuilder, npu: bool) -> Result<SessionBuilder, String> {
+    use ort::ep::directml::DeviceFilter;
+    let filter = if npu { DeviceFilter::Npu } else { DeviceFilter::Gpu };
+    b.with_execution_providers([ort::ep::DirectML::default().with_device_filter(filter).build().error_on_failure()])
         .map_err(|e| format!("DirectML failed to register: {e}"))
 }
 
 #[cfg(not(windows))]
-fn directml(_: SessionBuilder) -> Result<SessionBuilder, String> {
+fn directml(_: SessionBuilder, _: bool) -> Result<SessionBuilder, String> {
     Err("DirectML is Windows-only".into())
 }
 
@@ -218,7 +225,7 @@ fn cosines(a: &[Vec<f32>], b: &[Vec<f32>]) -> (f32, f32) {
 fn load_working(name: &str, model: &Path, tokenizer: &Path, device: Device, probe: &str) -> Option<Model> {
     let levels: &[(GraphOptimizationLevel, &str)] = match device {
         Device::Cpu => &[(GraphOptimizationLevel::Level3, "Level3")],
-        Device::DirectMl => &[
+        Device::DirectMl | Device::Npu => &[
             (GraphOptimizationLevel::Level3, "Level3"),
             (GraphOptimizationLevel::Level2, "Level2"),
             (GraphOptimizationLevel::Level1, "Level1"),
@@ -257,6 +264,8 @@ fn measure_cpu_and_directml_throughput() {
         ("fp32 CPU", bench.join("model.onnx"), Device::Cpu),
         ("fp16 DirectML", bench.join("model_fp16.onnx"), Device::DirectMl),
         ("fp32 DirectML", bench.join("model.onnx"), Device::DirectMl),
+        ("fp16 NPU", bench.join("model_fp16.onnx"), Device::Npu),
+        ("fp32 NPU", bench.join("model.onnx"), Device::Npu),
     ];
     let sets = [(300, notes(300, SHORT_NOTES)), (3_000, notes(3_000, LONG_NOTES))];
     let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
@@ -286,7 +295,7 @@ fn measure_cpu_and_directml_throughput() {
                     continue;
                 }
             };
-            if *device == Device::DirectMl {
+            if *device != Device::Cpu {
                 for batch in [8, 32, 64] {
                     let warm = chunked.len().min(8);
                     match model.across_notes(&chunked[..warm], batch).and_then(|_| timed(|| model.across_notes(&chunked, batch))) {
@@ -325,6 +334,9 @@ fn measure_cpu_and_directml_throughput() {
             ("int8 CPU", "fp32 DirectML"),
             ("fp32 CPU", "fp16 DirectML"),
             ("fp32 CPU", "fp32 DirectML"),
+            ("fp32 CPU", "fp16 NPU"),
+            ("fp32 CPU", "fp32 NPU"),
+            ("int8 CPU", "fp16 NPU"),
         ] {
             if let (Some(x), Some(y)) = (get(a), get(b)) {
                 let (min, mean) = cosines(x, y);
