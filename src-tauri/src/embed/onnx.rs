@@ -23,10 +23,11 @@ const MAX_CHUNKS: usize = 64;
 /// model allows it ([`ModelDescriptor::batch_across_notes`]). 8 was also the fastest
 /// batch on DirectML, ahead of 32 and 64 (#105).
 const CHUNK_BATCH: usize = 8;
-/// Embedded once when a model loads on the GPU: DirectML can register and then fail on
-/// the first run (an old system DirectML.dll does), and that should fall back to the CPU
-/// before any note waits on it.
-const GPU_PROBE: &str = "Hush checks that the GPU can run the model.";
+/// Run once when a model loads on the GPU: DirectML can register and then fail on the
+/// first run (an old system DirectML.dll does), and that should fall back to the CPU
+/// before any note waits on it. Repeated into one full run of [`CHUNK_BATCH`] chunks:
+/// after a smaller first run every later run took twice as long (RTX 4060 Ti, #105).
+const GPU_PROBE: &str = "Hush checks that the GPU can run the model. ";
 
 /// Where a model runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
@@ -115,8 +116,11 @@ impl OnnxEmbedder {
             device,
         };
         if device == Device::Gpu {
+            let probe = GPU_PROBE.repeat(descriptor.max_tokens);
+            let mut chunks = embedder.chunks(&probe, "")?;
+            chunks.truncate(CHUNK_BATCH);
             embedder
-                .embed(GPU_PROBE)
+                .run(&chunks)
                 .map_err(|e| EmbedError::Load(format!("the GPU couldn't run the model: {e}")))?;
         }
         Ok(embedder)
