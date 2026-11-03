@@ -62,8 +62,7 @@ pub struct FolderContents {
 /// A `deleted_at` for a new trash operation: now, but never one an existing operation
 /// uses, so a folder group can be found by its key alone.
 fn trash_time(conn: &Connection) -> Result<i64> {
-    let latest: Option<i64> =
-        conn.query_row("SELECT max(deleted_at) FROM notes", [], |r| r.get(0))?;
+    let latest: Option<i64> = conn.query_row("SELECT max(deleted_at) FROM notes", [], |r| r.get(0))?;
     Ok(latest.map_or(now_ms(), |l| now_ms().max(l + 1)))
 }
 
@@ -89,10 +88,8 @@ impl Vault {
         let tx = self.conn.transaction()?;
         let now = trash_time(&tx)?;
         for &id in ids {
-            if tx.execute(
-                "UPDATE notes SET deleted_at = ?2 WHERE id = ?1 AND deleted_at IS NULL",
-                params![id, now],
-            )? == 0
+            if tx.execute("UPDATE notes SET deleted_at = ?2 WHERE id = ?1 AND deleted_at IS NULL", params![id, now])?
+                == 0
             {
                 return Err(Error::NoteNotFound);
             }
@@ -111,9 +108,7 @@ impl Vault {
     pub fn folder_contents(&self, folder: &str) -> Result<FolderContents> {
         let folder = markdown::normalize_folder(folder);
         if folder.is_empty() {
-            return Err(Error::InvalidFolder(
-                "the top level can't be deleted".into(),
-            ));
+            return Err(Error::InvalidFolder("the top level can't be deleted".into()));
         }
         let (a, b, c) = subtree_params(&folder);
         let notes: i64 = self.conn.query_row(
@@ -139,10 +134,7 @@ impl Vault {
                 below.insert(path.clone());
             }
         }
-        Ok(FolderContents {
-            notes: notes as usize,
-            subfolders: below.len(),
-        })
+        Ok(FolderContents { notes: notes as usize, subfolders: below.len() })
     }
 
     /// Moves `folder` with every live note in it and below it to the trash, in one
@@ -151,9 +143,7 @@ impl Vault {
     pub fn trash_folder(&mut self, folder: &str) -> Result<usize> {
         let folder = markdown::normalize_folder(folder);
         if folder.is_empty() {
-            return Err(Error::InvalidFolder(
-                "the top level can't be deleted".into(),
-            ));
+            return Err(Error::InvalidFolder("the top level can't be deleted".into()));
         }
         let tx = self.conn.transaction()?;
         let now = trash_time(&tx)?;
@@ -166,22 +156,16 @@ impl Vault {
             return Ok(0);
         }
         // The group's notes are exactly those with `deleted_at = now` (see `trash_time`).
-        for (table, column) in [
-            ("note_tags", "note_id"),
-            ("note_attributes", "note_id"),
-            ("note_embeddings", "note_id"),
-            ("links", "from_note_id"),
-        ] {
+        for (table, column) in
+            [("note_tags", "note_id"), ("note_attributes", "note_id"), ("note_embeddings", "note_id"), ("links", "from_note_id")]
+        {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM notes WHERE deleted_at = ?1)"),
                 [now],
             )?;
         }
         super::recent::forget_last_opened_trashed_at(&tx, now)?;
-        tx.execute(
-            "INSERT INTO trash_folders(deleted_at, folder) VALUES (?1, ?2)",
-            params![now, folder],
-        )?;
+        tx.execute("INSERT INTO trash_folders(deleted_at, folder) VALUES (?1, ?2)", params![now, folder])?;
         tx.commit()?;
         Ok(trashed)
     }
@@ -192,15 +176,11 @@ impl Vault {
     /// whole group. Returns how many notes came back.
     pub fn restore_folder(&mut self, deleted_at: i64) -> Result<usize> {
         let tx = self.conn.transaction()?;
-        if !tx
-            .prepare("SELECT 1 FROM trash_folders WHERE deleted_at = ?1")?
-            .exists([deleted_at])?
-        {
+        if !tx.prepare("SELECT 1 FROM trash_folders WHERE deleted_at = ?1")?.exists([deleted_at])? {
             return Err(Error::NoteNotFound);
         }
         let mut notes: Vec<(i64, String, String)> = {
-            let mut stmt = tx
-                .prepare("SELECT id, folder, title FROM notes WHERE deleted_at = ?1 ORDER BY id")?;
+            let mut stmt = tx.prepare("SELECT id, folder, title FROM notes WHERE deleted_at = ?1 ORDER BY id")?;
             stmt.query_map([deleted_at], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<rusqlite::Result<_>>()?
         };
@@ -211,9 +191,7 @@ impl Vault {
         let mut renames: Vec<(usize, String)> = Vec::new();
         let mut taken: HashSet<(String, String)> = HashSet::new();
         {
-            let mut live = tx.prepare_cached(
-                "SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2 AND deleted_at IS NULL",
-            )?;
+            let mut live = tx.prepare_cached("SELECT 1 FROM notes WHERE folder = ?1 AND title = ?2 AND deleted_at IS NULL")?;
             for (i, (_, folder, title)) in notes.iter().enumerate() {
                 if live.exists(params![folder, title])? {
                     renames.push((i, String::new()));
@@ -225,14 +203,9 @@ impl Vault {
                 let (_, folder, title) = &notes[*i];
                 let mut n = 1;
                 *new_title = loop {
-                    let candidate = if n == 1 {
-                        format!("{title} (restored)")
-                    } else {
-                        format!("{title} (restored {n})")
-                    };
-                    if !taken.contains(&path(folder, &candidate))
-                        && !live.exists(params![folder, candidate])?
-                    {
+                    let candidate =
+                        if n == 1 { format!("{title} (restored)") } else { format!("{title} (restored {n})") };
+                    if !taken.contains(&path(folder, &candidate)) && !live.exists(params![folder, candidate])? {
                         break candidate;
                     }
                     n += 1;
@@ -252,11 +225,7 @@ impl Vault {
             for (i, new_title) in &renames {
                 rename.execute(params![notes[*i].0, new_title])?;
             }
-            conn.execute(
-                "UPDATE notes SET deleted_at = NULL WHERE deleted_at = ?1",
-                [deleted_at],
-            )
-            .map_err(title_taken)?;
+            conn.execute("UPDATE notes SET deleted_at = NULL WHERE deleted_at = ?1", [deleted_at]).map_err(title_taken)?;
             let mut body = conn.prepare_cached("SELECT body FROM notes WHERE id = ?1")?;
             for (id, _, _) in &notes {
                 let text: String = body.query_row([id], |r| r.get(0))?;
@@ -264,10 +233,7 @@ impl Vault {
             }
             Ok(())
         })?;
-        tx.execute(
-            "DELETE FROM trash_folders WHERE deleted_at = ?1",
-            [deleted_at],
-        )?;
+        tx.execute("DELETE FROM trash_folders WHERE deleted_at = ?1", [deleted_at])?;
         tx.commit()?;
         Ok(notes.len())
     }
@@ -275,11 +241,7 @@ impl Vault {
     /// Deletes every note of a folder group for good. Returns how many.
     pub fn delete_trash_folder(&mut self, deleted_at: i64) -> Result<usize> {
         let tx = self.conn.transaction()?;
-        if tx.execute(
-            "DELETE FROM trash_folders WHERE deleted_at = ?1",
-            [deleted_at],
-        )? == 0
-        {
+        if tx.execute("DELETE FROM trash_folders WHERE deleted_at = ?1", [deleted_at])? == 0 {
             return Err(Error::NoteNotFound);
         }
         let deleted = tx.execute("DELETE FROM notes WHERE deleted_at = ?1", [deleted_at])?;
@@ -306,17 +268,8 @@ impl Vault {
             .query_map(params![limit, offset], |r| {
                 let deleted_at = r.get(3)?;
                 Ok(match r.get::<_, Option<i64>>(0)? {
-                    Some(id) => TrashEntry::Note(TrashedNote {
-                        id,
-                        folder: r.get(1)?,
-                        title: r.get(2)?,
-                        deleted_at,
-                    }),
-                    None => TrashEntry::Folder {
-                        deleted_at,
-                        folder: r.get(1)?,
-                        notes: r.get::<_, i64>(4)? as usize,
-                    },
+                    Some(id) => TrashEntry::Note(TrashedNote { id, folder: r.get(1)?, title: r.get(2)?, deleted_at }),
+                    None => TrashEntry::Folder { deleted_at, folder: r.get(1)?, notes: r.get::<_, i64>(4)? as usize },
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -325,11 +278,7 @@ impl Vault {
 
     /// How many notes are in the trash, folder groups included.
     pub fn trash_count(&self) -> Result<usize> {
-        let n: i64 = self.conn.query_row(
-            "SELECT count(*) FROM notes WHERE deleted_at IS NOT NULL",
-            [],
-            |r| r.get(0),
-        )?;
+        let n: i64 = self.conn.query_row("SELECT count(*) FROM notes WHERE deleted_at IS NOT NULL", [], |r| r.get(0))?;
         Ok(n as usize)
     }
 
@@ -340,14 +289,7 @@ impl Vault {
              ORDER BY deleted_at DESC, id DESC",
         )?;
         let notes = stmt
-            .query_map([], |r| {
-                Ok(TrashedNote {
-                    id: r.get(0)?,
-                    folder: r.get(1)?,
-                    title: r.get(2)?,
-                    deleted_at: r.get(3)?,
-                })
-            })?
+            .query_map([], |r| Ok(TrashedNote { id: r.get(0)?, folder: r.get(1)?, title: r.get(2)?, deleted_at: r.get(3)? }))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(notes)
     }
@@ -359,11 +301,9 @@ impl Vault {
     pub fn restore_note(&mut self, id: i64) -> Result<String> {
         let tx = self.conn.transaction()?;
         let (title, body): (String, String) = tx
-            .query_row(
-                "SELECT title, body FROM notes WHERE id = ?1 AND deleted_at IS NOT NULL",
-                [id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row("SELECT title, body FROM notes WHERE id = ?1 AND deleted_at IS NOT NULL", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .optional()?
             .ok_or(Error::NoteNotFound)?;
         let mut n = 1;
@@ -427,10 +367,7 @@ impl Vault {
         let cutoff = now - i64::from(days) * DAY_MS;
         // A folder group's notes share `deleted_at`, so it goes as a whole.
         let tx = self.conn.transaction()?;
-        let deleted = tx.execute(
-            "DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
-            [cutoff],
-        )?;
+        let deleted = tx.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at <= ?1", [cutoff])?;
         tx.execute("DELETE FROM trash_folders WHERE deleted_at <= ?1", [cutoff])?;
         tx.commit()?;
         Ok(deleted)
@@ -443,10 +380,7 @@ impl Vault {
     /// Pretends a trashed note was deleted `days` ago.
     #[cfg(test)]
     pub(crate) fn backdate_trash(&self, id: i64, days: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE notes SET deleted_at = deleted_at - ?2 WHERE id = ?1",
-            params![id, days * DAY_MS],
-        )?;
+        self.conn.execute("UPDATE notes SET deleted_at = deleted_at - ?2 WHERE id = ?1", params![id, days * DAY_MS])?;
         Ok(())
     }
 }
@@ -466,10 +400,7 @@ mod tests {
     }
 
     fn plan(vault: &Vault, sql: &str) -> String {
-        let mut stmt = vault
-            .conn
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .unwrap();
+        let mut stmt = vault.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         // Unbound parameters are NULL, which doesn't change the plan.
         let mut rows = stmt.raw_query();
         let mut out = Vec::new();
@@ -484,98 +415,32 @@ mod tests {
     #[test]
     fn trash_folder_removes_derived_rows() {
         let (_dir, mut v) = vault();
-        let inside = v
-            .create_note("a/b", "In", "---\nmood: calm\n---\n#bird [[Out]]")
-            .unwrap();
+        let inside = v.create_note("a/b", "In", "---\nmood: calm\n---\n#bird [[Out]]").unwrap();
         let sibling = v.create_note("a/bc", "Out", "#bird [[In]]").unwrap();
         for id in [inside, sibling] {
-            v.conn
-                .execute(
-                    "INSERT INTO note_embeddings VALUES (?1, 'm', x'00', x'0000803f')",
-                    [id],
-                )
-                .unwrap();
+            v.conn.execute("INSERT INTO note_embeddings VALUES (?1, 'm', x'00', x'0000803f')", [id]).unwrap();
         }
         assert_eq!(v.trash_folder("a/b").unwrap(), 1);
         for table in ["note_tags", "note_attributes", "note_embeddings"] {
-            assert_eq!(
-                count(
-                    &v,
-                    &format!("SELECT count(*) FROM {table} WHERE note_id = {inside}")
-                ),
-                0,
-                "{table}"
-            );
+            assert_eq!(count(&v, &format!("SELECT count(*) FROM {table} WHERE note_id = {inside}")), 0, "{table}");
         }
-        assert_eq!(
-            count(
-                &v,
-                &format!("SELECT count(*) FROM links WHERE from_note_id = {inside}")
-            ),
-            0
-        );
-        assert_eq!(
-            count(
-                &v,
-                &format!("SELECT count(*) FROM note_tags WHERE note_id = {sibling}")
-            ),
-            1
-        );
-        assert_eq!(
-            count(
-                &v,
-                &format!("SELECT count(*) FROM note_embeddings WHERE note_id = {sibling}")
-            ),
-            1
-        );
-        assert_eq!(
-            count(
-                &v,
-                &format!("SELECT count(*) FROM links WHERE from_note_id = {sibling}")
-            ),
-            1
-        );
-        assert_eq!(
-            count(
-                &v,
-                &format!("SELECT count(*) FROM embedding_dirty WHERE note_id = {inside}")
-            ),
-            1,
-            "queued"
-        );
+        assert_eq!(count(&v, &format!("SELECT count(*) FROM links WHERE from_note_id = {inside}")), 0);
+        assert_eq!(count(&v, &format!("SELECT count(*) FROM note_tags WHERE note_id = {sibling}")), 1);
+        assert_eq!(count(&v, &format!("SELECT count(*) FROM note_embeddings WHERE note_id = {sibling}")), 1);
+        assert_eq!(count(&v, &format!("SELECT count(*) FROM links WHERE from_note_id = {sibling}")), 1);
+        assert_eq!(count(&v, &format!("SELECT count(*) FROM embedding_dirty WHERE note_id = {inside}")), 1, "queued");
     }
 
     /// The folder match reads a range of an index on `folder`, never the whole table.
     #[test]
     fn folder_queries_use_the_folder_index() {
         let (_dir, v) = vault();
-        let live = plan(
-            &v,
-            &format!("SELECT count(*) FROM notes WHERE deleted_at IS NULL AND {IN_SUBTREE}"),
-        );
-        assert!(
-            live.contains("notes_folder_title (folder>? AND folder<?)")
-                && !live.contains("SCAN notes"),
-            "{live}"
-        );
-        let update = plan(
-            &v,
-            &format!("UPDATE notes SET deleted_at = ?4 WHERE deleted_at IS NULL AND {IN_SUBTREE}"),
-        );
-        assert!(
-            update.contains("notes_folder_title (folder>? AND folder<?)")
-                && !update.contains("SCAN notes"),
-            "{update}"
-        );
-        let distinct = plan(
-            &v,
-            "SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL AND folder > ?1 AND folder < ?2",
-        );
-        assert!(
-            distinct.contains("notes_folder_title (folder>? AND folder<?)")
-                && !distinct.contains("SCAN notes"),
-            "{distinct}"
-        );
+        let live = plan(&v, &format!("SELECT count(*) FROM notes WHERE deleted_at IS NULL AND {IN_SUBTREE}"));
+        assert!(live.contains("notes_folder_title (folder>? AND folder<?)") && !live.contains("SCAN notes"), "{live}");
+        let update = plan(&v, &format!("UPDATE notes SET deleted_at = ?4 WHERE deleted_at IS NULL AND {IN_SUBTREE}"));
+        assert!(update.contains("notes_folder_title (folder>? AND folder<?)") && !update.contains("SCAN notes"), "{update}");
+        let distinct = plan(&v, "SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL AND folder > ?1 AND folder < ?2");
+        assert!(distinct.contains("notes_folder_title (folder>? AND folder<?)") && !distinct.contains("SCAN notes"), "{distinct}");
     }
 
     /// A group's notes are found by `deleted_at` through its index.

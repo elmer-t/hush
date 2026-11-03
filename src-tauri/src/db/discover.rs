@@ -43,10 +43,7 @@ impl Vault {
     ) -> Result<(Vec<i64>, Option<ScopeCursor>)> {
         if let DiscoverScope::Search { query } = scope {
             let ids = self.search_ids(query, cursor.id, limit)?;
-            let next = (ids.len() == limit as usize).then(|| ScopeCursor {
-                id: *ids.last().unwrap(),
-                ..Default::default()
-            });
+            let next = (ids.len() == limit as usize).then(|| ScopeCursor { id: *ids.last().unwrap(), ..Default::default() });
             return Ok((ids, next));
         }
         // The other scopes walk `notes_folder_title`, which holds only live notes and
@@ -67,23 +64,13 @@ impl Vault {
         )?;
         let mut ids = Vec::with_capacity(limit as usize);
         let mut last = None;
-        let mut rows = stmt.query(params![
-            cursor.folder,
-            cursor.title,
-            folder,
-            untagged,
-            limit
-        ])?;
+        let mut rows = stmt.query(params![cursor.folder, cursor.title, folder, untagged, limit])?;
         while let Some(r) = rows.next()? {
             ids.push(r.get(0)?);
             last = Some((r.get(1)?, r.get(2)?));
         }
         let next = match last {
-            Some((folder, title)) if ids.len() == limit as usize => Some(ScopeCursor {
-                id: 0,
-                folder,
-                title,
-            }),
+            Some((folder, title)) if ids.len() == limit as usize => Some(ScopeCursor { id: 0, folder, title }),
             _ => None,
         };
         Ok((ids, next))
@@ -91,15 +78,11 @@ impl Vault {
 
     /// The `model` vector of each of `ids` that has one.
     pub fn discover_vectors(&self, model: &str, ids: &[i64]) -> Result<Vec<(i64, Vec<f32>)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT vector FROM note_embeddings WHERE note_id = ?1 AND model = ?2",
-        )?;
+        let mut stmt =
+            self.conn.prepare_cached("SELECT vector FROM note_embeddings WHERE note_id = ?1 AND model = ?2")?;
         let mut vectors = Vec::with_capacity(ids.len());
         for &id in ids {
-            if let Some(blob) = stmt
-                .query_row(params![id, model], |r| r.get::<_, Vec<u8>>(0))
-                .optional()?
-            {
+            if let Some(blob) = stmt.query_row(params![id, model], |r| r.get::<_, Vec<u8>>(0)).optional()? {
                 vectors.push((id, embed::blob_to_vector(&blob)));
             }
         }
@@ -109,12 +92,7 @@ impl Vault {
     /// Up to `limit` `model` vectors in storage order (whatever note they belong to,
     /// live or not), with the position to continue after (`None` on the last page): one
     /// pass over every vector reads the table front to back instead of seeking per note.
-    pub fn discover_vector_page(
-        &self,
-        model: &str,
-        after: i64,
-        limit: u32,
-    ) -> Result<(Vec<(i64, Vec<f32>)>, Option<i64>)> {
+    pub fn discover_vector_page(&self, model: &str, after: i64, limit: u32) -> Result<(Vec<(i64, Vec<f32>)>, Option<i64>)> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT rowid, note_id, vector FROM note_embeddings
              WHERE model = ?1 AND rowid > ?2 ORDER BY rowid LIMIT ?3",
@@ -126,25 +104,17 @@ impl Vault {
             last = Some(r.get::<_, i64>(0)?);
             rows.push((r.get(1)?, embed::blob_to_vector(&r.get::<_, Vec<u8>>(2)?)));
         }
-        let next = if rows.len() < limit as usize {
-            None
-        } else {
-            last
-        };
+        let next = if rows.len() < limit as usize { None } else { last };
         Ok((rows, next))
     }
 
     /// Folder and title of each of `ids` that is live, by id.
     pub fn discover_titles(&self, ids: &[i64]) -> Result<Vec<(i64, String, String)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT folder, title FROM notes WHERE id = ?1 AND deleted_at IS NULL",
-        )?;
+        let mut stmt =
+            self.conn.prepare_cached("SELECT folder, title FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
         let mut rows = Vec::with_capacity(ids.len());
         for &id in ids {
-            if let Some((folder, title)) = stmt
-                .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
-                .optional()?
-            {
+            if let Some((folder, title)) = stmt.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).optional()? {
                 rows.push((id, folder, title));
             }
         }
@@ -153,9 +123,7 @@ impl Vault {
 
     /// Those of `ids` that are live notes, in the given order.
     pub fn live_notes(&self, ids: &[i64]) -> Result<Vec<i64>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
+        let mut stmt = self.conn.prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
         let mut live = Vec::with_capacity(ids.len());
         for &id in ids {
             if stmt.exists([id])? {
@@ -170,12 +138,7 @@ impl Vault {
     /// frontmatter of `ids` as the bulk *Add tag* edit does, and records an accepted
     /// example for each note that has the tag afterwards. Notes whose frontmatter can't
     /// be read are skipped and reported, without feedback.
-    pub fn create_tag_from_group(
-        &mut self,
-        tag: &str,
-        description: &str,
-        ids: &[i64],
-    ) -> Result<MetadataEditReport> {
+    pub fn create_tag_from_group(&mut self, tag: &str, description: &str, ids: &[i64]) -> Result<MetadataEditReport> {
         let tag = normalize_tag(tag)?;
         let tx = self.conn.transaction()?;
         let report = Self::edit_notes_metadata_in(&tx, ids, &MetadataEdit::AddTag(tag.clone()))?;
@@ -183,8 +146,7 @@ impl Vault {
             Self::set_tag_description_in(&tx, &tag, description)?;
         }
         let now = now_ms();
-        let unreadable: std::collections::HashSet<i64> =
-            report.unreadable.iter().map(|n| n.id).collect();
+        let unreadable: std::collections::HashSet<i64> = report.unreadable.iter().map(|n| n.id).collect();
         for &id in ids {
             if !unreadable.contains(&id) {
                 set_feedback(&tx, id, &tag, true, now)?;

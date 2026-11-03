@@ -6,8 +6,7 @@ use super::{Error, Result, rules};
 use crate::import::rules::Rule;
 
 /// Append-only: entry `i` migrates from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[
-    r#"
+const MIGRATIONS: &[&str] = &[r#"
 CREATE TABLE notes (
     id         INTEGER PRIMARY KEY,
     folder     TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
@@ -73,8 +72,7 @@ CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, body ON notes BEGIN
     INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
     INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
 END;
-"#,
-    r#"
+"#, r#"
 -- Label/attribute rules run during import, in `position` order.
 CREATE TABLE import_rules (
     id       INTEGER PRIMARY KEY,
@@ -88,16 +86,14 @@ CREATE TABLE import_rules (
     map      TEXT NOT NULL,   -- JSON array of [from, to] pairs
     strip    INTEGER NOT NULL
 );
-"#,
-    r#"
+"#, r#"
 -- Trash: a trashed note keeps its row (and FTS row) but has no tag, attribute or link
 -- rows, and every query skips it. (folder, title) is only unique among live notes.
 ALTER TABLE notes ADD COLUMN deleted_at INTEGER;
 DROP INDEX notes_folder_title;
 CREATE UNIQUE INDEX notes_folder_title ON notes(folder, title) WHERE deleted_at IS NULL;
 CREATE INDEX notes_deleted ON notes(deleted_at) WHERE deleted_at IS NOT NULL;
-"#,
-    r#"
+"#, r#"
 -- Tags become case-sensitive: `jr` and `Jr` are different tags. The collation can't be
 -- altered in place, so both tables are rebuilt; the child goes first so that dropping
 -- `tags` doesn't cascade.
@@ -117,8 +113,7 @@ DROP TABLE tags;
 ALTER TABLE tags_new RENAME TO tags;
 ALTER TABLE note_tags_new RENAME TO note_tags;
 CREATE INDEX note_tags_tag ON note_tags(tag_id, note_id);
-"#,
-    r#"
+"#, r#"
 -- Embeddings: one vector per note and model, so two models' vectors can coexist while
 -- the active model changes. `vector` is little-endian f32s; `content_hash` is the
 -- SHA-256 of the embedded text, so a save that doesn't change it doesn't re-embed.
@@ -130,8 +125,7 @@ CREATE TABLE note_embeddings (
     PRIMARY KEY (note_id, model)
 );
 CREATE INDEX note_embeddings_model ON note_embeddings(model);
-"#,
-    r#"
+"#, r#"
 -- Zero-shot tag suggestions. A description may name a tag no note uses yet; `tag` is
 -- case-sensitive like `tags.name`. `vector` is the description embedded with `model`,
 -- NULL until the job gets to it.
@@ -150,8 +144,7 @@ CREATE TABLE tag_feedback (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (note_id, tag)
 );
-"#,
-    r#"
+"#, r#"
 -- Per-tag classifier heads, trained on the user's own tags and feedback. Derived data:
 -- the job retrains a head whose `inputs` (SHA-256 of what it was trained on) or `model`
 -- no longer match. `weights` is little-endian f32s; `precision`/`recall` are
@@ -168,8 +161,7 @@ CREATE TABLE tag_heads (
     trained_at INTEGER NOT NULL,
     inputs     BLOB NOT NULL
 );
-"#,
-    r#"
+"#, r#"
 -- Notes whose vector may be out of date, so the embedding job works on these instead
 -- of rescanning every note after every change. Filled by triggers, so every write
 -- that can change the embedded text (title, body, trash, restore) queues the note in
@@ -199,8 +191,7 @@ BEGIN
 END;
 -- Every live note is checked once after the upgrade.
 INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE deleted_at IS NULL;
-"#,
-    r#"
+"#, r#"
 -- Search as you type at 1M notes: the full-text index gains prefix indexes for 2 and 3
 -- characters, so a short prefix reads one list instead of merging every word that
 -- starts with it. The index is derived from `notes`, so it is dropped and refilled
@@ -225,8 +216,7 @@ CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, body ON notes BEGIN
     INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
     INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
 END;
-"#,
-    r#"
+"#, r#"
 -- Folders moved to the trash as a whole. A group is the notes trashed with it: they
 -- share its `deleted_at`, which no other trash operation uses. Notes keep their own
 -- `folder` and `deleted_at`, so nothing existing changes.
@@ -234,8 +224,7 @@ CREATE TABLE trash_folders (
     deleted_at INTEGER PRIMARY KEY,
     folder     TEXT NOT NULL COLLATE NOCASE
 );
-"#,
-    r#"
+"#, r#"
 -- Star ratings: frontmatter `rating` (1–5) gets its own column, like author and topic,
 -- so "4 stars or more" is a range. Most notes are unrated, so the index only holds
 -- rated ones. Ratings written before this were generic attributes: a note with exactly
@@ -251,8 +240,7 @@ UPDATE notes SET rating = (SELECT m.rating FROM rating_moves m WHERE m.note_id =
     WHERE id IN (SELECT note_id FROM rating_moves);
 DELETE FROM note_attributes WHERE key = 'rating' AND note_id IN (SELECT note_id FROM rating_moves);
 DROP TABLE rating_moves;
-"#,
-];
+"#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
 const FTS_PREFIX_VERSION: usize = 9;
@@ -273,26 +261,14 @@ fn fill_fts(tx: &Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
         "INSERT INTO notes_fts(rowid, title, body)
          SELECT id, title, body FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2",
     )?;
-    let mut last = tx
-        .prepare("SELECT max(id) FROM (SELECT id FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2)")?;
+    let mut last = tx.prepare("SELECT max(id) FROM (SELECT id FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2)")?;
     let (mut after, mut done) = (0i64, 0usize);
-    progress(Upgrade {
-        done,
-        total: total as usize,
-    });
+    progress(Upgrade { done, total: total as usize });
     loop {
-        let Some(next) = last.query_row(params![after, FTS_FILL_BATCH], |r| {
-            r.get::<_, Option<i64>>(0)
-        })?
-        else {
-            break;
-        };
+        let Some(next) = last.query_row(params![after, FTS_FILL_BATCH], |r| r.get::<_, Option<i64>>(0))? else { break };
         done += stmt.execute(params![after, FTS_FILL_BATCH])?;
         after = next;
-        progress(Upgrade {
-            done,
-            total: total as usize,
-        });
+        progress(Upgrade { done, total: total as usize });
     }
     Ok(())
 }
@@ -337,20 +313,13 @@ mod tests {
             .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        let deleted: Option<i64> = conn
-            .query_row("SELECT deleted_at FROM notes", [], |r| r.get(0))
-            .unwrap();
+        let deleted: Option<i64> = conn.query_row("SELECT deleted_at FROM notes", [], |r| r.get(0)).unwrap();
         assert_eq!(deleted, None);
 
         let insert = "INSERT INTO notes(folder, title, body, created_at, updated_at) VALUES ('a', 't', '', 2, 2)";
-        assert!(
-            conn.execute(insert, []).is_err(),
-            "still unique among live notes"
-        );
+        assert!(conn.execute(insert, []).is_err(), "still unique among live notes");
         conn.execute("UPDATE notes SET deleted_at = 5", []).unwrap();
         conn.execute(insert, []).unwrap();
     }
@@ -372,22 +341,12 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let tagged: i64 = conn
-            .query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let tagged: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(tagged, 7);
-        conn.execute("INSERT INTO tags(name) VALUES ('Jr')", [])
-            .unwrap();
-        assert!(
-            conn.execute("INSERT INTO tags(name) VALUES ('jr')", [])
-                .is_err()
-        );
+        conn.execute("INSERT INTO tags(name) VALUES ('Jr')", []).unwrap();
+        assert!(conn.execute("INSERT INTO tags(name) VALUES ('jr')", []).is_err());
         conn.execute("DELETE FROM notes", []).unwrap();
-        let left: i64 = conn
-            .query_row("SELECT count(*) FROM note_tags", [], |r| r.get(0))
-            .unwrap();
+        let left: i64 = conn.query_row("SELECT count(*) FROM note_tags", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0, "note_tags still cascades from notes");
     }
 
@@ -410,42 +369,20 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        let body: String = conn
-            .query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0))
-            .unwrap();
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
-        let tag: i64 = conn
-            .query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let tag: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(tag, 7);
-        let days: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'trash_days'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let days: String = conn.query_row("SELECT value FROM settings WHERE key = 'trash_days'", [], |r| r.get(0)).unwrap();
         assert_eq!(days, "12");
-        let rows: i64 = conn
-            .query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0))
-            .unwrap();
+        let rows: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0);
 
-        conn.execute(
-            "INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO note_embeddings VALUES (1, 'm', x'00', x'0000803f')", []).unwrap();
         conn.execute("DELETE FROM notes", []).unwrap();
-        let rows: i64 = conn
-            .query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0))
-            .unwrap();
+        let rows: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0, "note_embeddings cascades from notes");
     }
 
@@ -469,52 +406,26 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        let body: String = conn
-            .query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0))
-            .unwrap();
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
-        let tag: i64 = conn
-            .query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let tag: i64 = conn.query_row("SELECT tag_id FROM note_tags WHERE note_id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(tag, 7);
-        let vectors: i64 = conn
-            .query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0))
-            .unwrap();
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(vectors, 1);
-        let ready: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'embedding_model_ready'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let ready: String =
+            conn.query_row("SELECT value FROM settings WHERE key = 'embedding_model_ready'", [], |r| r.get(0)).unwrap();
         assert_eq!(ready, "m");
 
         conn.execute("INSERT INTO tag_descriptions(tag, description) VALUES ('jr', 'journal'), ('Jr', 'junior')", [])
             .unwrap();
-        conn.execute(
-            "INSERT INTO tag_feedback VALUES (1, 'jr', 0, 1), (1, 'Jr', 1, 1)",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO tag_feedback VALUES (1, 'jr', 0, 1), (1, 'Jr', 1, 1)", []).unwrap();
         conn.execute("DELETE FROM notes", []).unwrap();
-        let rows: i64 = conn
-            .query_row("SELECT count(*) FROM tag_feedback", [], |r| r.get(0))
-            .unwrap();
+        let rows: i64 = conn.query_row("SELECT count(*) FROM tag_feedback", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0, "tag_feedback cascades from notes");
-        let rows: i64 = conn
-            .query_row("SELECT count(*) FROM tag_descriptions", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(
-            rows, 2,
-            "descriptions are case-sensitive and don't depend on notes"
-        );
+        let rows: i64 = conn.query_row("SELECT count(*) FROM tag_descriptions", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 2, "descriptions are case-sensitive and don't depend on notes");
     }
 
     /// A vault from before tag classifiers (version 6) keeps its notes, vectors,
@@ -539,56 +450,30 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         assert_eq!(version, 11);
-        let body: String = conn
-            .query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0))
-            .unwrap();
+        let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
-        let vectors: i64 = conn
-            .query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0))
-            .unwrap();
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(vectors, 1);
-        let description: (String, String) = conn
-            .query_row("SELECT description, model FROM tag_descriptions", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .unwrap();
+        let description: (String, String) =
+            conn.query_row("SELECT description, model FROM tag_descriptions", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(description, ("journal".to_string(), "m".to_string()));
-        let feedback: (String, bool, i64) = conn
-            .query_row(
-                "SELECT tag, accepted, created_at FROM tag_feedback",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .unwrap();
+        let feedback: (String, bool, i64) =
+            conn.query_row("SELECT tag, accepted, created_at FROM tag_feedback", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
         assert_eq!(feedback, ("dr".to_string(), false, 5));
-        let threshold: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'suggest_threshold:m'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let threshold: String =
+            conn.query_row("SELECT value FROM settings WHERE key = 'suggest_threshold:m'", [], |r| r.get(0)).unwrap();
         assert_eq!(threshold, "0.5");
-        let heads: i64 = conn
-            .query_row("SELECT count(*) FROM tag_heads", [], |r| r.get(0))
-            .unwrap();
+        let heads: i64 = conn.query_row("SELECT count(*) FROM tag_heads", [], |r| r.get(0)).unwrap();
         assert_eq!(heads, 0);
 
-        let insert =
-            "INSERT INTO tag_heads VALUES (?1, 'm', x'0000803f', 0.5, 10, 12, 0.9, NULL, 3, x'00')";
+        let insert = "INSERT INTO tag_heads VALUES (?1, 'm', x'0000803f', 0.5, 10, 12, 0.9, NULL, 3, x'00')";
         conn.execute(insert, ["jr"]).unwrap();
         conn.execute(insert, ["Jr"]).unwrap();
         assert!(conn.execute(insert, ["jr"]).is_err(), "one head per tag");
-        let recall: Option<f64> = conn
-            .query_row("SELECT recall FROM tag_heads WHERE tag = 'jr'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let recall: Option<f64> = conn.query_row("SELECT recall FROM tag_heads WHERE tag = 'jr'", [], |r| r.get(0)).unwrap();
         assert_eq!(recall, None);
     }
 
@@ -611,58 +496,27 @@ mod tests {
 
         migrate(&mut conn, &mut |_| {}).unwrap();
         let queued = |conn: &Connection| -> Vec<(i64, i64)> {
-            let mut stmt = conn
-                .prepare("SELECT note_id, version FROM embedding_dirty ORDER BY note_id")
-                .unwrap();
-            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-                .unwrap()
-                .map(|r| r.unwrap())
-                .collect()
+            let mut stmt = conn.prepare("SELECT note_id, version FROM embedding_dirty ORDER BY note_id").unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
         };
         assert_eq!(queued(&conn), [(1, 0), (2, 0)], "live notes, once each");
-        let vectors: i64 = conn
-            .query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0))
-            .unwrap();
+        let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
         assert_eq!(vectors, 1);
         migrate(&mut conn, &mut |_| {}).unwrap();
-        assert_eq!(
-            queued(&conn),
-            [(1, 0), (2, 0)],
-            "migrating again changes nothing"
-        );
+        assert_eq!(queued(&conn), [(1, 0), (2, 0)], "migrating again changes nothing");
 
         conn.execute("DELETE FROM embedding_dirty", []).unwrap();
-        conn.execute(
-            "UPDATE notes SET updated_at = 5, folder = 'x' WHERE id = 1",
-            [],
-        )
-        .unwrap();
+        conn.execute("UPDATE notes SET updated_at = 5, folder = 'x' WHERE id = 1", []).unwrap();
         assert_eq!(queued(&conn), [], "a folder or date change doesn't queue");
-        conn.execute("UPDATE notes SET body = 'new' WHERE id = 1", [])
-            .unwrap();
-        conn.execute("UPDATE notes SET title = 'New' WHERE id = 1", [])
-            .unwrap();
-        conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 3", [])
-            .unwrap();
-        conn.execute(
-            "INSERT INTO notes(id, title, created_at, updated_at) VALUES (4, 'D', 1, 1)",
-            [],
-        )
-        .unwrap();
+        conn.execute("UPDATE notes SET body = 'new' WHERE id = 1", []).unwrap();
+        conn.execute("UPDATE notes SET title = 'New' WHERE id = 1", []).unwrap();
+        conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 3", []).unwrap();
+        conn.execute("INSERT INTO notes(id, title, created_at, updated_at) VALUES (4, 'D', 1, 1)", []).unwrap();
         assert_eq!(queued(&conn), [(1, 1), (3, 0), (4, 0)]);
         conn.execute("DELETE FROM notes WHERE id = 4", []).unwrap();
-        assert_eq!(
-            queued(&conn),
-            [(1, 1), (3, 0)],
-            "the queue cascades from notes"
-        );
-        let gone: i64 = conn
-            .query_row("SELECT note_id FROM embedding_gone", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(
-            gone, 4,
-            "a deleted note is remembered for the related-notes index"
-        );
+        assert_eq!(queued(&conn), [(1, 1), (3, 0)], "the queue cascades from notes");
+        let gone: i64 = conn.query_row("SELECT note_id FROM embedding_gone", [], |r| r.get(0)).unwrap();
+        assert_eq!(gone, 4, "a deleted note is remembered for the related-notes index");
     }
 
     /// A vault from before the prefix index (version 8) gets its full-text index rebuilt
@@ -684,49 +538,23 @@ mod tests {
         }
         let mut reports = Vec::new();
         migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
-        assert_eq!(
-            reports.first(),
-            Some(&Upgrade {
-                done: 0,
-                total: 4_500
-            })
-        );
-        assert_eq!(
-            reports.last(),
-            Some(&Upgrade {
-                done: 4_500,
-                total: 4_500
-            })
-        );
+        assert_eq!(reports.first(), Some(&Upgrade { done: 0, total: 4_500 }));
+        assert_eq!(reports.last(), Some(&Upgrade { done: 4_500, total: 4_500 }));
         assert_eq!(reports.len(), 4, "start + three batches of 2,000");
 
         let count = |q: &str| -> i64 {
-            conn.query_row(
-                "SELECT count(*) FROM notes_fts WHERE notes_fts MATCH ?1",
-                [q],
-                |r| r.get(0),
-            )
-            .unwrap()
+            conn.query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH ?1", [q], |r| r.get(0)).unwrap()
         };
         assert_eq!(count("lighthouse"), 4_500);
-        assert_eq!(
-            count("\"number44\"*"),
-            111,
-            "number44, 440–449 and 4400–4499"
-        );
+        assert_eq!(count("\"number44\"*"), 111, "number44, 440–449 and 4400–4499");
         assert_eq!(count("\"nu\"*"), 4_500);
         // The triggers are back: edits keep the index in step.
-        conn.execute("UPDATE notes SET body = 'harbour' WHERE id = 1", [])
-            .unwrap();
+        conn.execute("UPDATE notes SET body = 'harbour' WHERE id = 1", []).unwrap();
         assert_eq!(count("harbour"), 1);
         assert_eq!(count("lighthouse"), 4_499);
         conn.execute("DELETE FROM notes WHERE id = 2", []).unwrap();
         assert_eq!(count("lighthouse"), 4_498);
-        conn.execute(
-            "INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')",
-            [],
-        )
-        .unwrap();
+        conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')", []).unwrap();
     }
 
     /// A vault from before folder trash (version 9) keeps its notes, trashed ones too,
@@ -746,9 +574,7 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         let notes: Vec<(i64, Option<i64>)> = conn
             .prepare("SELECT id, deleted_at FROM notes ORDER BY id")
@@ -758,17 +584,10 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(notes, [(1, None), (2, Some(7))]);
-        let groups: i64 = conn
-            .query_row("SELECT count(*) FROM trash_folders", [], |r| r.get(0))
-            .unwrap();
+        let groups: i64 = conn.query_row("SELECT count(*) FROM trash_folders", [], |r| r.get(0)).unwrap();
         assert_eq!(groups, 0);
-        conn.execute("INSERT INTO trash_folders VALUES (7, 'a/b')", [])
-            .unwrap();
-        assert!(
-            conn.execute("INSERT INTO trash_folders VALUES (7, 'c')", [])
-                .is_err(),
-            "one group per deleted_at"
-        );
+        conn.execute("INSERT INTO trash_folders VALUES (7, 'a/b')", []).unwrap();
+        assert!(conn.execute("INSERT INTO trash_folders VALUES (7, 'c')", []).is_err(), "one group per deleted_at");
     }
 
     /// A vault from before ratings (version 10) moves valid `rating` attributes into the
@@ -792,9 +611,7 @@ mod tests {
         .unwrap();
 
         migrate(&mut conn, &mut |_| {}).unwrap();
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
         let ratings: Vec<(i64, Option<i64>)> = conn
             .prepare("SELECT id, rating FROM notes ORDER BY id")
@@ -803,10 +620,7 @@ mod tests {
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
-        assert_eq!(
-            ratings,
-            [(1, Some(4)), (2, None), (3, None), (4, None), (5, None)]
-        );
+        assert_eq!(ratings, [(1, Some(4)), (2, None), (3, None), (4, None), (5, None)]);
         let attrs: Vec<(i64, String, String)> = conn
             .prepare("SELECT note_id, key, value FROM note_attributes ORDER BY note_id, key, value")
             .unwrap()
@@ -814,28 +628,9 @@ mod tests {
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
-        let attrs: Vec<(i64, &str, &str)> = attrs
-            .iter()
-            .map(|(n, k, v)| (*n, k.as_str(), v.as_str()))
-            .collect();
-        assert_eq!(
-            attrs,
-            [
-                (2, "rating", "4.5"),
-                (3, "rating", "3"),
-                (3, "rating", "5"),
-                (5, "mood", "calm"),
-                (5, "rating", "9")
-            ]
-        );
-        assert!(
-            conn.execute("UPDATE notes SET rating = 6 WHERE id = 4", [])
-                .is_err(),
-            "1 to 5 only"
-        );
-        assert!(
-            conn.execute("UPDATE notes SET rating = 0 WHERE id = 4", [])
-                .is_err()
-        );
+        let attrs: Vec<(i64, &str, &str)> = attrs.iter().map(|(n, k, v)| (*n, k.as_str(), v.as_str())).collect();
+        assert_eq!(attrs, [(2, "rating", "4.5"), (3, "rating", "3"), (3, "rating", "5"), (5, "mood", "calm"), (5, "rating", "9")]);
+        assert!(conn.execute("UPDATE notes SET rating = 6 WHERE id = 4", []).is_err(), "1 to 5 only");
+        assert!(conn.execute("UPDATE notes SET rating = 0 WHERE id = 4", []).is_err());
     }
 }

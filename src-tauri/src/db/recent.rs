@@ -83,9 +83,7 @@ impl Vault {
             return Ok(Vec::new());
         }
         let ids = self.recent_opened_ids()?;
-        let mut exists = self
-            .conn
-            .prepare_cached("SELECT 1 FROM notes WHERE id = ?1")?;
+        let mut exists = self.conn.prepare_cached("SELECT 1 FROM notes WHERE id = ?1")?;
         let mut kept = Vec::with_capacity(ids.len());
         for &id in &ids {
             if exists.exists([id])? {

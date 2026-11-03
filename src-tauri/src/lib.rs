@@ -79,9 +79,7 @@ pub fn run() {
         // Closing is handled here rather than with a webview close listener, which would
         // keep the window open forever if the page reloaded (as it does on lock).
         .on_window_event(|window, event| {
-            let WindowEvent::CloseRequested { api, .. } = event else {
-                return;
-            };
+            let WindowEvent::CloseRequested { api, .. } = event else { return };
             let app = window.app_handle();
             if app.state::<Session>().path().is_none() {
                 return;

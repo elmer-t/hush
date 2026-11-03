@@ -32,13 +32,9 @@ pub fn start_emitter(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
-        session.activity().run_emitter(
-            EMIT_INTERVAL,
-            || false,
-            |snapshot| {
-                let _ = app.emit(ACTIVITY_EVENT, snapshot);
-            },
-        );
+        session.activity().run_emitter(EMIT_INTERVAL, || false, |snapshot| {
+            let _ = app.emit(ACTIVITY_EVENT, snapshot);
+        });
     });
 }
 
@@ -62,20 +58,18 @@ pub fn start(app: &AppHandle, generation: u64) {
 /// Counts what the panel shows. The vault is read through the quiet accessor, so this
 /// never postpones auto-lock, and only through index lookups (see `db::internals`).
 fn refresh_stats(app: &AppHandle, session: &Session, generation: u64) {
-    let Ok((notes, queued, model, ready, with_vector, heads, schema)) =
-        session.with_vault_quiet(generation, |v| {
-            let model = v.embedding_model()?;
-            Ok((
-                v.live_note_count()?,
-                v.embedding_queue_len()?,
-                model.clone(),
-                v.embedding_model_ready()?,
-                v.embedding_count(&model)?,
-                v.tag_head_times()?,
-                v.schema_version()?,
-            ))
-        })
-    else {
+    let Ok((notes, queued, model, ready, with_vector, heads, schema)) = session.with_vault_quiet(generation, |v| {
+        let model = v.embedding_model()?;
+        Ok((
+            v.live_note_count()?,
+            v.embedding_queue_len()?,
+            model.clone(),
+            v.embedding_model_ready()?,
+            v.embedding_count(&model)?,
+            v.tag_head_times()?,
+            v.schema_version()?,
+        ))
+    }) else {
         return;
     };
     let (loaded, cores_used, cores_total) = app.state::<Indexer>().model_state(&model);
@@ -95,14 +89,7 @@ fn refresh_stats(app: &AppHandle, session: &Session, generation: u64) {
         s.cores_total = Some(cores_total as u64);
         s.related_notes = related_notes;
         s.related_bytes = related_bytes;
-        s.heads = heads
-            .into_iter()
-            .map(|h| HeadInfo {
-                tag: h.tag,
-                model: h.model,
-                trained_at: h.trained_at,
-            })
-            .collect();
+        s.heads = heads.into_iter().map(|h| HeadInfo { tag: h.tag, model: h.model, trained_at: h.trained_at }).collect();
         s.schema_version = Some(schema);
     });
 }

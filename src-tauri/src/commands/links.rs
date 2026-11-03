@@ -4,9 +4,9 @@
 use tauri::{AppHandle, Manager, State};
 
 use super::Result;
+use crate::graph::{self, Graph, GraphOptions, GraphScope};
 use super::notes::{OpenedNote, new_note_body, opened};
 use crate::db::{Backlink, OutgoingLink};
-use crate::graph::{self, Graph, GraphOptions, GraphScope};
 use crate::markdown;
 use crate::session::Session;
 
@@ -49,32 +49,16 @@ pub const DETAILS_COLLAPSED_SETTING: &str = "details_collapsed";
 /// Names of the collapsed details panel sections (`"related"`, `"backlinks"`, `"outgoing"`).
 #[tauri::command]
 pub fn collapsed_sections(session: State<'_, Session>) -> Result<Vec<String>> {
-    let value = session
-        .with_vault(|v| v.setting(DETAILS_COLLAPSED_SETTING))?
-        .unwrap_or_default();
-    Ok(value
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect())
+    let value = session.with_vault(|v| v.setting(DETAILS_COLLAPSED_SETTING))?.unwrap_or_default();
+    Ok(value.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect())
 }
 
 #[tauri::command]
-pub fn set_section_collapsed(
-    session: State<'_, Session>,
-    section: String,
-    collapsed: bool,
-) -> Result<()> {
-    let section: String = section
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+pub fn set_section_collapsed(session: State<'_, Session>, section: String, collapsed: bool) -> Result<()> {
+    let section: String = section.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     Ok(session.with_vault(|v| {
         let value = v.setting(DETAILS_COLLAPSED_SETTING)?.unwrap_or_default();
-        let mut sections: Vec<&str> = value
-            .split(',')
-            .filter(|s| !s.is_empty() && *s != section)
-            .collect();
+        let mut sections: Vec<&str> = value.split(',').filter(|s| !s.is_empty() && *s != section).collect();
         if collapsed && !section.is_empty() {
             sections.push(&section);
         }
@@ -85,10 +69,8 @@ pub fn set_section_collapsed(
 /// The subgraph of `scope` for the graph view, built off the main thread.
 #[tauri::command]
 pub async fn graph(app: AppHandle, scope: GraphScope, options: GraphOptions) -> Result<Graph> {
-    let graph = tauri::async_runtime::spawn_blocking(move || {
-        graph::build(&app.state::<Session>(), &scope, &options)
-    })
-    .await
-    .expect("graph build panicked")?;
+    let graph = tauri::async_runtime::spawn_blocking(move || graph::build(&app.state::<Session>(), &scope, &options))
+        .await
+        .expect("graph build panicked")?;
     Ok(graph)
 }

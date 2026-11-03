@@ -65,11 +65,7 @@ impl Vault {
         )?;
         let tags = stmt
             .query_map([], |r| {
-                Ok(TagInfo {
-                    tag: r.get(0)?,
-                    notes: r.get::<_, i64>(1)? as usize,
-                    description: r.get(2)?,
-                })
+                Ok(TagInfo { tag: r.get(0)?, notes: r.get::<_, i64>(1)? as usize, description: r.get(2)? })
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(tags)
@@ -82,11 +78,7 @@ impl Vault {
     }
 
     /// [`Vault::set_tag_description`] on `conn`, which may be a transaction.
-    pub(super) fn set_tag_description_in(
-        conn: &Connection,
-        tag: &str,
-        description: &str,
-    ) -> Result<()> {
+    pub(super) fn set_tag_description_in(conn: &Connection, tag: &str, description: &str) -> Result<()> {
         let tag = normalize_tag(tag)?;
         let description = description.trim();
         if description.is_empty() {
@@ -108,11 +100,7 @@ impl Vault {
     pub fn tag_description_vector(&self, tag: &str) -> Result<Option<(String, Vec<f32>)>> {
         let row: Option<(Option<String>, Option<Vec<u8>>)> = self
             .conn
-            .query_row(
-                "SELECT model, vector FROM tag_descriptions WHERE tag = ?1",
-                [tag],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row("SELECT model, vector FROM tag_descriptions WHERE tag = ?1", [tag], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()?;
         Ok(match row {
             Some((Some(model), Some(blob))) => Some((model, embed::blob_to_vector(&blob))),
@@ -125,31 +113,20 @@ impl Vault {
         let mut stmt = self.conn.prepare_cached(
             "SELECT tag, description FROM tag_descriptions WHERE vector IS NULL OR model IS NOT ?1 ORDER BY tag",
         )?;
-        let rows = stmt
-            .query_map([model], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
+        let rows = stmt.query_map([model], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
     /// Stores `model` vectors for `(tag, description, vector)`. A description edited
     /// since it was read keeps no vector, so the job embeds the new text next.
-    pub fn write_tag_description_vectors(
-        &mut self,
-        model: &str,
-        vectors: &[(String, String, Vec<f32>)],
-    ) -> Result<()> {
+    pub fn write_tag_description_vectors(&mut self, model: &str, vectors: &[(String, String, Vec<f32>)]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
                 "UPDATE tag_descriptions SET vector = ?3, model = ?4 WHERE tag = ?1 AND description = ?2",
             )?;
             for (tag, description, vector) in vectors {
-                stmt.execute(params![
-                    tag,
-                    description,
-                    embed::vector_to_blob(vector),
-                    model
-                ])?;
+                stmt.execute(params![tag, description, embed::vector_to_blob(vector), model])?;
             }
         }
         tx.commit()?;
@@ -172,13 +149,10 @@ impl Vault {
         let key = format!("{SUGGEST_THRESHOLD_SETTING}{model}");
         match threshold {
             None => {
-                self.conn
-                    .execute("DELETE FROM settings WHERE key = ?1", [key])?;
+                self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
                 Ok(())
             }
-            Some(t) if t.is_finite() && (-1.0..=1.0).contains(&t) => {
-                self.set_setting(&key, &t.to_string())
-            }
+            Some(t) if t.is_finite() && (-1.0..=1.0).contains(&t) => self.set_setting(&key, &t.to_string()),
             Some(_) => Err(Error::InvalidThreshold),
         }
     }
@@ -189,17 +163,13 @@ impl Vault {
     /// hasn't rejected on it. Classifier suggestions come before description ones (their
     /// scores aren't comparable, and a head has learned from the user's own notes).
     pub fn tag_suggestions(&self, id: i64) -> Result<Vec<TagSuggestion>> {
-        let Some(note) = self.note_embedding(id)? else {
-            return Ok(Vec::new());
-        };
+        let Some(note) = self.note_embedding(id)? else { return Ok(Vec::new()) };
         let scorers = self.tag_scorers()?;
         if scorers.is_empty() {
             return Ok(Vec::new());
         }
         let mut excluded: Vec<String> = note_tag_names(&self.conn, id)?;
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT tag FROM tag_feedback WHERE note_id = ?1 AND accepted = 0")?;
+        let mut stmt = self.conn.prepare_cached("SELECT tag FROM tag_feedback WHERE note_id = ?1 AND accepted = 0")?;
         for tag in stmt.query_map([id], |r| r.get::<_, String>(0))? {
             excluded.push(tag?);
         }
@@ -208,19 +178,12 @@ impl Vault {
             .filter(|s| !excluded.contains(&s.tag))
             .filter_map(|s| {
                 let score = s.score(&note);
-                (score >= s.threshold).then(|| TagSuggestion {
-                    tag: s.tag.clone(),
-                    score,
-                    method: s.method,
-                })
+                (score >= s.threshold).then(|| TagSuggestion { tag: s.tag.clone(), score, method: s.method })
             })
             .collect();
         let rank = |m: ScoreMethod| if m == ScoreMethod::Classifier { 0 } else { 1 };
         suggestions.sort_by(|a, b| {
-            rank(a.method)
-                .cmp(&rank(b.method))
-                .then(b.score.total_cmp(&a.score))
-                .then_with(|| a.tag.cmp(&b.tag))
+            rank(a.method).cmp(&rank(b.method)).then(b.score.total_cmp(&a.score)).then_with(|| a.tag.cmp(&b.tag))
         });
         suggestions.truncate(SUGGESTIONS_PER_NOTE);
         Ok(suggestions)
@@ -232,19 +195,11 @@ impl Vault {
         let tag = normalize_tag(tag)?;
         let tx = self.conn.transaction()?;
         let body: String = tx
-            .query_row(
-                "SELECT body FROM notes WHERE id = ?1 AND deleted_at IS NULL",
-                [id],
-                |r| r.get(0),
-            )
+            .query_row("SELECT body FROM notes WHERE id = ?1 AND deleted_at IS NULL", [id], |r| r.get(0))
             .optional()?
             .ok_or(Error::NoteNotFound)?;
-        if markdown::split_frontmatter(&body)
-            .is_some_and(|(yaml, _)| !markdown::frontmatter_is_valid(yaml))
-        {
-            return Err(Error::InvalidTag(
-                "the note's frontmatter can't be read, so it can't be added".into(),
-            ));
+        if markdown::split_frontmatter(&body).is_some_and(|(yaml, _)| !markdown::frontmatter_is_valid(yaml)) {
+            return Err(Error::InvalidTag("the note's frontmatter can't be read, so it can't be added".into()));
         }
         let mut tags = markdown::parse(&body).frontmatter_tags;
         let now = now_ms();
@@ -252,10 +207,7 @@ impl Vault {
             tags.push(tag.clone());
             let new_body = write_tags(&body, &tags);
             let before = note_tag_names(&tx, id)?;
-            tx.execute(
-                "UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1",
-                params![id, new_body, now],
-            )?;
+            tx.execute("UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1", params![id, new_body, now])?;
             derive(&tx, id, &new_body)?;
             record_hand_edits(&tx, id, &before, now)?;
         }
@@ -268,10 +220,7 @@ impl Vault {
     pub fn reject_tag_suggestion(&mut self, id: i64, tag: &str) -> Result<()> {
         let tag = normalize_tag(tag)?;
         let tx = self.conn.transaction()?;
-        if !tx
-            .prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?
-            .exists([id])?
-        {
+        if !tx.prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?.exists([id])? {
             return Err(Error::NoteNotFound);
         }
         set_feedback(&tx, id, &tag, false, now_ms())?;
@@ -286,13 +235,7 @@ impl Vault {
              WHERE f.note_id = ?1 AND n.deleted_at IS NULL ORDER BY f.tag",
         )?;
         let rows = stmt
-            .query_map([id], |r| {
-                Ok(TagFeedback {
-                    tag: r.get(0)?,
-                    accepted: r.get(1)?,
-                    created_at: r.get(2)?,
-                })
-            })?
+            .query_map([id], |r| Ok(TagFeedback { tag: r.get(0)?, accepted: r.get(1)?, created_at: r.get(2)? }))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -300,12 +243,9 @@ impl Vault {
 
 /// The note's derived tags (frontmatter and inline).
 pub(super) fn note_tag_names(conn: &Connection, id: i64) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = ?1",
-    )?;
-    let names = stmt
-        .query_map([id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
+    let mut stmt =
+        conn.prepare_cached("SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = ?1")?;
+    let names = stmt.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
     Ok(names)
 }
 
@@ -315,12 +255,7 @@ pub(super) fn note_tag_names(conn: &Connection, id: i64) -> Result<Vec<String>> 
 /// Other tags are left alone: typing `tags: [dream]` saves `d`, `dr`, … on the way,
 /// and those aren't decisions. Adding a tag back clears its rejection: the tag itself
 /// is the positive example.
-pub(super) fn record_hand_edits(
-    conn: &Connection,
-    id: i64,
-    before: &[String],
-    now: i64,
-) -> Result<()> {
+pub(super) fn record_hand_edits(conn: &Connection, id: i64, before: &[String], now: i64) -> Result<()> {
     let after = note_tag_names(conn, id)?;
     for tag in before.iter().filter(|t| !after.contains(t)) {
         let suggestible = conn
@@ -334,9 +269,7 @@ pub(super) fn record_hand_edits(
             set_feedback(conn, id, tag, false, now)?;
         }
     }
-    let mut clear = conn.prepare_cached(
-        "DELETE FROM tag_feedback WHERE note_id = ?1 AND tag = ?2 AND accepted = 0",
-    )?;
+    let mut clear = conn.prepare_cached("DELETE FROM tag_feedback WHERE note_id = ?1 AND tag = ?2 AND accepted = 0")?;
     for tag in after.iter().filter(|t| !before.contains(t)) {
         clear.execute(params![id, tag])?;
     }
@@ -344,13 +277,7 @@ pub(super) fn record_hand_edits(
 }
 
 /// The latest decision wins.
-pub(super) fn set_feedback(
-    conn: &Connection,
-    id: i64,
-    tag: &str,
-    accepted: bool,
-    now: i64,
-) -> Result<()> {
+pub(super) fn set_feedback(conn: &Connection, id: i64, tag: &str, accepted: bool, now: i64) -> Result<()> {
     conn.prepare_cached(
         "INSERT INTO tag_feedback(note_id, tag, accepted, created_at) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(note_id, tag) DO UPDATE SET accepted = excluded.accepted, created_at = excluded.created_at",

@@ -37,9 +37,7 @@ pub enum DownloadError {
     Dropped(String),
     #[error("the download timed out; Download again to continue where it stopped")]
     Timeout,
-    #[error(
-        "secure connection failed: {0} (a proxy or antivirus that inspects HTTPS can cause this)"
-    )]
+    #[error("secure connection failed: {0} (a proxy or antivirus that inspects HTTPS can cause this)")]
     Tls(String),
     #[error("the proxy refused the connection: {0}")]
     Proxy(String),
@@ -49,14 +47,8 @@ pub enum DownloadError {
     Other(String),
     #[error("could not write {path}: {source}")]
     Write { path: PathBuf, source: io::Error },
-    #[error(
-        "{file} doesn't match its pinned checksum (expected {expected}, got {actual}); it was deleted"
-    )]
-    Checksum {
-        file: String,
-        expected: String,
-        actual: String,
-    },
+    #[error("{file} doesn't match its pinned checksum (expected {expected}, got {actual}); it was deleted")]
+    Checksum { file: String, expected: String, actual: String },
     #[error("cancelled")]
     Cancelled,
 }
@@ -95,18 +87,12 @@ impl Downloader {
     fn with_https_only(https_only: bool) -> Self {
         let config = Agent::config_builder()
             .https_only(https_only)
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
+            .tls_config(TlsConfig::builder().root_certs(RootCerts::PlatformVerifier).build())
             .user_agent("Hush")
             .timeout_connect(Some(Duration::from_secs(20)))
             .timeout_per_read(Some(Duration::from_secs(60)))
             .build();
-        Self {
-            agent: config.into(),
-        }
+        Self { agent: config.into() }
     }
 
     /// Downloads every file of `model` that `dir` doesn't have yet (verified), reporting
@@ -123,12 +109,7 @@ impl Downloader {
         let total = files.iter().map(|f| f.size).sum();
         let mut before = 0;
         for file in files {
-            self.file(dir, &file, cancel, &mut |done| {
-                progress(Progress {
-                    done: before + done,
-                    total,
-                })
-            })?;
+            self.file(dir, &file, cancel, &mut |done| progress(Progress { done: before + done, total }))?;
             before += file.size;
         }
         Ok(())
@@ -144,21 +125,14 @@ impl Downloader {
         progress: &mut dyn FnMut(u64),
     ) -> Result<(), DownloadError> {
         let target = dir.join(file.name);
-        if fs::metadata(&target).is_ok_and(|m| m.len() == file.size)
-            && sha256_hex(&target).is_ok_and(|h| h == file.sha256)
+        if fs::metadata(&target).is_ok_and(|m| m.len() == file.size) && sha256_hex(&target).is_ok_and(|h| h == file.sha256)
         {
             progress(file.size);
             return Ok(());
         }
-        fs::create_dir_all(dir).map_err(|source| DownloadError::Write {
-            path: dir.to_path_buf(),
-            source,
-        })?;
+        fs::create_dir_all(dir).map_err(|source| DownloadError::Write { path: dir.to_path_buf(), source })?;
         let part = part_path(dir, file);
-        let write_err = |source| DownloadError::Write {
-            path: part.clone(),
-            source,
-        };
+        let write_err = |source| DownloadError::Write { path: part.clone(), source };
 
         let mut have = fs::metadata(&part).map_or(0, |m| m.len());
         if file.size > 0 && have > file.size {
@@ -179,10 +153,7 @@ impl Downloader {
                 actual,
             });
         }
-        fs::rename(&part, &target).map_err(|source| DownloadError::Write {
-            path: target.clone(),
-            source,
-        })?;
+        fs::rename(&part, &target).map_err(|source| DownloadError::Write { path: target.clone(), source })?;
         Ok(())
     }
 
@@ -210,17 +181,10 @@ impl Downloader {
             Err(ureq::Error::StatusCode(416)) if have > 0 => return Ok(()),
             r => r.map_err(|e| request_error(e, &host))?,
         };
-        let resumed =
-            response.status().as_u16() == 206 && content_range_start(&response) == Some(have);
-        let write_err = |source| DownloadError::Write {
-            path: part.to_path_buf(),
-            source,
-        };
+        let resumed = response.status().as_u16() == 206 && content_range_start(&response) == Some(have);
+        let write_err = |source| DownloadError::Write { path: part.to_path_buf(), source };
         let mut out = if resumed {
-            OpenOptions::new()
-                .append(true)
-                .open(part)
-                .map_err(write_err)?
+            OpenOptions::new().append(true).open(part).map_err(write_err)?
         } else {
             // The server sent the whole file (it ignores ranges, or this is the start).
             File::create(part).map_err(write_err)?
@@ -264,23 +228,13 @@ pub fn part_path(dir: &Path, file: &ModelFile) -> PathBuf {
 }
 
 fn host(url: &str) -> String {
-    url.split("://")
-        .nth(1)
-        .and_then(|rest| rest.split(['/', '?']).next())
-        .unwrap_or(url)
-        .to_string()
+    url.split("://").nth(1).and_then(|rest| rest.split(['/', '?']).next()).unwrap_or(url).to_string()
 }
 
 /// The first byte of a 206 response's `Content-Range: bytes <start>-<end>/<size>`.
 fn content_range_start(response: &ureq::http::Response<ureq::Body>) -> Option<u64> {
     let value = response.headers().get("content-range")?.to_str().ok()?;
-    value
-        .strip_prefix("bytes ")?
-        .split('-')
-        .next()?
-        .trim()
-        .parse()
-        .ok()
+    value.strip_prefix("bytes ")?.split('-').next()?.trim().parse().ok()
 }
 
 fn request_error(e: ureq::Error, host: &str) -> DownloadError {
@@ -309,10 +263,7 @@ fn read_error(e: io::Error) -> DownloadError {
         io::ErrorKind::TimedOut => DownloadError::Timeout,
         _ => {
             // ureq wraps its own errors (a timeout while reading the body) in io errors.
-            match e
-                .get_ref()
-                .and_then(|inner| inner.downcast_ref::<ureq::Error>())
-            {
+            match e.get_ref().and_then(|inner| inner.downcast_ref::<ureq::Error>()) {
                 Some(ureq::Error::Timeout(_)) => DownloadError::Timeout,
                 _ => DownloadError::Dropped(e.to_string()),
             }
@@ -323,12 +274,7 @@ fn read_error(e: io::Error) -> DownloadError {
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     #[error("{name} isn't a file of {model}: its checksum is {actual}, expected {expected}")]
-    WrongFile {
-        name: String,
-        model: String,
-        expected: String,
-        actual: String,
-    },
+    WrongFile { name: String, model: String, expected: String, actual: String },
     #[error("could not read {path}: {source}")]
     Read { path: PathBuf, source: io::Error },
     #[error("could not write {path}: {source}")]
@@ -338,31 +284,15 @@ pub enum ImportError {
 /// Copies `source`, which must match one of `model`'s files by checksum (whatever its
 /// name), into `dir` under that file's name. A file matching neither is refused with
 /// the expected and actual checksums. Returns the name it was stored under.
-pub fn import_file(
-    dir: &Path,
-    model: &ModelDescriptor,
-    source: &Path,
-) -> Result<&'static str, ImportError> {
-    let actual = sha256_hex(source).map_err(|e| ImportError::Read {
-        path: source.to_path_buf(),
-        source: e,
-    })?;
+pub fn import_file(dir: &Path, model: &ModelDescriptor, source: &Path) -> Result<&'static str, ImportError> {
+    let actual = sha256_hex(source).map_err(|e| ImportError::Read { path: source.to_path_buf(), source: e })?;
     let files = [model.model, model.tokenizer];
     let Some(file) = files.iter().find(|f| f.sha256 == actual) else {
         // Name the file it was most likely meant to be, by its extension.
-        let json = source
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-        let expected = if json {
-            model.tokenizer.sha256
-        } else {
-            model.model.sha256
-        };
+        let json = source.extension().is_some_and(|e| e.eq_ignore_ascii_case("json"));
+        let expected = if json { model.tokenizer.sha256 } else { model.model.sha256 };
         return Err(ImportError::WrongFile {
-            name: source.file_name().map_or_else(
-                || source.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            ),
+            name: source.file_name().map_or_else(|| source.display().to_string(), |n| n.to_string_lossy().into_owned()),
             model: model.name.to_string(),
             expected: expected.to_string(),
             actual,
@@ -390,10 +320,7 @@ pub fn import_file(
         }
         Err(e) => {
             let _ = fs::remove_file(&part);
-            return Err(ImportError::Read {
-                path: part,
-                source: e,
-            });
+            return Err(ImportError::Read { path: part, source: e });
         }
     }
     fs::rename(&part, &target).map_err(write_err(&target))?;
@@ -424,22 +351,14 @@ mod tests {
 
     #[test]
     fn host_and_content_range() {
-        assert_eq!(
-            host("https://huggingface.co/Xenova/x/resolve/main/a.onnx"),
-            "huggingface.co"
-        );
+        assert_eq!(host("https://huggingface.co/Xenova/x/resolve/main/a.onnx"), "huggingface.co");
         assert_eq!(host("http://127.0.0.1:8080/f?x=1"), "127.0.0.1:8080");
     }
 
     #[test]
     fn plain_http_is_refused_before_any_request() {
         let dir = tempfile::tempdir().unwrap();
-        let file = ModelFile {
-            name: "f",
-            url: "http://example.invalid/f",
-            sha256: "",
-            size: 1,
-        };
+        let file = ModelFile { name: "f", url: "http://example.invalid/f", sha256: "", size: 1 };
         let r = Downloader::new().file(dir.path(), &file, &AtomicBool::new(false), &mut |_| {});
         assert!(matches!(r, Err(DownloadError::NotHttps(_))), "{r:?}");
         assert!(!part_path(dir.path(), &file).exists());

@@ -62,11 +62,7 @@ pub fn start_import(
             let _ = app.emit(IMPORT_PROGRESS_EVENT, p);
             activity.progress(
                 Job::Import,
-                format!(
-                    "{verb} {} / {} files",
-                    count(p.done as u64),
-                    count(p.total as u64)
-                ),
+                format!("{verb} {} / {} files", count(p.done as u64), count(p.total as u64)),
                 p.done as u64,
                 Some(p.total as u64),
             );
@@ -80,11 +76,7 @@ pub fn start_import(
                     "{what}: {} of {} files {}, {} skipped, {} warnings",
                     count(r.imported as u64),
                     count(r.files as u64),
-                    if r.dry_run {
-                        "would be imported"
-                    } else {
-                        "imported"
-                    },
+                    if r.dry_run { "would be imported" } else { "imported" },
                     count(r.skipped_count as u64),
                     count(r.warning_count as u64),
                 );
@@ -148,23 +140,12 @@ pub fn default_import_rules() -> Vec<Rule> {
 
 /// Runs `rules` (enabled ones, in order) on a pasted sample, as the import would.
 #[tauri::command]
-pub fn test_import_rules(
-    rules: Vec<Rule>,
-    file_name: String,
-    sample: String,
-) -> Result<RuleOutput> {
+pub fn test_import_rules(rules: Vec<Rule>, file_name: String, sample: String) -> Result<RuleOutput> {
     let compiled = rules
         .iter()
         .map(|r| r.compile().map_err(crate::db::Error::InvalidRule))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let sample = sample.replace("\r\n", "\n");
     let (frontmatter, start) = markdown::split_frontmatter(&sample).unwrap_or(("", 0));
-    Ok(rules::apply(
-        &compiled,
-        &RuleInput {
-            file_name: &file_name,
-            frontmatter,
-            content: &sample[start..],
-        },
-    ))
+    Ok(rules::apply(&compiled, &RuleInput { file_name: &file_name, frontmatter, content: &sample[start..] }))
 }

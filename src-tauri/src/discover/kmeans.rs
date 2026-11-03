@@ -17,21 +17,11 @@ pub struct Clusters {
 /// Groups `n` unit vectors of `dims` floats (`points` holds them back to back) into
 /// `k` groups (at most `n`). `stop` is checked between rounds and while seeding;
 /// returns `None` once it says so.
-pub fn kmeans(
-    points: &[f32],
-    dims: usize,
-    k: usize,
-    seed: u64,
-    stop: &dyn Fn() -> bool,
-) -> Option<Clusters> {
+pub fn kmeans(points: &[f32], dims: usize, k: usize, seed: u64, stop: &dyn Fn() -> bool) -> Option<Clusters> {
     let n = if dims == 0 { 0 } else { points.len() / dims };
     let k = k.min(n);
     if k == 0 {
-        return Some(Clusters {
-            assignments: vec![0; n],
-            centroids: Vec::new(),
-            rounds: 0,
-        });
+        return Some(Clusters { assignments: vec![0; n], centroids: Vec::new(), rounds: 0 });
     }
     let point = |i: usize| &points[i * dims..(i + 1) * dims];
     let mut rng = SplitMix64(seed);
@@ -68,9 +58,7 @@ pub fn kmeans(
                 // Every point sits on a centre already (duplicates): any point will do.
                 rng.below(n)
             };
-            let candidate: Vec<f32> = (0..n)
-                .map(|i| nearest[i].min(distance(point(i), point(pick))))
-                .collect();
+            let candidate: Vec<f32> = (0..n).map(|i| nearest[i].min(distance(point(i), point(pick)))).collect();
             let cost: f64 = candidate.iter().map(|&d| f64::from(d)).sum();
             if best.as_ref().is_none_or(|b| cost < b.0) {
                 best = Some((cost, pick, candidate));
@@ -96,11 +84,7 @@ pub fn kmeans(
         }
         centroids = recentre(points, dims, k, &mut assignments, &best);
     }
-    Some(Clusters {
-        assignments,
-        centroids,
-        rounds,
-    })
+    Some(Clusters { assignments, centroids, rounds })
 }
 
 /// Squared Euclidean distance between unit vectors.
@@ -113,12 +97,7 @@ fn distance(a: &[f32], b: &[f32]) -> f32 {
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
     let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
-    let tail: f32 = a8
-        .remainder()
-        .iter()
-        .zip(b8.remainder())
-        .map(|(x, y)| x * y)
-        .sum();
+    let tail: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();
     for (x, y) in a8.zip(b8) {
         for i in 0..8 {
             sums[i] += x[i] * y[i];
@@ -136,13 +115,10 @@ pub fn assign(points: &[f32], dims: usize, centroids: &[f32]) -> (Vec<usize>, Ve
         chunk
             .chunks_exact(dims)
             .map(|p| {
-                centroids
-                    .chunks_exact(dims)
-                    .enumerate()
-                    .fold((0, f32::MIN), |best, (c, centre)| {
-                        let s = dot(p, centre);
-                        if s > best.1 { (c, s) } else { best }
-                    })
+                centroids.chunks_exact(dims).enumerate().fold((0, f32::MIN), |best, (c, centre)| {
+                    let s = dot(p, centre);
+                    if s > best.1 { (c, s) } else { best }
+                })
             })
             .collect()
     };
@@ -152,14 +128,8 @@ pub fn assign(points: &[f32], dims: usize, centroids: &[f32]) -> (Vec<usize>, Ve
         nearest(points)
     } else {
         std::thread::scope(|s| {
-            let handles: Vec<_> = points
-                .chunks(per * dims)
-                .map(|chunk| s.spawn(move || nearest(chunk)))
-                .collect();
-            handles
-                .into_iter()
-                .flat_map(|h| h.join().expect("k-means worker panicked"))
-                .collect()
+            let handles: Vec<_> = points.chunks(per * dims).map(|chunk| s.spawn(move || nearest(chunk))).collect();
+            handles.into_iter().flat_map(|h| h.join().expect("k-means worker panicked")).collect()
         })
     };
     results.into_iter().unzip()
@@ -168,13 +138,7 @@ pub fn assign(points: &[f32], dims: usize, centroids: &[f32]) -> (Vec<usize>, Ve
 /// New centres: the normalised mean of each group's points. A group left empty takes
 /// the point farthest from its own centre (from a group that has more than one point),
 /// so every group keeps at least one note.
-fn recentre(
-    points: &[f32],
-    dims: usize,
-    k: usize,
-    assignments: &mut [usize],
-    best: &[f32],
-) -> Vec<f32> {
+fn recentre(points: &[f32], dims: usize, k: usize, assignments: &mut [usize], best: &[f32]) -> Vec<f32> {
     let mut sizes = vec![0usize; k];
     for &a in assignments.iter() {
         sizes[a] += 1;
@@ -197,14 +161,9 @@ fn recentre(
     let mut centroids = vec![0.0f32; k * dims];
     for (i, &a) in assignments.iter().enumerate() {
         let centre = &mut centroids[a * dims..(a + 1) * dims];
-        centre
-            .iter_mut()
-            .zip(&points[i * dims..(i + 1) * dims])
-            .for_each(|(c, x)| *c += x);
+        centre.iter_mut().zip(&points[i * dims..(i + 1) * dims]).for_each(|(c, x)| *c += x);
     }
-    centroids
-        .chunks_exact_mut(dims)
-        .for_each(crate::embed::normalize);
+    centroids.chunks_exact_mut(dims).for_each(crate::embed::normalize);
     centroids
 }
 
@@ -235,13 +194,7 @@ mod tests {
     use super::*;
 
     /// `per` noisy points around each of `centres` unit vectors in `dims` dimensions.
-    fn blobs(
-        centres: usize,
-        per: usize,
-        dims: usize,
-        noise: f32,
-        seed: u64,
-    ) -> (Vec<f32>, Vec<usize>) {
+    fn blobs(centres: usize, per: usize, dims: usize, noise: f32, seed: u64) -> (Vec<f32>, Vec<usize>) {
         let mut rng = SplitMix64(seed);
         let mut points = Vec::new();
         let mut truth = Vec::new();
@@ -254,10 +207,8 @@ mod tests {
             .collect();
         for i in 0..centres * per {
             let c = i % centres;
-            let mut v: Vec<f32> = centre_vectors[c]
-                .iter()
-                .map(|x| x + noise * (rng.unit() as f32 - 0.5))
-                .collect();
+            let mut v: Vec<f32> =
+                centre_vectors[c].iter().map(|x| x + noise * (rng.unit() as f32 - 0.5)).collect();
             crate::embed::normalize(&mut v);
             points.extend(v);
             truth.push(c);
@@ -267,8 +218,7 @@ mod tests {
 
     /// Whether `found` groups points exactly as `truth` does (group numbers may differ).
     fn same_partition(found: &[usize], truth: &[usize]) -> bool {
-        (0..found.len())
-            .all(|i| (0..found.len()).all(|j| (found[i] == found[j]) == (truth[i] == truth[j])))
+        (0..found.len()).all(|i| (0..found.len()).all(|j| (found[i] == found[j]) == (truth[i] == truth[j])))
     }
 
     #[test]
@@ -305,11 +255,7 @@ mod tests {
         }
         let c = kmeans(&points, 4, 5, 1, &|| false).unwrap();
         for g in 0..5 {
-            assert!(
-                c.assignments.contains(&g),
-                "group {g} is empty: {:?}",
-                c.assignments
-            );
+            assert!(c.assignments.contains(&g), "group {g} is empty: {:?}", c.assignments);
         }
     }
 
@@ -319,9 +265,6 @@ mod tests {
         let c = kmeans(&points, 8, 10, 1, &|| false).unwrap();
         assert_eq!(c.centroids.len(), 4 * 8);
         assert!(kmeans(&points, 8, 2, 1, &|| true).is_none());
-        assert_eq!(
-            kmeans(&[], 8, 3, 1, &|| false).unwrap().assignments,
-            Vec::<usize>::new()
-        );
+        assert_eq!(kmeans(&[], 8, 3, 1, &|| false).unwrap().assignments, Vec::<usize>::new());
     }
 }

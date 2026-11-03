@@ -26,12 +26,7 @@ impl Fake {
     }
 
     fn slow(dims: usize, delay: Duration) -> Arc<Self> {
-        Arc::new(Self {
-            id: format!("fake-{dims}"),
-            dims,
-            delay,
-            calls: AtomicUsize::new(0),
-        })
+        Arc::new(Self { id: format!("fake-{dims}"), dims, delay, calls: AtomicUsize::new(0) })
     }
 
     fn calls(&self) -> usize {
@@ -49,9 +44,7 @@ impl Embedder for Fake {
         std::thread::sleep(self.delay);
         let mut v = vec![0.0; self.dims];
         for word in text.split_whitespace() {
-            let h = word.bytes().fold(2166136261u32, |h, b| {
-                (h ^ u32::from(b)).wrapping_mul(16777619)
-            });
+            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
             v[h as usize % self.dims] += 1.0;
         }
         v[0] += 0.01;
@@ -64,11 +57,7 @@ struct Fakes(Vec<Arc<Fake>>);
 
 impl EmbedderSource for Fakes {
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
-        let fake = self
-            .0
-            .iter()
-            .find(|f| f.id == model)
-            .ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
+        let fake = self.0.iter().find(|f| f.id == model).ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
         Ok(fake.clone())
     }
 }
@@ -98,14 +87,8 @@ fn session(model: &str) -> (TempDir, PathBuf, Session, u64) {
 /// notes to the second indexing phase without embedding anything).
 fn index(session: &Session, generation: u64, source: &dyn EmbedderSource) {
     for _ in 0..10 {
-        if job::pass(session, generation, source, &mut |_| {})
-            .unwrap()
-            .stale
-            == 0
-            && session
-                .with_vault_quiet(generation, |v| v.embedding_queue_len())
-                .unwrap()
-                == 0
+        if job::pass(session, generation, source, &mut |_| {}).unwrap().stale == 0
+            && session.with_vault_quiet(generation, |v| v.embedding_queue_len()).unwrap() == 0
         {
             return;
         }
@@ -135,53 +118,30 @@ fn notes_are_embedded_and_re_embedded_only_when_their_text_changes() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
     let source = Fakes(vec![fake.clone()]);
-    let id = session
-        .with_vault(|v| v.create_note("", "Walk", "---\ntags: [a]\n---\nA walk in the park"))
-        .unwrap();
-    let empty = session
-        .with_vault(|v| v.create_note("", "Empty", "---\ntags: [a]\n---\n"))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("", "Walk", "---\ntags: [a]\n---\nA walk in the park")).unwrap();
+    let empty = session.with_vault(|v| v.create_note("", "Empty", "---\ntags: [a]\n---\n")).unwrap();
 
     index(&session, g, &source);
     assert_eq!(fake.calls(), 1, "the empty note isn't embedded");
     let first = vector(&session, id).expect("new note gets a vector");
     assert_eq!(first.len(), 4);
     assert_eq!(vector(&session, empty), None);
-    assert_eq!(
-        session
-            .with_vault(|v| v.embedding_model_ready())
-            .unwrap()
-            .as_deref(),
-        Some("fake-4")
-    );
+    assert_eq!(session.with_vault(|v| v.embedding_model_ready()).unwrap().as_deref(), Some("fake-4"));
 
     // Saving the same text again, or changing only the frontmatter, doesn't re-embed.
-    session
-        .with_vault(|v| v.update_body(id, "---\ntags: [a]\n---\nA walk in the park"))
-        .unwrap();
-    session
-        .with_vault(|v| {
-            v.update_body(
-                id,
-                "---\ntags: [a, b]\nauthor: Ada\n---\nA walk in the park",
-            )
-        })
-        .unwrap();
+    session.with_vault(|v| v.update_body(id, "---\ntags: [a]\n---\nA walk in the park")).unwrap();
+    session.with_vault(|v| v.update_body(id, "---\ntags: [a, b]\nauthor: Ada\n---\nA walk in the park")).unwrap();
     index(&session, g, &source);
     assert_eq!(fake.calls(), 1);
 
     // A body change does.
-    session
-        .with_vault(|v| v.update_body(id, "---\ntags: [a]\n---\nRain all day"))
-        .unwrap();
+    session.with_vault(|v| v.update_body(id, "---\ntags: [a]\n---\nRain all day")).unwrap();
     index(&session, g, &source);
     assert_eq!(fake.calls(), 2);
     assert_ne!(vector(&session, id).unwrap(), first);
 
     // So does a rename: the title is part of the text.
-    session
-        .with_vault(|v| v.rename_note(id, "", "Rain"))
-        .unwrap();
+    session.with_vault(|v| v.rename_note(id, "", "Rain")).unwrap();
     index(&session, g, &source);
     assert_eq!(fake.calls(), 3);
 
@@ -197,24 +157,16 @@ fn trash_drops_the_vector_and_restore_embeds_again() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
     let source = Fakes(vec![fake.clone()]);
-    let id = session
-        .with_vault(|v| v.create_note("", "T", "Some text"))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("", "T", "Some text")).unwrap();
     index(&session, g, &source);
     assert_eq!(count(&session, "fake-4"), 1);
 
     session.with_vault(|v| v.trash_note(id)).unwrap();
     assert_eq!(count(&session, "fake-4"), 0, "trash removes the row");
     index(&session, g, &source);
-    assert_eq!(
-        count(&session, "fake-4"),
-        0,
-        "trashed notes aren't embedded"
-    );
+    assert_eq!(count(&session, "fake-4"), 0, "trashed notes aren't embedded");
 
-    session
-        .with_vault(|v| v.restore_note(id).map(|_| ()))
-        .unwrap();
+    session.with_vault(|v| v.restore_note(id).map(|_| ())).unwrap();
     index(&session, g, &source);
     assert_eq!(fake.calls(), 2);
     assert!(vector(&session, id).is_some());
@@ -231,48 +183,28 @@ fn imported_and_bulk_edited_notes_are_picked_up_by_the_running_job() {
             job::run(&session, g, &source, Duration::from_millis(10), |_| {});
             done_tx.send(()).unwrap();
         });
-        let texts: Vec<(String, String)> = (0..50)
-            .map(|i| (format!("Note {i}"), format!("Imported text number {i}")))
-            .collect();
+        let texts: Vec<(String, String)> =
+            (0..50).map(|i| (format!("Note {i}"), format!("Imported text number {i}"))).collect();
         let notes: Vec<NewNote> = texts
             .iter()
-            .map(|(title, body)| NewNote {
-                folder: "imp",
-                title,
-                body,
-                created_at: 1,
-                updated_at: 1,
-            })
+            .map(|(title, body)| NewNote { folder: "imp", title, body, created_at: 1, updated_at: 1 })
             .collect();
-        session
-            .with_vault(|v| v.import_notes(&notes).map(|_| ()))
-            .unwrap();
+        session.with_vault(|v| v.import_notes(&notes).map(|_| ())).unwrap();
         wait_for(|| count(&session, "fake-4") == 50);
 
-        let ids: Vec<i64> = session
-            .with_vault(|v| v.folder_notes("imp", 0, 10))
-            .unwrap()
-            .iter()
-            .map(|n| n.id)
-            .collect();
+        let ids: Vec<i64> = session.with_vault(|v| v.folder_notes("imp", 0, 10)).unwrap().iter().map(|n| n.id).collect();
         let calls = fake.calls();
         // A bulk tag edit only touches frontmatter: nothing to re-embed.
         let edit = MetadataEdit::AddTag("x".into());
-        session
-            .with_vault(|v| v.edit_notes_metadata(&ids, &edit).map(|_| ()))
-            .unwrap();
+        session.with_vault(|v| v.edit_notes_metadata(&ids, &edit).map(|_| ())).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(fake.calls(), calls);
         // A save that changes the text is.
-        session
-            .with_vault(|v| v.update_body(ids[0], "Different words now"))
-            .unwrap();
+        session.with_vault(|v| v.update_body(ids[0], "Different words now")).unwrap();
         wait_for(|| fake.calls() == calls + 1);
 
         session.lock();
-        done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("job stops on lock");
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("job stops on lock");
     });
 }
 
@@ -280,24 +212,18 @@ fn imported_and_bulk_edited_notes_are_picked_up_by_the_running_job() {
 fn the_job_does_not_count_as_activity() {
     let (_dir, _path, session, g) = session("fake-4");
     let source = Fakes(vec![Fake::new(4)]);
-    session
-        .with_vault(|v| {
-            for i in 0..20 {
-                v.create_note("", &format!("N{i}"), "words here")?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    session.with_vault(|v| {
+        for i in 0..20 {
+            v.create_note("", &format!("N{i}"), "words here")?;
+        }
+        Ok(())
+    })
+    .unwrap();
     let start = Instant::now();
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(5), |_| {}));
         // Polled through the quiet accessor too, so only the job could reset the idle time.
-        wait_for(|| {
-            session
-                .with_vault_quiet(g, |v| v.embedding_count("fake-4"))
-                .unwrap()
-                == 20
-        });
+        wait_for(|| session.with_vault_quiet(g, |v| v.embedding_count("fake-4")).unwrap() == 20);
         std::thread::sleep(Duration::from_millis(100));
         let idle = session.idle_for().unwrap();
         assert!(idle >= start.elapsed(), "idle {idle:?} reset by the job");
@@ -312,12 +238,7 @@ fn the_vault_stays_available_while_the_model_runs() {
     let fake = Fake::slow(4, Duration::from_millis(50));
     let source = Fakes(vec![fake.clone()]);
     let id = session
-        .with_vault(|v| {
-            (0..40)
-                .map(|i| v.create_note("", &format!("N{i}"), "some words"))
-                .last()
-                .unwrap()
-        })
+        .with_vault(|v| (0..40).map(|i| v.create_note("", &format!("N{i}"), "some words")).last().unwrap())
         .unwrap();
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
@@ -329,10 +250,7 @@ fn the_vault_stays_available_while_the_model_runs() {
             slowest = slowest.max(start.elapsed());
             std::thread::sleep(Duration::from_millis(3));
         }
-        assert!(
-            slowest < Duration::from_millis(40),
-            "a vault call waited {slowest:?}"
-        );
+        assert!(slowest < Duration::from_millis(40), "a vault call waited {slowest:?}");
         session.lock();
     });
 }
@@ -342,38 +260,29 @@ fn the_job_stops_promptly_on_lock() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::slow(4, Duration::from_millis(20));
     let source = Fakes(vec![fake.clone()]);
-    session
-        .with_vault(|v| {
-            for i in 0..200 {
-                v.create_note("", &format!("N{i}"), "some words")?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    session.with_vault(|v| {
+        for i in 0..200 {
+            v.create_note("", &format!("N{i}"), "some words")?;
+        }
+        Ok(())
+    })
+    .unwrap();
     let (done_tx, done_rx) = mpsc::channel();
     let statuses = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|s| {
         s.spawn(|| {
-            job::run(&session, g, &source, Duration::from_millis(10), |st| {
-                statuses.lock().unwrap().push(st.clone())
-            });
+            job::run(&session, g, &source, Duration::from_millis(10), |st| statuses.lock().unwrap().push(st.clone()));
             done_tx.send(()).unwrap();
         });
         wait_for(|| fake.calls() >= 3);
         let locked_at = Instant::now();
         session.lock();
-        done_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("job stops on lock");
+        done_rx.recv_timeout(Duration::from_secs(2)).expect("job stops on lock");
         assert!(locked_at.elapsed() < Duration::from_millis(500));
     });
     assert!(fake.calls() < 200);
     assert!(
-        statuses
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| matches!(s, IndexStatus::Indexing { total: 200, .. })),
+        statuses.lock().unwrap().iter().any(|s| matches!(s, IndexStatus::Indexing { total: 200, .. })),
         "progress is reported"
     );
 }
@@ -385,44 +294,29 @@ fn the_job_pauses_while_an_import_runs_and_catches_up_after() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::slow(4, Duration::from_millis(5));
     let source = Fakes(vec![fake.clone()]);
-    session
-        .with_vault(|v| {
-            for i in 0..100 {
-                v.create_note("", &format!("N{i}"), "some words")?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    session.with_vault(|v| {
+        for i in 0..100 {
+            v.create_note("", &format!("N{i}"), "some words")?;
+        }
+        Ok(())
+    })
+    .unwrap();
     let statuses = std::sync::Mutex::new(Vec::new());
     let last = || statuses.lock().unwrap().last().cloned();
     std::thread::scope(|s| {
-        s.spawn(|| {
-            job::run(&session, g, &source, Duration::from_millis(10), |st| {
-                statuses.lock().unwrap().push(st.clone())
-            })
-        });
+        s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |st| statuses.lock().unwrap().push(st.clone())));
         wait_for(|| fake.calls() >= 3);
 
         let import = session.begin_import();
         wait_for(|| last() == Some(IndexStatus::Paused));
         let calls = fake.calls();
         assert!(calls < 100, "the pass stopped before the end");
-        let texts: Vec<(String, String)> = (0..50)
-            .map(|i| (format!("Imp {i}"), format!("Imported text {i}")))
-            .collect();
+        let texts: Vec<(String, String)> = (0..50).map(|i| (format!("Imp {i}"), format!("Imported text {i}"))).collect();
         let notes: Vec<NewNote> = texts
             .iter()
-            .map(|(title, body)| NewNote {
-                folder: "imp",
-                title,
-                body,
-                created_at: 1,
-                updated_at: 1,
-            })
+            .map(|(title, body)| NewNote { folder: "imp", title, body, created_at: 1, updated_at: 1 })
             .collect();
-        session
-            .with_vault(|v| v.import_notes(&notes).map(|_| ()))
-            .unwrap();
+        session.with_vault(|v| v.import_notes(&notes).map(|_| ())).unwrap();
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(fake.calls(), calls, "nothing is embedded during the import");
         assert_eq!(last(), Some(IndexStatus::Paused));
@@ -443,79 +337,37 @@ fn switching_models_keeps_the_old_vectors_until_the_new_ones_are_complete() {
     let eight = Fake::slow(8, Duration::from_millis(15));
     let source = Fakes(vec![four.clone(), eight.clone()]);
     let ids: Vec<i64> = session
-        .with_vault(|v| {
-            (0..40)
-                .map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}")))
-                .collect()
-        })
+        .with_vault(|v| (0..40).map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}"))).collect())
         .unwrap();
     index(&session, g, &source);
-    assert_eq!(
-        session
-            .with_vault(|v| v.embedding_model_ready())
-            .unwrap()
-            .as_deref(),
-        Some("fake-4")
-    );
+    assert_eq!(session.with_vault(|v| v.embedding_model_ready()).unwrap().as_deref(), Some("fake-4"));
 
     // Switch, and lock partway through the new model.
-    session
-        .with_vault(|v| v.set_embedding_model("fake-8"))
-        .unwrap();
+    session.with_vault(|v| v.set_embedding_model("fake-8")).unwrap();
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
-        wait_for(|| {
-            session
-                .with_vault_quiet(g, |v| v.embedding_count("fake-8"))
-                .unwrap()
-                >= 1
-        });
+        wait_for(|| session.with_vault_quiet(g, |v| v.embedding_count("fake-8")).unwrap() >= 1);
         for &id in &ids {
-            assert_eq!(
-                vector(&session, id).unwrap().len(),
-                4,
-                "reads still use the old model"
-            );
+            assert_eq!(vector(&session, id).unwrap().len(), 4, "reads still use the old model");
         }
         session.lock();
     });
     let vault = Vault::open(&path, common::PASS).unwrap();
     let partial = vault.embedding_count("fake-8").unwrap();
-    assert!(
-        partial >= 1 && partial < ids.len(),
-        "{partial} of {}",
-        ids.len()
-    );
-    assert_eq!(
-        vault.embedding_model_ready().unwrap().as_deref(),
-        Some("fake-4")
-    );
+    assert!(partial >= 1 && partial < ids.len(), "{partial} of {}", ids.len());
+    assert_eq!(vault.embedding_model_ready().unwrap().as_deref(), Some("fake-4"));
     assert_eq!(vault.note_embedding(ids[0]).unwrap().unwrap().len(), 4);
 
     // Unlocking resumes the switch where it stopped.
     let calls = eight.calls();
     let g = session.unlock(vault, path).unwrap();
     index(&session, g, &source);
-    assert_eq!(
-        eight.calls() - calls,
-        ids.len() - partial,
-        "only the rest is embedded"
-    );
-    assert_eq!(
-        session
-            .with_vault(|v| v.embedding_model_ready())
-            .unwrap()
-            .as_deref(),
-        Some("fake-8")
-    );
+    assert_eq!(eight.calls() - calls, ids.len() - partial, "only the rest is embedded");
+    assert_eq!(session.with_vault(|v| v.embedding_model_ready()).unwrap().as_deref(), Some("fake-8"));
     for &id in &ids {
         assert_eq!(vector(&session, id).unwrap().len(), 8);
     }
-    assert_eq!(
-        count(&session, "fake-4"),
-        0,
-        "the old model's rows are gone"
-    );
+    assert_eq!(count(&session, "fake-4"), 0, "the old model's rows are gone");
 }
 
 #[test]
@@ -524,24 +376,15 @@ fn a_model_with_a_wrong_checksum_fails_cleanly_and_notes_still_open() {
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
     std::fs::write(models.path().join(d.tokenizer.name), b"{}").unwrap();
     std::fs::write(models.path().join(d.model.name), b"not a model").unwrap();
-    assert!(matches!(
-        OnnxEmbedder::load(models.path(), d),
-        Err(EmbedError::Checksum(_))
-    ));
+    assert!(matches!(OnnxEmbedder::load(models.path(), d), Err(EmbedError::Checksum(_))));
 
     let (_dir, _path, session, g) = session(embed::DEFAULT_MODEL);
-    let id = session
-        .with_vault(|v| v.create_note("", "T", "Text"))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("", "T", "Text")).unwrap();
     let source = Bundled(models.path().to_path_buf());
     let statuses = std::sync::Mutex::new(Vec::new());
-    job::run(&session, g, &source, Duration::from_millis(10), |s| {
-        statuses.lock().unwrap().push(s.clone())
-    });
+    job::run(&session, g, &source, Duration::from_millis(10), |s| statuses.lock().unwrap().push(s.clone()));
     let statuses = statuses.into_inner().unwrap();
-    assert!(
-        matches!(statuses.as_slice(), [IndexStatus::Failed { message }] if message.contains("checksum"))
-    );
+    assert!(matches!(statuses.as_slice(), [IndexStatus::Failed { message }] if message.contains("checksum")));
 
     assert_eq!(session.with_vault(|v| v.note(id)).unwrap().body, "Text");
     assert_eq!(vector(&session, id), None);
@@ -553,41 +396,20 @@ fn bundled_model_puts_similar_notes_closer_than_unrelated_ones() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
     if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
-        eprintln!(
-            "SKIPPED: model files missing in {}; run `npm run fetch-model`",
-            dir.display()
-        );
+        eprintln!("SKIPPED: model files missing in {}; run `npm run fetch-model`", dir.display());
         return;
     }
     let model = OnnxEmbedder::load(&dir, d).unwrap();
     let text = |title: &str, body: &str| embed::note_text(title, body).unwrap();
-    let a = model
-        .embed(&text(
-            "Groceries",
-            "Buy milk, eggs and bread at the supermarket tomorrow.",
-        ))
-        .unwrap();
-    let b = model
-        .embed(&text(
-            "Shopping",
-            "Tomorrow: get bread, eggs and milk from the store.",
-        ))
-        .unwrap();
-    let c = model
-        .embed(&text(
-            "Kernel panic",
-            "The server crashed after the driver update; roll back the firmware.",
-        ))
-        .unwrap();
+    let a = model.embed(&text("Groceries", "Buy milk, eggs and bread at the supermarket tomorrow.")).unwrap();
+    let b = model.embed(&text("Shopping", "Tomorrow: get bread, eggs and milk from the store.")).unwrap();
+    let c = model.embed(&text("Kernel panic", "The server crashed after the driver update; roll back the firmware.")).unwrap();
     assert_eq!(a.len(), d.dims);
     let (near, far) = (embed::cosine(&a, &b), embed::cosine(&a, &c));
     assert!(near > far, "similar {near} vs unrelated {far}");
 
     // A note longer than one chunk still gets one unit-length vector.
-    let long = text(
-        "Long",
-        &"The quick brown fox jumps over the lazy dog. ".repeat(400),
-    );
+    let long = text("Long", &"The quick brown fox jumps over the lazy dog. ".repeat(400));
     let v = model.embed(&long).unwrap();
     assert!((v.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
 }
@@ -601,39 +423,19 @@ fn bundled_model_gives_the_same_vectors_batched() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
     if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
-        eprintln!(
-            "SKIPPED: model files missing in {}; run `npm run fetch-model`",
-            dir.display()
-        );
+        eprintln!("SKIPPED: model files missing in {}; run `npm run fetch-model`", dir.display());
         return;
     }
     let model = OnnxEmbedder::load(&dir, d).unwrap();
     let long = "The quick brown fox jumps over the lazy dog. ".repeat(150);
-    let texts = [
-        "Short note.",
-        "Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.",
-        long.as_str(),
-        "A",
-        "Kernel panic after the driver update; roll back the firmware.",
-    ];
+    let texts = ["Short note.", "Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.", long.as_str(), "A", "Kernel panic after the driver update; roll back the firmware."];
     let batched = model.embed_batch(&texts, &|| false).unwrap();
     for (text, b) in texts.iter().zip(&batched) {
         let single = model.embed(text).unwrap();
-        let worst = single
-            .iter()
-            .zip(b)
-            .map(|(x, y)| (x - y).abs())
-            .fold(0.0f32, f32::max);
-        assert!(
-            worst < 1e-6,
-            "{worst} for {:?}",
-            &text[..text.len().min(20)]
-        );
+        let worst = single.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 1e-6, "{worst} for {:?}", &text[..text.len().min(20)]);
     }
-    assert!(matches!(
-        model.embed_batch(&texts, &|| true),
-        Err(EmbedError::Stopped)
-    ));
+    assert!(matches!(model.embed_batch(&texts, &|| true), Err(EmbedError::Stopped)));
 }
 
 /// Records the order notes are embedded in, by the first word of their text (title).
@@ -647,10 +449,7 @@ impl Embedder for Recorder {
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
-        self.seen
-            .lock()
-            .unwrap()
-            .push(text.split_whitespace().next().unwrap_or("").to_string());
+        self.seen.lock().unwrap().push(text.split_whitespace().next().unwrap_or("").to_string());
         Ok(vec![1.0, 0.0, 0.0, 0.0])
     }
 }
@@ -661,13 +460,7 @@ fn import_dated(session: &Session, dates: &[i64]) {
     let notes: Vec<NewNote> = dates
         .iter()
         .zip(&titles)
-        .map(|(&d, t)| NewNote {
-            folder: "",
-            title: t,
-            body: "words",
-            created_at: 0,
-            updated_at: d,
-        })
+        .map(|(&d, t)| NewNote { folder: "", title: t, body: "words", created_at: 0, updated_at: d })
         .collect();
     for r in session.with_vault(|v| v.import_notes(&notes)).unwrap() {
         r.unwrap();
@@ -688,24 +481,12 @@ fn the_queue_drains_most_recently_updated_first() {
         let (_dir, _path, session, g) = session("fake-4");
         let dates: Vec<i64> = (0..n as i64).map(|i| (i * 7919) % n as i64 + 1).collect();
         import_dated(&session, &dates);
-        let recorder = Arc::new(Recorder {
-            seen: std::sync::Mutex::new(Vec::new()),
-        });
+        let recorder = Arc::new(Recorder { seen: std::sync::Mutex::new(Vec::new()) });
         index(&session, g, &Shared(recorder.clone()));
-        let seen: Vec<i64> = recorder
-            .seen
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|t| t[1..].parse().unwrap())
-            .collect();
+        let seen: Vec<i64> = recorder.seen.lock().unwrap().iter().map(|t| t[1..].parse().unwrap()).collect();
         let expected: Vec<i64> = (1..=n as i64).rev().collect();
         assert_eq!(seen.len(), n);
-        assert!(
-            seen == expected,
-            "{n} notes: embedded out of order, starting {:?}",
-            &seen[..seen.len().min(10)]
-        );
+        assert!(seen == expected, "{n} notes: embedded out of order, starting {:?}", &seen[..seen.len().min(10)]);
     }
 }
 
@@ -719,35 +500,27 @@ fn queued(session: &Session) -> usize {
 fn every_write_path_queues_the_note() {
     let (_dir, _path, session, g) = session("fake-4");
     let source = Fakes(vec![Fake::new(4)]);
-    let id = session
-        .with_vault(|v| v.create_note("a", "Walk", "A walk in the park"))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("a", "Walk", "A walk in the park")).unwrap();
     assert_eq!(queued(&session), 1, "create");
     index(&session, g, &source);
     assert_eq!(queued(&session), 0);
 
     let check = |what: &str, f: &dyn Fn(&mut Vault)| {
-        session
-            .with_vault(|v| {
-                f(v);
-                Ok(())
-            })
-            .unwrap();
+        session.with_vault(|v| {
+            f(v);
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(queued(&session), 1, "{what}");
         index(&session, g, &source);
         assert_eq!(queued(&session), 0, "{what}: the pass empties the queue");
     };
-    check("update_body", &|v| {
-        v.update_body(id, "Rain all day").unwrap()
-    });
+    check("update_body", &|v| v.update_body(id, "Rain all day").unwrap());
     check("rename", &|v| v.rename_note(id, "a", "Rain").unwrap());
     check("bulk metadata edit", &|v| {
-        v.edit_notes_metadata(&[id], &MetadataEdit::AddTag("x".into()))
-            .unwrap();
+        v.edit_notes_metadata(&[id], &MetadataEdit::AddTag("x".into())).unwrap();
     });
-    check("accept suggestion", &|v| {
-        v.accept_tag_suggestion(id, "y").unwrap()
-    });
+    check("accept suggestion", &|v| v.accept_tag_suggestion(id, "y").unwrap());
     check("create tag from group", &|v| {
         v.create_tag_from_group("z", "", &[id]).unwrap();
     });
@@ -756,13 +529,7 @@ fn every_write_path_queues_the_note() {
         v.restore_note(id).unwrap();
     });
     check("import", &|v| {
-        let notes = [NewNote {
-            folder: "imp",
-            title: "Imported",
-            body: "Imported words",
-            created_at: 1,
-            updated_at: 1,
-        }];
+        let notes = [NewNote { folder: "imp", title: "Imported", body: "Imported words", created_at: 1, updated_at: 1 }];
         v.import_notes(&notes).unwrap();
     });
 
@@ -776,38 +543,21 @@ fn every_write_path_queues_the_note() {
 fn a_save_during_embedding_is_not_lost() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
-    let id = session
-        .with_vault(|v| v.create_note("", "T", "first text"))
-        .unwrap();
-    let page = session
-        .with_vault(|v| v.queued_embeddings("fake-4", &Default::default(), 10, QueuePhase::First))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
+    let page = session.with_vault(|v| v.queued_embeddings("fake-4", &Default::default(), 10, QueuePhase::First)).unwrap();
     assert_eq!(page.stale.len(), 1);
     // Saved after the job read the text, before it wrote the vector.
-    session
-        .with_vault(|v| v.update_body(id, "second text"))
-        .unwrap();
+    session.with_vault(|v| v.update_body(id, "second text")).unwrap();
     let q = &page.stale[0];
     let embedded = fake.embed(&q.note.text).unwrap();
-    let written = hush_lib::db::QueuedVector {
-        id,
-        version: q.version,
-        hash: q.note.hash,
-        vector: embedded,
-        partial: false,
-    };
-    session
-        .with_vault(|v| v.write_queued_embeddings("fake-4", &[written]))
-        .unwrap();
+    let written = hush_lib::db::QueuedVector { id, version: q.version, hash: q.note.hash, vector: embedded, partial: false };
+    session.with_vault(|v| v.write_queued_embeddings("fake-4", &[written])).unwrap();
     assert_eq!(queued(&session), 1, "still queued for the second text");
 
     let source = Fakes(vec![fake.clone()]);
     index(&session, g, &source);
     assert_eq!(fake.calls(), 2);
-    assert_eq!(
-        vector(&session, id).unwrap(),
-        fake.embed("T\n\nsecond text").unwrap()
-    );
+    assert_eq!(vector(&session, id).unwrap(), fake.embed("T\n\nsecond text").unwrap());
 }
 
 /// Counts passes: the job asks for its embedder once at the start of each.
@@ -827,17 +577,9 @@ impl EmbedderSource for CountingFakes {
 fn the_job_runs_one_pass_per_save_and_does_not_wake_itself() {
     let (_dir, _path, session, g) = session("fake-4");
     let fake = Fake::new(4);
-    let source = CountingFakes {
-        fakes: Fakes(vec![fake.clone()]),
-        passes: AtomicUsize::new(0),
-    };
-    let ids: Vec<i64> = session
-        .with_vault(|v| {
-            (0..20)
-                .map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}")))
-                .collect()
-        })
-        .unwrap();
+    let source = CountingFakes { fakes: Fakes(vec![fake.clone()]), passes: AtomicUsize::new(0) };
+    let ids: Vec<i64> =
+        session.with_vault(|v| (0..20).map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}"))).collect()).unwrap();
     let passes = || source.passes.load(Ordering::SeqCst);
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
@@ -852,9 +594,7 @@ fn the_job_runs_one_pass_per_save_and_does_not_wake_itself() {
         for (n, &id) in ids.iter().take(3).enumerate() {
             let calls = fake.calls();
             let before = passes();
-            session
-                .with_vault(|v| v.update_body(id, &format!("changed {n}")))
-                .unwrap();
+            session.with_vault(|v| v.update_body(id, &format!("changed {n}"))).unwrap();
             wait_for(|| fake.calls() == calls + 1);
             std::thread::sleep(Duration::from_millis(200));
             assert_eq!(passes() - before, 1, "save {n}");
@@ -870,16 +610,13 @@ fn the_unlock_safety_net_finds_unqueued_changes() {
     let (_dir, path, session, g) = session("fake-4");
     let fake = Fake::new(4);
     let source = Fakes(vec![fake.clone()]);
-    let id = session
-        .with_vault(|v| v.create_note("", "T", "first text"))
-        .unwrap();
+    let id = session.with_vault(|v| v.create_note("", "T", "first text")).unwrap();
     index(&session, g, &source);
 
     // Change the text on a second connection and drop the queue row the trigger made.
     let raw = rusqlite::Connection::open(&path).unwrap();
     raw.pragma_update(None, "key", common::PASS).unwrap();
-    raw.execute("UPDATE notes SET body = 'other text' WHERE id = ?1", [id])
-        .unwrap();
+    raw.execute("UPDATE notes SET body = 'other text' WHERE id = ?1", [id]).unwrap();
     raw.execute("DELETE FROM embedding_dirty", []).unwrap();
     drop(raw);
     assert_eq!(queued(&session), 0);
@@ -892,19 +629,11 @@ fn the_unlock_safety_net_finds_unqueued_changes() {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
         // (`expected` counted one call.)
         wait_for(|| fake.calls() == 3);
-        wait_for(|| {
-            session
-                .with_vault_quiet(g, |v| v.note_embedding(id))
-                .unwrap()
-                .as_ref()
-                == Some(&expected)
-        });
+        wait_for(|| session.with_vault_quiet(g, |v| v.note_embedding(id)).unwrap().as_ref() == Some(&expected));
         session.lock();
     });
 
-    let g = session
-        .unlock(Vault::open(&path, common::PASS).unwrap(), path.clone())
-        .unwrap();
+    let g = session.unlock(Vault::open(&path, common::PASS).unwrap(), path.clone()).unwrap();
     assert_eq!(job::safety_net(&session, g).unwrap(), 0);
 }
 
@@ -912,22 +641,13 @@ fn the_unlock_safety_net_finds_unqueued_changes() {
 fn a_model_switch_queues_every_live_note_once() {
     let (_dir, _path, session, g) = session("fake-4");
     let source = Fakes(vec![Fake::new(4), Fake::new(8)]);
-    let ids: Vec<i64> = session
-        .with_vault(|v| {
-            (0..5)
-                .map(|i| v.create_note("", &format!("N{i}"), "words"))
-                .collect()
-        })
-        .unwrap();
+    let ids: Vec<i64> =
+        session.with_vault(|v| (0..5).map(|i| v.create_note("", &format!("N{i}"), "words")).collect()).unwrap();
     session.with_vault(|v| v.trash_note(ids[0])).unwrap();
     index(&session, g, &source);
-    session
-        .with_vault(|v| v.set_embedding_model("fake-4"))
-        .unwrap();
+    session.with_vault(|v| v.set_embedding_model("fake-4")).unwrap();
     assert_eq!(queued(&session), 0, "setting the same model queues nothing");
-    session
-        .with_vault(|v| v.set_embedding_model("fake-8"))
-        .unwrap();
+    session.with_vault(|v| v.set_embedding_model("fake-8")).unwrap();
     assert_eq!(queued(&session), 4);
 }
 
@@ -939,34 +659,20 @@ fn bundled_model_embeds_first_chunks() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
     let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
     if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
-        eprintln!(
-            "SKIPPED: model files missing in {}; run `npm run fetch-model`",
-            dir.display()
-        );
+        eprintln!("SKIPPED: model files missing in {}; run `npm run fetch-model`", dir.display());
         return;
     }
     let model = OnnxEmbedder::load(&dir, d).unwrap();
     let long = "The quick brown fox jumps over the lazy dog. ".repeat(150);
-    let texts = [
-        "Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.",
-        long.as_str(),
-    ];
+    let texts = ["Groceries\n\nBuy milk, eggs and bread at the supermarket tomorrow.", long.as_str()];
     let first = model.embed_first_batch(&texts, &|| false).unwrap();
     let full = model.embed_batch(&texts, &|| false).unwrap();
     assert!(first[0].complete && !first[1].complete);
-    let worst = first[0]
-        .vector
-        .iter()
-        .zip(&full[0])
-        .map(|(x, y)| (x - y).abs())
-        .fold(0.0f32, f32::max);
+    let worst = first[0].vector.iter().zip(&full[0]).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
     assert!(worst < 1e-6, "{worst}");
     assert_ne!(first[1].vector, full[1]);
     assert!((first[1].vector.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
-    assert!(matches!(
-        model.embed_first_batch(&texts, &|| true),
-        Err(EmbedError::Stopped)
-    ));
+    assert!(matches!(model.embed_first_batch(&texts, &|| true), Err(EmbedError::Stopped)));
 }
 
 /// Which call a [`Chunked`] embedder got.
@@ -986,19 +692,13 @@ struct Chunked {
 
 impl Chunked {
     fn new(words: usize, full_delay: Duration) -> Arc<Self> {
-        Arc::new(Self {
-            words,
-            full_delay,
-            log: std::sync::Mutex::new(Vec::new()),
-        })
+        Arc::new(Self { words, full_delay, log: std::sync::Mutex::new(Vec::new()) })
     }
 
     fn vector_of(words: &[&str]) -> Vec<f32> {
         let mut v = vec![0.0; 8];
         for word in words {
-            let h = word.bytes().fold(2166136261u32, |h, b| {
-                (h ^ u32::from(b)).wrapping_mul(16777619)
-            });
+            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
             v[h as usize % 8] += 1.0;
         }
         v[0] += 0.01;
@@ -1020,10 +720,7 @@ impl Chunked {
     }
 
     fn calls(&self, call: Call, title: &str) -> usize {
-        self.log()
-            .iter()
-            .filter(|(c, t)| *c == call && t == title)
-            .count()
+        self.log().iter().filter(|(c, t)| *c == call && t == title).count()
     }
 }
 
@@ -1042,11 +739,7 @@ impl Embedder for Chunked {
         Ok(Self::full(text))
     }
 
-    fn embed_first_batch(
-        &self,
-        texts: &[&str],
-        stop: &dyn Fn() -> bool,
-    ) -> Result<Vec<FirstChunk>, EmbedError> {
+    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
         texts
             .iter()
             .map(|t| {
@@ -1055,14 +748,7 @@ impl Embedder for Chunked {
                 }
                 self.log.lock().unwrap().push((Call::First, title_of(t)));
                 let complete = t.split_whitespace().count() <= self.words;
-                Ok(FirstChunk {
-                    vector: if complete {
-                        Self::full(t)
-                    } else {
-                        self.first(t)
-                    },
-                    complete,
-                })
+                Ok(FirstChunk { vector: if complete { Self::full(t) } else { self.first(t) }, complete })
             })
             .collect()
     }
@@ -1085,19 +771,9 @@ fn long_and_short(session: &Session, n: usize) -> (Vec<i64>, Vec<i64>) {
     session
         .with_vault(|v| {
             let long = (0..n)
-                .map(|i| {
-                    v.create_note(
-                        "",
-                        &format!("L{i}"),
-                        &format!(
-                            "alpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda"
-                        ),
-                    )
-                })
+                .map(|i| v.create_note("", &format!("L{i}"), &format!("alpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda")))
                 .collect::<Result<Vec<_>, _>>()?;
-            let short = (0..n)
-                .map(|i| v.create_note("", &format!("S{i}"), &format!("short{i} note")))
-                .collect::<Result<Vec<_>, _>>()?;
+            let short = (0..n).map(|i| v.create_note("", &format!("S{i}"), &format!("short{i} note"))).collect::<Result<Vec<_>, _>>()?;
             Ok((long, short))
         })
         .unwrap()
@@ -1116,70 +792,40 @@ fn every_note_gets_its_first_chunk_before_any_note_is_completed() {
     // First phase.
     let p = job::pass(&session, g, &source, &mut |_| {}).unwrap();
     assert_eq!(p.stale, 40);
-    assert_eq!(
-        counts(&session),
-        QueueCounts { first: 0, rest: 20 },
-        "long notes wait for their remaining chunks"
-    );
+    assert_eq!(counts(&session), QueueCounts { first: 0, rest: 20 }, "long notes wait for their remaining chunks");
     assert!(chunked.log().iter().all(|(c, _)| *c == Call::First));
     assert_eq!(
-        session
-            .with_vault(|v| v.embedding_model_ready())
-            .unwrap()
-            .as_deref(),
+        session.with_vault(|v| v.embedding_model_ready()).unwrap().as_deref(),
         Some("chunked"),
         "every note has a vector: the model is ready"
     );
     for (i, &id) in long.iter().enumerate() {
-        let text =
-            format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
-        assert_eq!(
-            vector(&session, id).unwrap(),
-            chunked.first(&text),
-            "L{i} has its first-chunk vector"
-        );
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, id).unwrap(), chunked.first(&text), "L{i} has its first-chunk vector");
     }
     for (i, &id) in short.iter().enumerate() {
-        assert_eq!(
-            vector(&session, id).unwrap(),
-            Chunked::full(&format!("S{i}\n\nshort{i} note"))
-        );
+        assert_eq!(vector(&session, id).unwrap(), Chunked::full(&format!("S{i}\n\nshort{i} note")));
     }
 
     // Second phase.
     index(&session, g, &source);
     assert_eq!(counts(&session), QueueCounts::default());
     for (i, &id) in long.iter().enumerate() {
-        let text =
-            format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
-        assert_eq!(
-            vector(&session, id).unwrap(),
-            Chunked::full(&text),
-            "L{i} is complete"
-        );
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, id).unwrap(), Chunked::full(&text), "L{i} is complete");
     }
     let log = chunked.log();
     let first_full = log.iter().position(|(c, _)| *c == Call::Full).unwrap();
-    assert!(
-        log[first_full..].iter().all(|(c, _)| *c == Call::Full),
-        "no first chunk after the second phase began"
-    );
+    assert!(log[first_full..].iter().all(|(c, _)| *c == Call::Full), "no first chunk after the second phase began");
     for i in 0..20 {
         assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1);
         assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1);
         assert_eq!(chunked.calls(Call::First, &format!("S{i}")), 1);
-        assert_eq!(
-            chunked.calls(Call::Full, &format!("S{i}")),
-            0,
-            "a one-chunk note isn't embedded twice"
-        );
+        assert_eq!(chunked.calls(Call::Full, &format!("S{i}")), 0, "a one-chunk note isn't embedded twice");
     }
 
     // Nothing left: another pass embeds nothing.
-    assert_eq!(
-        job::pass(&session, g, &source, &mut |_| {}).unwrap().stale,
-        0
-    );
+    assert_eq!(job::pass(&session, g, &source, &mut |_| {}).unwrap().stale, 0);
 }
 
 /// A note saved while long notes are being completed gets its first chunk before the
@@ -1195,48 +841,21 @@ fn a_save_during_the_second_phase_goes_first() {
 
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, Duration::from_millis(10), |_| {}));
-        wait_for(|| {
-            chunked
-                .log()
-                .iter()
-                .filter(|(c, _)| *c == Call::Full)
-                .count()
-                >= 3
-        });
+        wait_for(|| chunked.log().iter().filter(|(c, _)| *c == Call::Full).count() >= 3);
         // The last-created note is completed first (most recently updated), so pick
         // one from the far end of the queue.
         let saved_at = chunked.log().len();
-        session
-            .with_vault(|v| {
-                v.update_body(
-                    long[0],
-                    "changed words one two three four five six seven eight",
-                )
-            })
-            .unwrap();
+        session.with_vault(|v| v.update_body(long[0], "changed words one two three four five six seven eight")).unwrap();
         wait_for(|| chunked.calls(Call::First, "L0") == 2);
         let log = chunked.log();
-        let first = log
-            .iter()
-            .rposition(|(c, t)| *c == Call::First && t == "L0")
-            .unwrap();
-        let fulls_between = log[saved_at..first]
-            .iter()
-            .filter(|(c, _)| *c == Call::Full)
-            .count();
-        assert!(
-            fulls_between <= 1,
-            "{fulls_between} notes were completed before the saved note's first chunk"
-        );
+        let first = log.iter().rposition(|(c, t)| *c == Call::First && t == "L0").unwrap();
+        let fulls_between = log[saved_at..first].iter().filter(|(c, _)| *c == Call::Full).count();
+        assert!(fulls_between <= 1, "{fulls_between} notes were completed before the saved note's first chunk");
         wait_for(|| counts(&session) == QueueCounts::default());
         session.lock();
     });
     let log = chunked.log();
-    assert_eq!(
-        chunked.calls(Call::Full, "L0"),
-        1,
-        "the saved note is completed once, with its new text"
-    );
+    assert_eq!(chunked.calls(Call::Full, "L0"), 1, "the saved note is completed once, with its new text");
     for i in 1..30 {
         assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1);
         assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1, "L{i}");
@@ -1257,34 +876,20 @@ fn first_chunk_vectors_survive_a_lock() {
     session.lock();
 
     let vault = Vault::open(&path, common::PASS).unwrap();
-    assert_eq!(
-        vault.embedding_queue_counts().unwrap(),
-        QueueCounts { first: 0, rest: 10 }
-    );
+    assert_eq!(vault.embedding_queue_counts().unwrap(), QueueCounts { first: 0, rest: 10 });
     assert_eq!(vault.embedding_count("chunked").unwrap(), 20);
-    assert_eq!(
-        vault.embedding_model_ready().unwrap().as_deref(),
-        Some("chunked")
-    );
+    assert_eq!(vault.embedding_model_ready().unwrap().as_deref(), Some("chunked"));
     let g = session.unlock(vault, path).unwrap();
 
     session
         .with_vault(|v| v.update_body(long[3], "---\ntags: [x]\n---\nalpha3 beta gamma delta epsilon zeta eta theta iota kappa lambda"))
         .unwrap();
-    assert_eq!(
-        counts(&session),
-        QueueCounts { first: 1, rest: 9 },
-        "the save queues it again"
-    );
+    assert_eq!(counts(&session), QueueCounts { first: 1, rest: 9 }, "the save queues it again");
 
     index(&session, g, &source);
     assert_eq!(counts(&session), QueueCounts::default());
     for i in 0..10 {
-        assert_eq!(
-            chunked.calls(Call::First, &format!("L{i}")),
-            1,
-            "L{i}: first chunk not embedded again"
-        );
+        assert_eq!(chunked.calls(Call::First, &format!("L{i}")), 1, "L{i}: first chunk not embedded again");
         assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1, "L{i}");
     }
 }
@@ -1303,25 +908,12 @@ fn progress_counts_indexed_and_complete_notes() {
     let indexing: Vec<(usize, usize, usize)> = statuses
         .iter()
         .filter_map(|s| match s {
-            IndexStatus::Indexing {
-                done,
-                complete,
-                total,
-                ..
-            } => Some((*done, *complete, *total)),
+            IndexStatus::Indexing { done, complete, total, .. } => Some((*done, *complete, *total)),
             _ => None,
         })
         .collect();
-    assert!(
-        indexing
-            .iter()
-            .all(|&(d, c, t)| c <= d && d <= t && t == 40),
-        "{indexing:?}"
-    );
-    assert!(
-        indexing.contains(&(40, 20, 40)),
-        "after the first phase: all indexed, the short ones complete: {indexing:?}"
-    );
+    assert!(indexing.iter().all(|&(d, c, t)| c <= d && d <= t && t == 40), "{indexing:?}");
+    assert!(indexing.contains(&(40, 20, 40)), "after the first phase: all indexed, the short ones complete: {indexing:?}");
     assert_eq!(indexing.last(), Some(&(40, 40, 40)));
     assert_eq!(statuses.last(), Some(&IndexStatus::Idle));
 }

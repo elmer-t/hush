@@ -10,14 +10,8 @@ use crate::session::{Session, SessionError};
 
 /// One tag's suggestions across the vault, the first `limit` in `order`. Counts as
 /// activity: the user asked for it.
-pub fn review(
-    session: &Session,
-    tag: &str,
-    order: ReviewOrder,
-    limit: usize,
-) -> Result<SuggestionReview, SessionError> {
-    let (scorer, model) =
-        session.with_vault(|v| Ok((v.tag_scorer(tag)?, v.embedding_model_ready()?)))?;
+pub fn review(session: &Session, tag: &str, order: ReviewOrder, limit: usize) -> Result<SuggestionReview, SessionError> {
+    let (scorer, model) = session.with_vault(|v| Ok((v.tag_scorer(tag)?, v.embedding_model_ready()?)))?;
     let Some(scorer) = scorer else {
         return session.with_vault(|v| v.suggestion_review_of(tag, None, &[], order, limit));
     };
@@ -46,12 +40,9 @@ pub fn review(
                     note.score = scorer.score(&x);
                 }
             }
-            let mut order_of: Vec<(i64, f32)> =
-                review.notes.iter().map(|n| (n.id, n.score)).collect();
+            let mut order_of: Vec<(i64, f32)> = review.notes.iter().map(|n| (n.id, n.score)).collect();
             sort_review(&mut order_of, order, scorer.threshold);
-            review
-                .notes
-                .sort_by_key(|n| order_of.iter().position(|o| o.0 == n.id));
+            review.notes.sort_by_key(|n| order_of.iter().position(|o| o.0 == n.id));
         }
         Ok(review)
     })

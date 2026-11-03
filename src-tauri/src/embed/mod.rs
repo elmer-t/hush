@@ -179,17 +179,14 @@ const BGE_MODEL_SIZE: u64 = 0;
 const BGE_TOKENIZER_SIZE: u64 = 0;
 const E5_MODEL_SHA256: &str = "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193";
 const E5_MODEL_SIZE: u64 = 118_308_185;
-const E5_TOKENIZER_SHA256: &str =
-    "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39";
+const E5_TOKENIZER_SHA256: &str = "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39";
 const E5_TOKENIZER_SIZE: u64 = 17_082_730;
 // Not measured yet: E5 similarities sit high (0.7–0.9 for unrelated text is common),
 // MiniLM's lower. Re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
 const E5_SUGGESTION_THRESHOLD: f32 = 0.8;
-const MINILM_MODEL_SHA256: &str =
-    "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1";
+const MINILM_MODEL_SHA256: &str = "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1";
 const MINILM_MODEL_SIZE: u64 = 22_972_370;
-const MINILM_TOKENIZER_SHA256: &str =
-    "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
+const MINILM_TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
 const MINILM_TOKENIZER_SIZE: u64 = 711_661;
 const MINILM_SUGGESTION_THRESHOLD: f32 = 0.4;
 // Taken from the files as Hugging Face served them on 2026-11-03 (#105), checked on two
@@ -280,10 +277,7 @@ pub enum EmbedError {
     #[error("model file {0} failed its checksum; not loading it")]
     Checksum(PathBuf),
     #[error("could not read model file {path}: {source}")]
-    Read {
-        path: PathBuf,
-        source: std::io::Error,
-    },
+    Read { path: PathBuf, source: std::io::Error },
     #[error("could not load the model: {0}")]
     Load(String),
     #[error("could not embed a note: {0}")]
@@ -307,39 +301,18 @@ pub trait Embedder: Send + Sync {
     /// One vector per text, as [`Embedder::embed`] gives it; a model may run several
     /// texts at once. `stop` is asked between model runs; once it says so, the batch
     /// ends with [`EmbedError::Stopped`].
-    fn embed_batch(
-        &self,
-        texts: &[&str],
-        stop: &dyn Fn() -> bool,
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
         texts
             .iter()
-            .map(|t| {
-                if stop() {
-                    Err(EmbedError::Stopped)
-                } else {
-                    self.embed(t)
-                }
-            })
+            .map(|t| if stop() { Err(EmbedError::Stopped) } else { self.embed(t) })
             .collect()
     }
     /// The vector of each text's first chunk only (the first indexing phase, see
     /// [`job`]), asking `stop` as [`Embedder::embed_batch`] does. `complete` says the
     /// first chunk was the whole text, so the vector is the one
     /// [`Embedder::embed_batch`] gives. A model that doesn't split text embeds it whole.
-    fn embed_first_batch(
-        &self,
-        texts: &[&str],
-        stop: &dyn Fn() -> bool,
-    ) -> Result<Vec<FirstChunk>, EmbedError> {
-        Ok(self
-            .embed_batch(texts, stop)?
-            .into_iter()
-            .map(|vector| FirstChunk {
-                vector,
-                complete: true,
-            })
-            .collect())
+    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
+        Ok(self.embed_batch(texts, stop)?.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect())
     }
 }
 
@@ -387,9 +360,7 @@ pub fn vector_to_blob(vector: &[f32]) -> Vec<u8> {
 }
 
 pub fn blob_to_vector(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect()
+    blob.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
 }
 
 /// Scales `v` to unit length (a zero vector stays zero).
@@ -424,11 +395,7 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 {
-        0.0
-    } else {
-        dot / (na * nb)
-    }
+    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
 }
 
 /// Reads a model file into memory and checks it against its pinned SHA-256. The
@@ -437,10 +404,7 @@ pub fn read_verified(dir: &Path, file: &ModelFile) -> Result<Vec<u8>, EmbedError
     let path = dir.join(file.name);
     let bytes = std::fs::read(&path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => EmbedError::Missing(path.clone()),
-        _ => EmbedError::Read {
-            path: path.clone(),
-            source: e,
-        },
+        _ => EmbedError::Read { path: path.clone(), source: e },
     })?;
     let hash = Sha256::digest(&bytes);
     let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
@@ -457,36 +421,23 @@ mod tests {
     #[test]
     fn note_text_leaves_out_frontmatter_and_skips_empty_notes() {
         let body = "---\ntags: [a]\n---\nHello there\n";
-        assert_eq!(
-            note_text("T", body).as_deref().map(String::as_str),
-            Some("T\n\nHello there")
-        );
+        assert_eq!(note_text("T", body).as_deref().map(String::as_str), Some("T\n\nHello there"));
         assert!(note_text("T", "---\ntags: [a]\n---\n  \n").is_none());
         assert!(note_text("T", "").is_none());
         // Same text after a frontmatter-only change.
         let other = "---\ntags: [a, b]\nauthor: x\n---\nHello there\n";
-        assert_eq!(
-            content_hash(&note_text("T", body).unwrap()),
-            content_hash(&note_text("T", other).unwrap())
-        );
+        assert_eq!(content_hash(&note_text("T", body).unwrap()), content_hash(&note_text("T", other).unwrap()));
     }
 
     /// The build step fetches what the descriptors expect, with the same checksums.
     #[test]
     fn fetch_manifest_matches_descriptors() {
-        let manifest: serde_json::Value =
-            serde_json::from_str(include_str!("../../models/manifest.json")).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(include_str!("../../models/manifest.json")).unwrap();
         let listed: Vec<(String, String, String)> = manifest["files"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|f| {
-                (
-                    f["name"].as_str().unwrap().into(),
-                    f["url"].as_str().unwrap().into(),
-                    f["sha256"].as_str().unwrap().into(),
-                )
-            })
+            .map(|f| (f["name"].as_str().unwrap().into(), f["url"].as_str().unwrap().into(), f["sha256"].as_str().unwrap().into()))
             .collect();
         let expected: Vec<(String, String, String)> = MODELS
             .iter()
@@ -503,27 +454,15 @@ mod tests {
     fn optional_models_are_pinned() {
         let mut names = std::collections::HashSet::new();
         for m in MODELS {
-            assert_eq!(
-                MODELS.iter().filter(|x| x.id == m.id).count(),
-                1,
-                "{}",
-                m.id
-            );
+            assert_eq!(MODELS.iter().filter(|x| x.id == m.id).count(), 1, "{}", m.id);
             for f in [m.model, m.tokenizer] {
                 assert!(names.insert(f.name), "{} is used twice", f.name);
                 assert!(f.url.starts_with("https://"), "{}", f.url);
-                assert!(
-                    f.sha256.len() == 64 && f.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
-                    "{}",
-                    f.name
-                );
+                assert!(f.sha256.len() == 64 && f.sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{}", f.name);
                 assert!(m.bundled || f.size > 0, "{} has no size", f.name);
             }
         }
-        assert!(
-            MODELS.iter().filter(|m| m.bundled).count() == 1
-                && descriptor(DEFAULT_MODEL).unwrap().bundled
-        );
+        assert!(MODELS.iter().filter(|m| m.bundled).count() == 1 && descriptor(DEFAULT_MODEL).unwrap().bundled);
     }
 
     #[test]
@@ -544,26 +483,12 @@ mod tests {
     #[test]
     fn wrong_checksum_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let file = ModelFile {
-            name: "m.onnx",
-            url: "",
-            sha256: BGE_SMALL_EN_V15_Q8.model.sha256,
-            size: 0,
-        };
-        assert!(matches!(
-            read_verified(dir.path(), &file),
-            Err(EmbedError::Missing(_))
-        ));
+        let file = ModelFile { name: "m.onnx", url: "", sha256: BGE_SMALL_EN_V15_Q8.model.sha256, size: 0 };
+        assert!(matches!(read_verified(dir.path(), &file), Err(EmbedError::Missing(_))));
         std::fs::write(dir.path().join("m.onnx"), b"not the model").unwrap();
-        assert!(matches!(
-            read_verified(dir.path(), &file),
-            Err(EmbedError::Checksum(_))
-        ));
+        assert!(matches!(read_verified(dir.path(), &file), Err(EmbedError::Checksum(_))));
         std::fs::write(dir.path().join("m.onnx"), b"hello").unwrap();
-        let ok = ModelFile {
-            sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-            ..file
-        };
+        let ok = ModelFile { sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", ..file };
         assert_eq!(read_verified(dir.path(), &ok).unwrap(), b"hello");
     }
 }

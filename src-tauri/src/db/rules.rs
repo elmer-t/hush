@@ -24,9 +24,7 @@ impl Vault {
         })?;
         rows.map(|row| {
             let (name, enabled, source, lines, pattern, target, map, strip) = row?;
-            let corrupt = |what: &str| {
-                Error::InvalidRule(format!("rule '{name}': stored {what} is not valid"))
-            };
+            let corrupt = |what: &str| Error::InvalidRule(format!("rule '{name}': stored {what} is not valid"));
             Ok(Rule {
                 source: Source::parse(&source).ok_or_else(|| corrupt("source"))?,
                 target: Target::try_from(target).map_err(|_| corrupt("target"))?,

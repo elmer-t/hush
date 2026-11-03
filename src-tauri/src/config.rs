@@ -79,10 +79,7 @@ pub struct Config {
 
 impl Config {
     pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            writing: Mutex::new(()),
-        }
+        Self { path, writing: Mutex::new(()) }
     }
 
     /// The config as it is on disk now, including changes by other instances.
@@ -129,14 +126,7 @@ mod tests {
         config.remember(Path::new("v5.hush"));
         assert_eq!(config.recent_vaults.len(), MAX_RECENT);
         assert_eq!(config.recent_vaults[0], Path::new("v5.hush"));
-        assert_eq!(
-            config
-                .recent_vaults
-                .iter()
-                .filter(|p| p.ends_with("v5.hush"))
-                .count(),
-            1
-        );
+        assert_eq!(config.recent_vaults.iter().filter(|p| p.ends_with("v5.hush")).count(), 1);
         config.forget(Path::new("v5.hush"));
         assert_eq!(config.recent_vaults[0], Path::new("v11.hush"));
     }
@@ -167,9 +157,7 @@ mod tests {
             for (config, name) in [(&a, "a"), (&b, "b")] {
                 s.spawn(move || {
                     for i in 0..5 {
-                        config
-                            .update(|c| c.remember(Path::new(&format!("{name}{i}.hush"))))
-                            .unwrap();
+                        config.update(|c| c.remember(Path::new(&format!("{name}{i}.hush")))).unwrap();
                     }
                 });
             }
@@ -178,10 +166,7 @@ mod tests {
         assert_eq!(recent.len(), MAX_RECENT);
         for name in ["a", "b"] {
             for i in 0..5 {
-                assert!(
-                    recent.contains(&PathBuf::from(format!("{name}{i}.hush"))),
-                    "{name}{i} was lost"
-                );
+                assert!(recent.contains(&PathBuf::from(format!("{name}{i}.hush"))), "{name}{i} was lost");
             }
         }
         assert_eq!(b.get(), a.get(), "each instance sees the other's changes");

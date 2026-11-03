@@ -37,38 +37,20 @@ impl ModelDirs {
     /// The folders a model's files are looked for in, most likely first. Both are
     /// searched, so a damaged install can be fixed by importing the default model's files.
     pub fn search(&self, model: &ModelDescriptor) -> [&Path; 2] {
-        if model.bundled {
-            [&self.bundled, &self.user]
-        } else {
-            [&self.user, &self.bundled]
-        }
+        if model.bundled { [&self.bundled, &self.user] } else { [&self.user, &self.bundled] }
     }
 }
 
 /// Whether a model's files are on this computer, intact.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(
-    tag = "state",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Availability {
     /// `bytes`: the files' size on disk; `downloaded`: they are in the app data folder
     /// (downloaded or imported), so they can be removed.
-    Available {
-        bytes: u64,
-        downloaded: bool,
-    },
-    Missing {
-        file: String,
-    },
-    Checksum {
-        file: String,
-    },
-    Unreadable {
-        file: String,
-        message: String,
-    },
+    Available { bytes: u64, downloaded: bool },
+    Missing { file: String },
+    Checksum { file: String },
+    Unreadable { file: String, message: String },
 }
 
 impl Availability {
@@ -89,9 +71,7 @@ impl Availability {
             Self::Available { .. } => None,
             Self::Missing { file } => Some(format!("model file {file} is missing")),
             Self::Checksum { file } => Some(format!("model file {file} failed its checksum")),
-            Self::Unreadable { file, message } => {
-                Some(format!("could not read model file {file}: {message}"))
-            }
+            Self::Unreadable { file, message } => Some(format!("could not read model file {file}: {message}")),
         }
     }
 }
@@ -110,25 +90,15 @@ type Checked = HashMap<(PathBuf, &'static str), (u64, Option<SystemTime>, bool)>
 impl FileChecks {
     /// Looks for `descriptor`'s files in `dirs`: the folder that has all of them intact,
     /// or why none does (as found in the most likely folder).
-    pub fn locate(
-        &self,
-        dirs: &ModelDirs,
-        descriptor: &ModelDescriptor,
-    ) -> (Availability, Option<PathBuf>) {
+    pub fn locate(&self, dirs: &ModelDirs, descriptor: &ModelDescriptor) -> (Availability, Option<PathBuf>) {
         let [first, second] = dirs.search(descriptor);
         let found = self.availability(first, descriptor);
         if found.is_available() {
-            return (
-                found.downloaded(first == dirs.user),
-                Some(first.to_path_buf()),
-            );
+            return (found.downloaded(first == dirs.user), Some(first.to_path_buf()));
         }
         let other = self.availability(second, descriptor);
         if other.is_available() {
-            return (
-                other.downloaded(second == dirs.user),
-                Some(second.to_path_buf()),
-            );
+            return (other.downloaded(second == dirs.user), Some(second.to_path_buf()));
         }
         (found, None)
     }
@@ -153,11 +123,7 @@ impl FileChecks {
             };
             let stamp = (meta.len(), meta.modified().ok());
             let key = (path.clone(), file.sha256);
-            let cached = self
-                .lock()
-                .get(&key)
-                .filter(|c| (c.0, c.1) == stamp)
-                .map(|c| c.2);
+            let cached = self.lock().get(&key).filter(|c| (c.0, c.1) == stamp).map(|c| c.2);
             let ok = match cached {
                 Some(ok) => ok,
                 None => match sha256_hex(&path) {
@@ -179,10 +145,7 @@ impl FileChecks {
             }
             bytes += meta.len();
         }
-        Availability::Available {
-            bytes,
-            downloaded: false,
-        }
+        Availability::Available { bytes, downloaded: false }
     }
 
     /// Forgets every result (the user asked to check again).
@@ -207,11 +170,7 @@ pub fn sha256_hex(path: &Path) -> io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -235,10 +194,7 @@ pub fn switch(
     catalogue: &[ModelDescriptor],
     id: &str,
 ) -> Result<(), SwitchError> {
-    let descriptor = catalogue
-        .iter()
-        .find(|m| m.id == id)
-        .ok_or_else(|| SwitchError::Unknown(id.to_string()))?;
+    let descriptor = catalogue.iter().find(|m| m.id == id).ok_or_else(|| SwitchError::Unknown(id.to_string()))?;
     if let Some(problem) = checks.locate(dirs, descriptor).0.problem() {
         return Err(SwitchError::Unavailable(problem));
     }
@@ -248,74 +204,42 @@ pub fn switch(
 
 /// Why `model`'s files can't be removed, if they can't: it ships with Hush, or the open
 /// vault embeds with it or its vectors serve (named by the vault's file name).
-pub fn removal_blocked(
-    session: &Session,
-    model: &ModelDescriptor,
-) -> Result<Option<String>, SessionError> {
+pub fn removal_blocked(session: &Session, model: &ModelDescriptor) -> Result<Option<String>, SessionError> {
     if model.bundled {
-        return Ok(Some(format!(
-            "{} ships with Hush and can't be removed",
-            model.name
-        )));
+        return Ok(Some(format!("{} ships with Hush and can't be removed", model.name)));
     }
-    let Some(path) = session.path() else {
-        return Ok(None);
-    };
-    let (active, ready) =
-        session.with_vault(|v| Ok((v.embedding_model()?, v.embedding_model_ready()?)))?;
+    let Some(path) = session.path() else { return Ok(None) };
+    let (active, ready) = session.with_vault(|v| Ok((v.embedding_model()?, v.embedding_model_ready()?)))?;
     if active == model.id || ready.as_deref() == Some(model.id) {
-        let name = path.file_stem().map_or_else(
-            || path.display().to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
-        return Ok(Some(format!(
-            "the open vault “{name}” uses {}; switch it to another model first",
-            model.name
-        )));
+        let name = path.file_stem().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        return Ok(Some(format!("the open vault “{name}” uses {}; switch it to another model first", model.name)));
     }
     Ok(None)
 }
 
 /// How loading a model went, this session.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(
-    tag = "state",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LoadState {
     /// Not asked for yet.
     NotLoaded,
     Loading,
     Ready,
-    Missing {
-        file: String,
-    },
-    Checksum {
-        file: String,
-    },
+    Missing { file: String },
+    Checksum { file: String },
     /// The vault names a model this version of Hush doesn't know.
     Unknown,
-    Failed {
-        message: String,
-    },
+    Failed { message: String },
 }
 
 impl LoadState {
     pub fn from_error(e: &EmbedError) -> Self {
-        let file = |p: &Path| {
-            p.file_name().map_or_else(
-                || p.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            )
-        };
+        let file = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
         match e {
             EmbedError::Missing(p) => Self::Missing { file: file(p) },
             EmbedError::Checksum(p) => Self::Checksum { file: file(p) },
             EmbedError::UnknownModel(_) => Self::Unknown,
-            e => Self::Failed {
-                message: e.to_string(),
-            },
+            e => Self::Failed { message: e.to_string() },
         }
     }
 }
@@ -363,30 +287,13 @@ pub struct ModelStatus {
 pub fn reduced(model: Option<&str>, ready: Option<&str>, load: &LoadState) -> Option<Reduced> {
     let model = model?;
     let (reason, message) = match load {
-        LoadState::Missing { file } => (
-            ReducedReason::Missing,
-            format!("model file {file} is missing"),
-        ),
-        LoadState::Checksum { file } => (
-            ReducedReason::Checksum,
-            format!("model file {file} failed its checksum"),
-        ),
-        LoadState::Unknown => (
-            ReducedReason::Unknown,
-            format!("this version of Hush doesn't know model {model}"),
-        ),
-        LoadState::Failed { message } => (
-            ReducedReason::Failed,
-            format!("the model failed to load: {message}"),
-        ),
+        LoadState::Missing { file } => (ReducedReason::Missing, format!("model file {file} is missing")),
+        LoadState::Checksum { file } => (ReducedReason::Checksum, format!("model file {file} failed its checksum")),
+        LoadState::Unknown => (ReducedReason::Unknown, format!("this version of Hush doesn't know model {model}")),
+        LoadState::Failed { message } => (ReducedReason::Failed, format!("the model failed to load: {message}")),
         _ if ready.is_some() => return None,
-        LoadState::NotLoaded | LoadState::Loading => {
-            (ReducedReason::Loading, "loading the model".to_string())
-        }
-        LoadState::Ready => (
-            ReducedReason::FirstIndex,
-            "the first index isn't finished".to_string(),
-        ),
+        LoadState::NotLoaded | LoadState::Loading => (ReducedReason::Loading, "loading the model".to_string()),
+        LoadState::Ready => (ReducedReason::FirstIndex, "the first index isn't finished".to_string()),
     };
     Some(Reduced { reason, message })
 }
@@ -407,12 +314,7 @@ struct Tracked {
 impl ModelTracker {
     pub fn status(&self) -> ModelStatus {
         let t = self.lock();
-        let load = t
-            .model
-            .as_ref()
-            .and_then(|m| t.loads.get(m))
-            .cloned()
-            .unwrap_or(LoadState::NotLoaded);
+        let load = t.model.as_ref().and_then(|m| t.loads.get(m)).cloned().unwrap_or(LoadState::NotLoaded);
         ModelStatus {
             reduced: reduced(t.model.as_deref(), t.ready.as_deref(), &load),
             model: t.model.clone(),
@@ -449,8 +351,7 @@ impl ModelTracker {
     /// status changed.
     pub fn forget_failures(&self) -> bool {
         self.change(|t| {
-            t.loads
-                .retain(|_, s| matches!(s, LoadState::Ready | LoadState::Loading));
+            t.loads.retain(|_, s| matches!(s, LoadState::Ready | LoadState::Loading));
         })
     }
 
@@ -477,12 +378,7 @@ mod tests {
             licence: "MIT",
             licence_url: "",
             bundled: false,
-            model: ModelFile {
-                name: "stub.onnx",
-                url: "",
-                sha256: model_sha,
-                size: 5,
-            },
+            model: ModelFile { name: "stub.onnx", url: "", sha256: model_sha, size: 5 },
             // sha256("{}")
             tokenizer: ModelFile {
                 name: "stub.tokenizer.json",
@@ -510,41 +406,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let d = descriptor(HELLO);
         let checks = FileChecks::default();
-        assert_eq!(
-            checks.availability(dir.path(), &d),
-            Availability::Missing {
-                file: "stub.tokenizer.json".into()
-            }
-        );
+        assert_eq!(checks.availability(dir.path(), &d), Availability::Missing { file: "stub.tokenizer.json".into() });
         std::fs::write(dir.path().join("stub.tokenizer.json"), b"{}").unwrap();
-        assert_eq!(
-            checks.availability(dir.path(), &d),
-            Availability::Missing {
-                file: "stub.onnx".into()
-            }
-        );
+        assert_eq!(checks.availability(dir.path(), &d), Availability::Missing { file: "stub.onnx".into() });
         std::fs::write(dir.path().join("stub.onnx"), b"hello").unwrap();
-        assert_eq!(
-            checks.availability(dir.path(), &d),
-            Availability::Available {
-                bytes: 7,
-                downloaded: false
-            }
-        );
-        let dirs = ModelDirs {
-            bundled: dir.path().join("none"),
-            user: dir.path().to_path_buf(),
-        };
-        assert_eq!(
-            checks.locate(&dirs, &d),
-            (
-                Availability::Available {
-                    bytes: 7,
-                    downloaded: true
-                },
-                Some(dirs.user.clone())
-            )
-        );
+        assert_eq!(checks.availability(dir.path(), &d), Availability::Available { bytes: 7, downloaded: false });
+        let dirs = ModelDirs { bundled: dir.path().join("none"), user: dir.path().to_path_buf() };
+        assert_eq!(checks.locate(&dirs, &d), (Availability::Available { bytes: 7, downloaded: true }, Some(dirs.user.clone())));
         // A different size can't hit the cached result.
         std::fs::write(dir.path().join("stub.onnx"), b"hello, world").unwrap();
         assert_eq!(
@@ -565,63 +433,27 @@ mod tests {
     #[test]
     fn load_errors_name_the_file_only() {
         let missing = EmbedError::Missing(PathBuf::from("/some/where/m.onnx"));
-        assert_eq!(
-            LoadState::from_error(&missing),
-            LoadState::Missing {
-                file: "m.onnx".into()
-            }
-        );
+        assert_eq!(LoadState::from_error(&missing), LoadState::Missing { file: "m.onnx".into() });
         let checksum = EmbedError::Checksum(PathBuf::from("/x/t.json"));
-        assert_eq!(
-            LoadState::from_error(&checksum),
-            LoadState::Checksum {
-                file: "t.json".into()
-            }
-        );
-        assert_eq!(
-            LoadState::from_error(&EmbedError::UnknownModel("z".into())),
-            LoadState::Unknown
-        );
+        assert_eq!(LoadState::from_error(&checksum), LoadState::Checksum { file: "t.json".into() });
+        assert_eq!(LoadState::from_error(&EmbedError::UnknownModel("z".into())), LoadState::Unknown);
     }
 
     #[test]
     fn features_are_reduced_until_a_model_is_ready_and_loadable() {
         let r = |model, ready, load: LoadState| reduced(model, ready, &load).map(|r| r.reason);
-        assert_eq!(
-            r(None, None, LoadState::NotLoaded),
-            None,
-            "locked: nothing to say"
-        );
-        assert_eq!(
-            r(Some("a"), None, LoadState::Loading),
-            Some(ReducedReason::Loading)
-        );
-        assert_eq!(
-            r(Some("a"), None, LoadState::Ready),
-            Some(ReducedReason::FirstIndex)
-        );
+        assert_eq!(r(None, None, LoadState::NotLoaded), None, "locked: nothing to say");
+        assert_eq!(r(Some("a"), None, LoadState::Loading), Some(ReducedReason::Loading));
+        assert_eq!(r(Some("a"), None, LoadState::Ready), Some(ReducedReason::FirstIndex));
         assert_eq!(r(Some("a"), Some("a"), LoadState::Ready), None);
         // Mid-switch the old model's vectors keep serving.
         assert_eq!(r(Some("b"), Some("a"), LoadState::Loading), None);
         assert_eq!(r(Some("b"), Some("a"), LoadState::Ready), None);
         // A model that can't load reduces features even when old vectors exist: new
         // and changed notes get none.
-        assert_eq!(
-            r(
-                Some("a"),
-                Some("a"),
-                LoadState::Missing { file: "m".into() }
-            ),
-            Some(ReducedReason::Missing)
-        );
-        assert_eq!(
-            r(Some("a"), None, LoadState::Checksum { file: "m".into() }),
-            Some(ReducedReason::Checksum)
-        );
-        assert_eq!(
-            r(Some("a"), None, LoadState::Unknown),
-            Some(ReducedReason::Unknown)
-        );
+        assert_eq!(r(Some("a"), Some("a"), LoadState::Missing { file: "m".into() }), Some(ReducedReason::Missing));
+        assert_eq!(r(Some("a"), None, LoadState::Checksum { file: "m".into() }), Some(ReducedReason::Checksum));
+        assert_eq!(r(Some("a"), None, LoadState::Unknown), Some(ReducedReason::Unknown));
     }
 
     #[test]
@@ -631,16 +463,8 @@ mod tests {
         assert!(t.vault_models("a", None));
         assert!(!t.vault_models("a", None));
         assert_eq!(t.status().reduced.unwrap().reason, ReducedReason::Loading);
-        assert!(t.load(
-            "a",
-            LoadState::Missing {
-                file: "a.onnx".into()
-            }
-        ));
-        assert_eq!(
-            t.status().reduced.unwrap().message,
-            "model file a.onnx is missing"
-        );
+        assert!(t.load("a", LoadState::Missing { file: "a.onnx".into() }));
+        assert_eq!(t.status().reduced.unwrap().message, "model file a.onnx is missing");
         // Another model's load doesn't show.
         assert!(!t.load("b", LoadState::Ready));
         assert!(t.forget_failures());

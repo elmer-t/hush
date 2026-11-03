@@ -6,18 +6,11 @@ use hush_lib::config::Config;
 use hush_lib::db::{DEFAULT_RECENT_OPENED_COUNT, Error, LAST_OPENED_SETTING, Vault};
 
 fn recent(vault: &Vault) -> Vec<String> {
-    vault
-        .recent_opened_notes()
-        .unwrap()
-        .into_iter()
-        .map(|n| n.title)
-        .collect()
+    vault.recent_opened_notes().unwrap().into_iter().map(|n| n.title).collect()
 }
 
 fn notes(vault: &mut Vault, n: usize) -> Vec<i64> {
-    (0..n)
-        .map(|i| vault.create_note("", &format!("N{i}"), "").unwrap())
-        .collect()
+    (0..n).map(|i| vault.create_note("", &format!("N{i}"), "").unwrap()).collect()
 }
 
 #[test]
@@ -30,20 +23,13 @@ fn most_recent_first_without_duplicates() {
     }
     assert_eq!(recent(&vault), ["N0", "N2", "N1"]);
     vault.record_opened(ids[0]).unwrap();
-    assert_eq!(
-        recent(&vault),
-        ["N0", "N2", "N1"],
-        "reopening the current note changes nothing"
-    );
+    assert_eq!(recent(&vault), ["N0", "N2", "N1"], "reopening the current note changes nothing");
 }
 
 #[test]
 fn keeps_at_most_the_count_and_truncates_when_it_is_lowered() {
     let (_dir, mut vault) = common::vault();
-    assert_eq!(
-        vault.recent_opened_count().unwrap(),
-        DEFAULT_RECENT_OPENED_COUNT
-    );
+    assert_eq!(vault.recent_opened_count().unwrap(), DEFAULT_RECENT_OPENED_COUNT);
     let ids = notes(&mut vault, 12);
     for &id in &ids {
         vault.record_opened(id).unwrap();
@@ -55,10 +41,7 @@ fn keeps_at_most_the_count_and_truncates_when_it_is_lowered() {
     // Raising it again doesn't bring the dropped ones back.
     vault.set_recent_opened_count(50).unwrap();
     assert_eq!(recent(&vault), ["N11", "N10", "N9"]);
-    assert!(matches!(
-        vault.set_recent_opened_count(1001),
-        Err(Error::InvalidRecentOpenedCount)
-    ));
+    assert!(matches!(vault.set_recent_opened_count(1001), Err(Error::InvalidRecentOpenedCount)));
     assert_eq!(vault.recent_opened_count().unwrap(), 50);
     vault.set_recent_opened_count(1000).unwrap();
     assert_eq!(vault.recent_opened_count().unwrap(), 1000);
@@ -74,10 +57,7 @@ fn zero_records_nothing_and_clears_the_list() {
     vault.record_opened(ids[1]).unwrap();
     assert!(recent(&vault).is_empty());
     vault.set_recent_opened_count(5).unwrap();
-    assert!(
-        recent(&vault).is_empty(),
-        "nothing was recorded while it was off"
-    );
+    assert!(recent(&vault).is_empty(), "nothing was recorded while it was off");
 }
 
 #[test]
@@ -112,11 +92,7 @@ fn purged_notes_are_pruned() {
     vault.delete_note(ids[1]).unwrap();
     assert_eq!(recent(&vault), ["N2", "N0"]);
     let stored = vault.setting("recent_opened").unwrap().unwrap();
-    assert_eq!(
-        stored,
-        format!("[{},{}]", ids[2], ids[0]),
-        "the stored list lost the id"
-    );
+    assert_eq!(stored, format!("[{},{}]", ids[2], ids[0]), "the stored list lost the id");
 }
 
 #[test]
@@ -125,16 +101,9 @@ fn rename_and_move_keep_the_entry() {
     let ids = notes(&mut vault, 2);
     vault.record_opened(ids[0]).unwrap();
     vault.record_opened(ids[1]).unwrap();
-    vault
-        .rename_note(ids[0], "elsewhere/deep", "Renamed")
-        .unwrap();
+    vault.rename_note(ids[0], "elsewhere/deep", "Renamed").unwrap();
     let list = vault.recent_opened_notes().unwrap();
-    assert_eq!(
-        list.iter()
-            .map(|n| (n.folder.as_str(), n.title.as_str()))
-            .collect::<Vec<_>>(),
-        [("", "N1"), ("elsewhere/deep", "Renamed")]
-    );
+    assert_eq!(list.iter().map(|n| (n.folder.as_str(), n.title.as_str())).collect::<Vec<_>>(), [("", "N1"), ("elsewhere/deep", "Renamed")]);
 }
 
 #[test]
@@ -172,10 +141,7 @@ fn config_json_holds_no_note_ids_or_titles() {
     let mut vault = Vault::create(&vault_path, common::PASS).unwrap();
     config.update(|c| c.remember(&vault_path)).unwrap();
     let titles = ["Secret plan", "Diary entry"];
-    let ids: Vec<i64> = titles
-        .iter()
-        .map(|t| vault.create_note("", t, "").unwrap())
-        .collect();
+    let ids: Vec<i64> = titles.iter().map(|t| vault.create_note("", t, "").unwrap()).collect();
     for &id in &ids {
         vault.record_opened(id).unwrap();
     }
@@ -190,22 +156,11 @@ fn config_json_holds_no_note_ids_or_titles() {
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
     // Vault paths and machine settings only.
-    assert_eq!(
-        keys,
-        [
-            "index_all_cores",
-            "index_gpu_off",
-            "index_rates",
-            "recent_vaults"
-        ]
-    );
+    assert_eq!(keys, ["index_all_cores", "index_gpu_off", "index_rates", "recent_vaults"]);
     assert!(json["index_gpu_off"].is_boolean());
     assert!(json["index_all_cores"].is_boolean());
     assert!(json["index_rates"].as_object().unwrap().is_empty());
-    assert_eq!(
-        json["recent_vaults"][0].as_str().map(Path::new),
-        Some(vault_path.as_path())
-    );
+    assert_eq!(json["recent_vaults"][0].as_str().map(Path::new), Some(vault_path.as_path()));
 }
 
 #[test]
@@ -233,11 +188,7 @@ fn trashing_the_last_opened_note_forgets_it_but_trashing_another_does_not() {
     vault.trash_note(ids[1]).unwrap();
     assert_eq!(vault.last_opened().unwrap(), Some(ids[0]));
     vault.trash_notes(&[ids[0]]).unwrap();
-    assert_eq!(
-        vault.setting(LAST_OPENED_SETTING).unwrap(),
-        None,
-        "cleared when it was trashed"
-    );
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "cleared when it was trashed");
     // Restoring it doesn't bring it back: it was closed when it was trashed.
     vault.restore_note(ids[0]).unwrap();
     assert_eq!(vault.last_opened().unwrap(), None);
@@ -250,14 +201,8 @@ fn trashing_the_folder_of_the_last_opened_note_forgets_it() {
     let inside = vault.create_note("work/deep", "Inside", "").unwrap();
     vault.record_opened(outside).unwrap();
     vault.trash_folder("work").unwrap();
-    assert_eq!(
-        vault.last_opened().unwrap(),
-        Some(outside),
-        "another folder's note stays"
-    );
-    vault
-        .restore_folder(vault.trashed_notes().unwrap()[0].deleted_at)
-        .unwrap();
+    assert_eq!(vault.last_opened().unwrap(), Some(outside), "another folder's note stays");
+    vault.restore_folder(vault.trashed_notes().unwrap()[0].deleted_at).unwrap();
     vault.record_opened(inside).unwrap();
     vault.trash_folder("work").unwrap();
     assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None);
@@ -283,9 +228,7 @@ fn a_stale_or_unreadable_last_opened_value_is_cleared_on_read() {
     // A note trashed while the key wasn't cleared (older builds): left out and cleared.
     let ids = notes(&mut vault, 1);
     vault.trash_note(ids[0]).unwrap();
-    vault
-        .set_setting(LAST_OPENED_SETTING, &ids[0].to_string())
-        .unwrap();
+    vault.set_setting(LAST_OPENED_SETTING, &ids[0].to_string()).unwrap();
     assert_eq!(vault.last_opened().unwrap(), None);
     assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None);
 }
@@ -296,25 +239,11 @@ fn history_off_stores_no_last_opened_note_and_clears_it() {
     let ids = notes(&mut vault, 2);
     vault.record_opened(ids[0]).unwrap();
     vault.set_recent_opened_count(0).unwrap();
-    assert_eq!(
-        vault.setting(LAST_OPENED_SETTING).unwrap(),
-        None,
-        "turning history off clears it"
-    );
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "turning history off clears it");
     vault.record_opened(ids[1]).unwrap();
-    assert_eq!(
-        vault.setting(LAST_OPENED_SETTING).unwrap(),
-        None,
-        "and nothing is stored while off"
-    );
-    vault
-        .set_setting(LAST_OPENED_SETTING, &ids[1].to_string())
-        .unwrap();
-    assert_eq!(
-        vault.last_opened().unwrap(),
-        None,
-        "a value stored anyway is not restored"
-    );
+    assert_eq!(vault.setting(LAST_OPENED_SETTING).unwrap(), None, "and nothing is stored while off");
+    vault.set_setting(LAST_OPENED_SETTING, &ids[1].to_string()).unwrap();
+    assert_eq!(vault.last_opened().unwrap(), None, "a value stored anyway is not restored");
     vault.set_recent_opened_count(5).unwrap();
     vault.record_opened(ids[1]).unwrap();
     assert_eq!(vault.last_opened().unwrap(), Some(ids[1]));
@@ -330,11 +259,7 @@ fn opening_notes_is_not_a_vault_change() {
     }
     vault.clear_recent_opened().unwrap();
     vault.clear_last_opened().unwrap();
-    assert_eq!(
-        vault.change_count(),
-        before,
-        "background jobs would retrain on every click"
-    );
+    assert_eq!(vault.change_count(), before, "background jobs would retrain on every click");
     vault.create_note("", "New", "").unwrap();
     assert!(vault.change_count() > before);
 }

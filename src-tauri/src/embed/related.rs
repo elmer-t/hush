@@ -123,9 +123,7 @@ impl RelatedIndex {
 
     /// Removes a note's vector: the last row moves into its place.
     fn remove(&mut self, id: i64) {
-        let Some(row) = self.rows.remove(&id) else {
-            return;
-        };
+        let Some(row) = self.rows.remove(&id) else { return };
         let last = self.ids.len() - 1;
         let d = self.dims;
         if row != last {
@@ -158,9 +156,7 @@ impl RelatedIndex {
             .zip(self.scales.iter())
             .zip(&self.ids)
             .map(|((q, &scale), id)| {
-                row.iter_mut()
-                    .zip(q)
-                    .for_each(|(x, &q)| *x = f32::from(q) * scale);
+                row.iter_mut().zip(q).for_each(|(x, &q)| *x = f32::from(q) * scale);
                 (*id, score(&row))
             })
             .collect()
@@ -178,8 +174,7 @@ impl RelatedIndex {
         }
         // The best `k` of rows `start..`, in a bounded heap: the worst kept on top.
         let scan = |start: usize, rows: &[i8]| -> Vec<(Score, Reverse<usize>)> {
-            let mut heap: BinaryHeap<Reverse<(Score, Reverse<usize>)>> =
-                BinaryHeap::with_capacity(k + 1);
+            let mut heap: BinaryHeap<Reverse<(Score, Reverse<usize>)>> = BinaryHeap::with_capacity(k + 1);
             for (i, v) in rows.chunks_exact(d).enumerate() {
                 let i = start + i;
                 if i == row {
@@ -209,20 +204,13 @@ impl RelatedIndex {
                     .enumerate()
                     .map(|(t, rows)| s.spawn(move || scan(t * per, rows)))
                     .collect();
-                handles
-                    .into_iter()
-                    .flat_map(|h| h.join().expect("related-notes scan panicked"))
-                    .collect()
+                handles.into_iter().flat_map(|h| h.join().expect("related-notes scan panicked")).collect()
             })
         };
         // Highest score first; ties by row, so the order is stable.
         best.sort_unstable_by(|a, b| b.cmp(a));
         best.truncate(k);
-        Some(
-            best.into_iter()
-                .map(|(_, Reverse(i))| self.ids[i])
-                .collect(),
-        )
+        Some(best.into_iter().map(|(_, Reverse(i))| self.ids[i]).collect())
     }
 }
 
@@ -264,12 +252,7 @@ fn quantize(x: &[f32], q: &mut [i8]) -> f32 {
 fn idot(a: &[i8], b: &[i8]) -> i32 {
     let mut sums = [0i32; 16];
     let (a16, b16) = (a.chunks_exact(16), b.chunks_exact(16));
-    let tail: i32 = a16
-        .remainder()
-        .iter()
-        .zip(b16.remainder())
-        .map(|(&x, &y)| i32::from(x) * i32::from(y))
-        .sum();
+    let tail: i32 = a16.remainder().iter().zip(b16.remainder()).map(|(&x, &y)| i32::from(x) * i32::from(y)).sum();
     for (x, y) in a16.zip(b16) {
         for i in 0..16 {
             sums[i] += i32::from(x[i]) * i32::from(y[i]);
@@ -281,12 +264,7 @@ fn idot(a: &[i8], b: &[i8]) -> i32 {
 pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
     let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
-    let tail: f32 = a8
-        .remainder()
-        .iter()
-        .zip(b8.remainder())
-        .map(|(x, y)| x * y)
-        .sum();
+    let tail: f32 = a8.remainder().iter().zip(b8.remainder()).map(|(x, y)| x * y).sum();
     for (x, y) in a8.zip(b8) {
         for i in 0..8 {
             sums[i] += x[i] * y[i];
@@ -299,12 +277,7 @@ pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
 /// their `f32` vectors to `query`, the first `k`, with that cosine. Candidates without
 /// a vector in `vectors` (trashed or deleted since the index was synced) are left out;
 /// ties keep the scan's order.
-pub fn rerank(
-    query: &[f32],
-    candidates: &[i64],
-    vectors: &[StoredVector],
-    k: usize,
-) -> Vec<(i64, f32)> {
+pub fn rerank(query: &[f32], candidates: &[i64], vectors: &[StoredVector], k: usize) -> Vec<(i64, f32)> {
     let mut q = Zeroizing::new(query.to_vec());
     super::normalize(&mut q);
     let mut scored: Vec<(f32, usize, i64)> = candidates
@@ -321,11 +294,7 @@ pub fn rerank(
         })
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-    scored
-        .into_iter()
-        .take(k)
-        .map(|(score, _, id)| (id, score))
-        .collect()
+    scored.into_iter().take(k).map(|(score, _, id)| (id, score)).collect()
 }
 
 /// Makes room for `additional` more elements without letting `Vec` reallocate, which
@@ -352,10 +321,7 @@ fn reserve<T: Zeroize + Copy>(v: &mut Zeroizing<Vec<T>>, additional: usize) {
 /// that don't know what changed.
 pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
     let ready = session.with_vault_quiet(generation, |v| v.embedding_model_ready())?;
-    let built = session
-        .related_index()
-        .as_ref()
-        .map(|index| index.model.clone());
+    let built = session.related_index().as_ref().map(|index| index.model.clone());
     if built.as_ref() != Some(&ready) {
         return rebuild(session, generation, ready);
     }
@@ -363,44 +329,24 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
     let live = session.with_vault_quiet(generation, |v| v.embedding_hashes(&model))?;
     let (remove, load) = {
         let index = session.related_index();
-        let Some(index) = index.as_ref() else {
-            return Ok(false);
-        };
+        let Some(index) = index.as_ref() else { return Ok(false) };
         let live_ids: HashSet<i64> = live.iter().map(|(id, _)| *id).collect();
-        let remove: Vec<i64> = index
-            .ids
-            .iter()
-            .copied()
-            .filter(|id| !live_ids.contains(id))
-            .collect();
-        let load: Vec<i64> = live
-            .iter()
-            .filter(|(id, hash)| index.hash(*id) != Some(hash))
-            .map(|(id, _)| *id)
-            .collect();
+        let remove: Vec<i64> = index.ids.iter().copied().filter(|id| !live_ids.contains(id)).collect();
+        let load: Vec<i64> = live.iter().filter(|(id, hash)| index.hash(*id) != Some(hash)).map(|(id, _)| *id).collect();
         (remove, load)
     };
     if remove.is_empty() && load.is_empty() {
         return Ok(false);
     }
     let activity = session.activity().reporter(generation);
-    activity.start(
-        Job::Related,
-        format!(
-            "loading {} vectors, dropping {}",
-            count(load.len() as u64),
-            count(remove.len() as u64)
-        ),
-    );
+    activity.start(Job::Related, format!("loading {} vectors, dropping {}", count(load.len() as u64), count(remove.len() as u64)));
     let mut loaded: Vec<StoredVector> = Vec::with_capacity(load.len());
     for page in load.chunks(LOAD_PAGE) {
         loaded.extend(session.with_vault_quiet(generation, |v| v.embedding_vectors(&model, page))?);
     }
     let size = session
         .update_related_index(generation, |index| {
-            let Some(index) = index.as_mut() else {
-                return 0;
-            };
+            let Some(index) = index.as_mut() else { return 0 };
             for &id in &remove {
                 index.remove(id);
             }
@@ -412,12 +358,7 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
         .ok_or(SessionError::Locked)?;
     activity.finish_quietly(
         Job::Related,
-        format!(
-            "updated {} notes, removed {}; {} in the index",
-            count(loaded.len() as u64),
-            count(remove.len() as u64),
-            count(size as u64)
-        ),
+        format!("updated {} notes, removed {}; {} in the index", count(loaded.len() as u64), count(remove.len() as u64), count(size as u64)),
     );
     Ok(true)
 }
@@ -425,11 +366,7 @@ pub fn sync(session: &Session, generation: u64) -> Result<bool, SessionError> {
 /// Builds the index for `ready` from scratch: the stored vectors are read front to back
 /// in pages and quantised into a new index as they arrive, so no copy of every `f32`
 /// vector is held; the old index keeps serving until the new one replaces it.
-fn rebuild(
-    session: &Session,
-    generation: u64,
-    ready: Option<String>,
-) -> Result<bool, SessionError> {
+fn rebuild(session: &Session, generation: u64, ready: Option<String>) -> Result<bool, SessionError> {
     let activity = session.activity().reporter(generation);
     let (mut fresh, total) = match &ready {
         Some(model) => {
@@ -443,20 +380,15 @@ fn rebuild(
         let mut after = 0;
         let mut loaded = 0;
         loop {
-            let (page, next) = session.with_vault_quiet(generation, |v| {
-                v.embedding_vector_page(model, after, LOAD_PAGE)
-            })?;
+            let (page, next) =
+                session.with_vault_quiet(generation, |v| v.embedding_vector_page(model, after, LOAD_PAGE))?;
             loaded += page.len();
             for v in &page {
                 fresh.upsert(v.id, v.hash, &v.vector);
             }
             activity.progress(
                 Job::Related,
-                format!(
-                    "rebuilding index: {} / {} vectors",
-                    count(loaded as u64),
-                    count(total.max(loaded) as u64)
-                ),
+                format!("rebuilding index: {} / {} vectors", count(loaded as u64), count(total.max(loaded) as u64)),
                 loaded as u64,
                 Some(total.max(loaded) as u64),
             );
@@ -467,17 +399,11 @@ fn rebuild(
         }
     }
     let (size, bytes) = (fresh.len(), fresh.memory_bytes());
-    session
-        .update_related_index(generation, |index| *index = Some(fresh))
-        .ok_or(SessionError::Locked)?;
+    session.update_related_index(generation, |index| *index = Some(fresh)).ok_or(SessionError::Locked)?;
     match &ready {
         Some(model) => activity.finish(
             Job::Related,
-            format!(
-                "rebuilt index: {} vectors of {model}, {:.1} MB",
-                count(size as u64),
-                bytes as f64 / 1_048_576.0
-            ),
+            format!("rebuilt index: {} vectors of {model}, {:.1} MB", count(size as u64), bytes as f64 / 1_048_576.0),
         ),
         None => activity.idle(Job::Related, Some("no model is ready yet")),
     }
@@ -490,10 +416,7 @@ fn rebuild(
 /// model yet. Returns whether the index changed.
 pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, SessionError> {
     let ready = session.with_vault_quiet(generation, |v| v.embedding_model_ready())?;
-    let built = session
-        .related_index()
-        .as_ref()
-        .map(|index| index.model.clone());
+    let built = session.related_index().as_ref().map(|index| index.model.clone());
     if built.as_ref() != Some(&ready) {
         return sync(session, generation);
     }
@@ -508,9 +431,7 @@ pub fn update(session: &Session, generation: u64, ids: &[i64]) -> Result<bool, S
     let found: HashSet<i64> = loaded.iter().map(|v| v.id).collect();
     let size = session
         .update_related_index(generation, |index| {
-            let Some(index) = index.as_mut() else {
-                return 0;
-            };
+            let Some(index) = index.as_mut() else { return 0 };
             for id in ids.iter().filter(|id| !found.contains(id)) {
                 index.remove(*id);
             }
@@ -555,11 +476,7 @@ pub struct RelatedNote {
 /// up the summaries and work out the reasons for the ones kept. It does not count as
 /// activity: the frontend also asks after a background re-embed. Notes trashed or
 /// deleted since the job last synced the index are skipped.
-pub fn related_notes(
-    session: &Session,
-    id: i64,
-    limit: usize,
-) -> Result<Option<Vec<RelatedNote>>, SessionError> {
+pub fn related_notes(session: &Session, id: i64, limit: usize) -> Result<Option<Vec<RelatedNote>>, SessionError> {
     let generation = session.generation();
     if generation == 0 {
         return Err(SessionError::Locked);
@@ -568,40 +485,29 @@ pub fn related_notes(
     loop {
         let found = {
             let index = session.related_index();
-            index
-                .as_ref()
-                .and_then(|index| Some((index.model.clone()?, index.nearest(id, k)?)))
+            index.as_ref().and_then(|index| Some((index.model.clone()?, index.nearest(id, k)?)))
         };
-        let Some((model, candidates)) = found else {
-            return Ok(None);
-        };
+        let Some((model, candidates)) = found else { return Ok(None) };
         let exhausted = candidates.len() < k;
         let related = session.with_vault_quiet(generation, |v| {
             let mut wanted = Vec::with_capacity(candidates.len() + 1);
             wanted.push(id);
             wanted.extend_from_slice(&candidates);
             let vectors = v.embedding_vectors(&model, &wanted)?;
-            let Some(query) = vectors.iter().find(|v| v.id == id) else {
-                return Ok(None);
-            };
+            let Some(query) = vectors.iter().find(|v| v.id == id) else { return Ok(None) };
             let ranked = rerank(&query.vector, &candidates, &vectors, limit);
             let ids: Vec<i64> = ranked.iter().map(|(id, _)| *id).collect();
             let notes = v.note_summaries(&ids)?;
             if notes.len() < limit && !exhausted {
                 return Ok(Some(None));
             }
-            let reasons =
-                v.relation_reasons(id, &notes.iter().map(|n| n.id).collect::<Vec<_>>())?;
+            let reasons = v.relation_reasons(id, &notes.iter().map(|n| n.id).collect::<Vec<_>>())?;
             let scores: HashMap<i64, f32> = ranked.into_iter().collect();
             Ok(Some(Some(
                 notes
                     .into_iter()
                     .zip(reasons)
-                    .map(|(note, reasons)| RelatedNote {
-                        score: scores[&note.id],
-                        note,
-                        reasons,
-                    })
+                    .map(|(note, reasons)| RelatedNote { score: scores[&note.id], note, reasons })
                     .collect::<Vec<_>>(),
             )))
         })?;
@@ -643,10 +549,7 @@ mod tests {
             let row = index.rows[id];
             let mut expected = v.to_vec();
             crate::embed::normalize(&mut expected);
-            let stored: Vec<f32> = index.vectors[row * 3..row * 3 + 3]
-                .iter()
-                .map(|&q| f32::from(q) * index.scales[row])
-                .collect();
+            let stored: Vec<f32> = index.vectors[row * 3..row * 3 + 3].iter().map(|&q| f32::from(q) * index.scales[row]).collect();
             for (s, e) in stored.iter().zip(&expected) {
                 assert!((s - e).abs() < 0.005, "{stored:?} vs {expected:?}");
             }
@@ -656,16 +559,8 @@ mod tests {
 
     #[test]
     fn upsert_replaces_and_skips_vectors_of_the_wrong_length() {
-        let mut index = index(&[
-            (1, [1.0, 0.0, 0.0]),
-            (2, [0.0, 1.0, 0.0]),
-            (3, [0.0, 0.0, 1.0]),
-        ]);
-        assert_eq!(
-            index.nearest(1, 1),
-            Some(vec![2]),
-            "a tie goes to the earlier row"
-        );
+        let mut index = index(&[(1, [1.0, 0.0, 0.0]), (2, [0.0, 1.0, 0.0]), (3, [0.0, 0.0, 1.0])]);
+        assert_eq!(index.nearest(1, 1), Some(vec![2]), "a tie goes to the earlier row");
         index.upsert(3, [0; 32], &[1.0, 0.1, 0.0]);
         index.upsert(4, [0; 32], &[1.0, 0.0]);
         assert_eq!(index.len(), 3);
@@ -703,11 +598,7 @@ mod tests {
             .enumerate()
             .map(|(i, n)| {
                 let mut v: Vec<f32> = if i % 2 == 0 {
-                    centres[i % 20]
-                        .iter()
-                        .zip(n)
-                        .map(|(c, x)| c + 0.6 * x)
-                        .collect()
+                    centres[i % 20].iter().zip(n).map(|(c, x)| c + 0.6 * x).collect()
                 } else {
                     n.clone()
                 };
@@ -722,11 +613,7 @@ mod tests {
         let stored: Vec<StoredVector> = vectors
             .iter()
             .enumerate()
-            .map(|(i, v)| StoredVector {
-                id: i as i64,
-                hash: [0; 32],
-                vector: Zeroizing::new(v.clone()),
-            })
+            .map(|(i, v)| StoredVector { id: i as i64, hash: [0; 32], vector: Zeroizing::new(v.clone()) })
             .collect();
         for query in (0..N).step_by(N / 40) {
             let exact: Vec<(f32, i64)> = {
@@ -739,19 +626,13 @@ mod tests {
             };
             let candidates = index.nearest(query as i64, CANDIDATES).unwrap();
             assert_eq!(candidates.len(), CANDIDATES);
-            let found: Vec<i64> = rerank(&vectors[query], &candidates, &stored, 10)
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect();
+            let found: Vec<i64> = rerank(&vectors[query], &candidates, &stored, 10).into_iter().map(|(id, _)| id).collect();
             // The same ten, in the same order; a different note only where it ties
             // (within float rounding) with the exact one at that place.
             for (place, (&got, &(score, want))) in found.iter().zip(&exact[..10]).enumerate() {
                 if got != want {
                     let got_score = dot(&vectors[query], &vectors[got as usize]);
-                    assert!(
-                        (got_score - score).abs() < 1e-6,
-                        "query {query}, place {place}: {got} instead of {want}"
-                    );
+                    assert!((got_score - score).abs() < 1e-6, "query {query}, place {place}: {got} instead of {want}");
                 }
             }
         }
@@ -771,12 +652,7 @@ mod tests {
         let q = &index.vectors[5 * 16..6 * 16];
         let mut all: Vec<(f32, usize)> = (0..n)
             .filter(|&i| i != 5)
-            .map(|i| {
-                (
-                    idot(q, &index.vectors[i * 16..(i + 1) * 16]) as f32 * index.scales[i],
-                    i,
-                )
-            })
+            .map(|i| (idot(q, &index.vectors[i * 16..(i + 1) * 16]) as f32 * index.scales[i], i))
             .collect();
         all.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let single: Vec<i64> = all[..50].iter().map(|&(_, i)| i as i64).collect();

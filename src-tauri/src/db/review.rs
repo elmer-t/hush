@@ -70,9 +70,7 @@ impl Vault {
     /// Scores every live note with a vector of the ready model, reading the vectors from
     /// the vault in pages. In note id order.
     pub fn score_notes(&self, scorer: &TagScorer) -> Result<Vec<(i64, f32)>> {
-        let Some(model) = self.embedding_model_ready()? else {
-            return Ok(Vec::new());
-        };
+        let Some(model) = self.embedding_model_ready()? else { return Ok(Vec::new()) };
         let mut scores = Vec::new();
         let mut after = 0;
         loop {
@@ -86,12 +84,7 @@ impl Vault {
     }
 
     /// One tag's suggestions across the vault, scored from the vectors in the vault.
-    pub fn suggestion_review(
-        &self,
-        tag: &str,
-        order: ReviewOrder,
-        limit: usize,
-    ) -> Result<SuggestionReview> {
+    pub fn suggestion_review(&self, tag: &str, order: ReviewOrder, limit: usize) -> Result<SuggestionReview> {
         let scorer = self.tag_scorer(tag)?;
         let scores = match &scorer {
             Some(s) => self.score_notes(s)?,
@@ -113,14 +106,7 @@ impl Vault {
         limit: usize,
     ) -> Result<SuggestionReview> {
         let Some(scorer) = scorer else {
-            return Ok(SuggestionReview {
-                tag: tag.to_string(),
-                method: None,
-                min_score: 0.0,
-                order,
-                total: 0,
-                notes: Vec::new(),
-            });
+            return Ok(SuggestionReview { tag: tag.to_string(), method: None, min_score: 0.0, order, total: 0, notes: Vec::new() });
         };
         let mut excluded: HashSet<i64> = HashSet::new();
         {
@@ -134,43 +120,22 @@ impl Vault {
             }
         }
         let min_score = review_min_score(scorer);
-        let mut listed: Vec<(i64, f32)> = scores
-            .iter()
-            .copied()
-            .filter(|(id, s)| *s >= min_score && !excluded.contains(id))
-            .collect();
+        let mut listed: Vec<(i64, f32)> =
+            scores.iter().copied().filter(|(id, s)| *s >= min_score && !excluded.contains(id)).collect();
         sort_review(&mut listed, order, doubt_point(scorer));
         let total = listed.len();
         listed.truncate(limit);
 
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL",
-        )?;
+        let mut stmt = self.conn.prepare_cached("SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
         let mut notes = Vec::with_capacity(listed.len());
         for (id, score) in listed {
-            let row: Option<(String, String, Zeroizing<String>)> = stmt
-                .query_row([id], |r| {
-                    Ok((r.get(0)?, r.get(1)?, Zeroizing::new(r.get(2)?)))
-                })
-                .optional()?;
+            let row: Option<(String, String, Zeroizing<String>)> =
+                stmt.query_row([id], |r| Ok((r.get(0)?, r.get(1)?, Zeroizing::new(r.get(2)?)))).optional()?;
             if let Some((folder, title, body)) = row {
-                notes.push(ReviewNote {
-                    id,
-                    folder,
-                    title,
-                    excerpt: excerpt(&body),
-                    score,
-                });
+                notes.push(ReviewNote { id, folder, title, excerpt: excerpt(&body), score });
             }
         }
-        Ok(SuggestionReview {
-            tag: tag.to_string(),
-            method: Some(scorer.method),
-            min_score,
-            order,
-            total,
-            notes,
-        })
+        Ok(SuggestionReview { tag: tag.to_string(), method: Some(scorer.method), min_score, order, total, notes })
     }
 
     /// Accepts a tag on several notes at once: the bulk *Add tag* edit (as
@@ -198,8 +163,7 @@ impl Vault {
         let tx = self.conn.transaction()?;
         let now = now_ms();
         {
-            let mut live =
-                tx.prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
+            let mut live = tx.prepare_cached("SELECT 1 FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
             for &id in ids {
                 if !live.exists([id])? {
                     return Err(Error::NoteNotFound);
@@ -244,11 +208,7 @@ pub fn sort_review(scores: &mut [(i64, f32)], order: ReviewOrder, doubt: f32) {
     match order {
         ReviewOrder::MostLikely => scores.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0))),
         ReviewOrder::NeedsReview => scores.sort_by(|a, b| {
-            (a.1 - doubt)
-                .abs()
-                .total_cmp(&(b.1 - doubt).abs())
-                .then(b.1.total_cmp(&a.1))
-                .then(a.0.cmp(&b.0))
+            (a.1 - doubt).abs().total_cmp(&(b.1 - doubt).abs()).then(b.1.total_cmp(&a.1)).then(a.0.cmp(&b.0))
         }),
     }
 }
@@ -285,10 +245,7 @@ mod tests {
 
     #[test]
     fn excerpts_skip_frontmatter_and_collapse_whitespace() {
-        assert_eq!(
-            excerpt("---\ntags: [a]\n---\n# Title\n\nSome   text\r\nhere"),
-            "# Title Some text here"
-        );
+        assert_eq!(excerpt("---\ntags: [a]\n---\n# Title\n\nSome   text\r\nhere"), "# Title Some text here");
         assert_eq!(excerpt(""), "");
         let long = "word ".repeat(100);
         let e = excerpt(&long);

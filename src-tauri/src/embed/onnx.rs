@@ -76,11 +76,8 @@ impl OnnxEmbedder {
         let tokenizer_bytes = read_verified(dir, &descriptor.tokenizer)?;
         let model_bytes = read_verified(dir, &descriptor.model)?;
 
-        let mut tokenizer =
-            Tokenizer::from_bytes(&tokenizer_bytes).map_err(|e| EmbedError::Load(e.to_string()))?;
-        tokenizer
-            .with_truncation(None)
-            .map_err(|e| EmbedError::Load(e.to_string()))?;
+        let mut tokenizer = Tokenizer::from_bytes(&tokenizer_bytes).map_err(|e| EmbedError::Load(e.to_string()))?;
+        tokenizer.with_truncation(None).map_err(|e| EmbedError::Load(e.to_string()))?;
         tokenizer.with_padding(None);
 
         fn load(e: impl std::fmt::Display) -> EmbedError {
@@ -141,41 +138,19 @@ impl OnnxEmbedder {
     /// special tokens and `prefix`.
     fn chunks(&self, text: &str, prefix: &str) -> Result<Vec<Encoding>, EmbedError> {
         let err = |e: tokenizers::Error| EmbedError::Inference(e.to_string());
-        let ids = self
-            .tokenizer
-            .encode(text, false)
-            .map_err(err)?
-            .get_ids()
-            .to_vec();
+        let ids = self.tokenizer.encode(text, false).map_err(err)?.get_ids().to_vec();
         let prefix = if prefix.is_empty() {
             Vec::new()
         } else {
-            self.tokenizer
-                .encode(prefix, false)
-                .map_err(err)?
-                .get_ids()
-                .to_vec()
+            self.tokenizer.encode(prefix, false).map_err(err)?.get_ids().to_vec()
         };
-        let special = self
-            .tokenizer
-            .get_post_processor()
-            .map_or(0, |p| p.added_tokens(false));
-        let window = self
-            .descriptor
-            .max_tokens
-            .saturating_sub(special + prefix.len())
-            .max(1);
+        let special = self.tokenizer.get_post_processor().map_or(0, |p| p.added_tokens(false));
+        let window = self.descriptor.max_tokens.saturating_sub(special + prefix.len()).max(1);
         ids.chunks(window)
             .take(MAX_CHUNKS)
             .map(|chunk| {
-                let tokens = prefix
-                    .iter()
-                    .chain(chunk)
-                    .map(|&id| Token::new(id, String::new(), (0, 0)))
-                    .collect();
-                self.tokenizer
-                    .post_process(Encoding::from_tokens(tokens, 0), None, true)
-                    .map_err(err)
+                let tokens = prefix.iter().chain(chunk).map(|&id| Token::new(id, String::new(), (0, 0))).collect();
+                self.tokenizer.post_process(Encoding::from_tokens(tokens, 0), None, true).map_err(err)
             })
             .collect()
     }
@@ -189,12 +164,8 @@ impl OnnxEmbedder {
         let mut mask = vec![0i64; rows * len];
         let mut types = vec![0i64; rows * len];
         for (r, chunk) in chunks.iter().enumerate() {
-            for (c, ((&id, &m), &t)) in chunk
-                .get_ids()
-                .iter()
-                .zip(chunk.get_attention_mask())
-                .zip(chunk.get_type_ids())
-                .enumerate()
+            for (c, ((&id, &m), &t)) in
+                chunk.get_ids().iter().zip(chunk.get_attention_mask()).zip(chunk.get_type_ids()).enumerate()
             {
                 ids[r * len + c] = i64::from(id);
                 mask[r * len + c] = i64::from(m);
@@ -203,22 +174,11 @@ impl OnnxEmbedder {
         }
         let shape = [rows as i64, len as i64];
         let mut inputs = vec![
-            (
-                "input_ids",
-                Tensor::from_array((shape, ids)).map_err(err)?.into_dyn(),
-            ),
-            (
-                "attention_mask",
-                Tensor::from_array((shape, mask.clone()))
-                    .map_err(err)?
-                    .into_dyn(),
-            ),
+            ("input_ids", Tensor::from_array((shape, ids)).map_err(err)?.into_dyn()),
+            ("attention_mask", Tensor::from_array((shape, mask.clone())).map_err(err)?.into_dyn()),
         ];
         if self.token_types {
-            inputs.push((
-                "token_type_ids",
-                Tensor::from_array((shape, types)).map_err(err)?.into_dyn(),
-            ));
+            inputs.push(("token_type_ids", Tensor::from_array((shape, types)).map_err(err)?.into_dyn()));
         }
 
         let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
@@ -238,9 +198,7 @@ impl OnnxEmbedder {
         };
         let dims = self.descriptor.dims;
         if out_shape.len() != 3 || out_shape[0] as usize != rows || out_shape[2] as usize != dims {
-            return Err(EmbedError::Inference(format!(
-                "unexpected model output shape {out_shape:?}"
-            )));
+            return Err(EmbedError::Inference(format!("unexpected model output shape {out_shape:?}")));
         }
         let seq = out_shape[1] as usize;
         let token = |r: usize, t: usize| &hidden[(r * seq + t) * dims..(r * seq + t + 1) * dims];
@@ -282,11 +240,7 @@ impl Embedder for OnnxEmbedder {
         self.embed_with(text, self.descriptor.query_prefix)
     }
 
-    fn embed_batch(
-        &self,
-        texts: &[&str],
-        stop: &dyn Fn() -> bool,
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
         self.batch_with(texts, self.descriptor.prefix, stop)
     }
 
@@ -319,10 +273,7 @@ impl Embedder for OnnxEmbedder {
 
 impl OnnxEmbedder {
     fn embed_with(&self, text: &str, prefix: &str) -> Result<Vec<f32>, EmbedError> {
-        Ok(self
-            .batch_with(&[text], prefix, &|| false)?
-            .pop()
-            .expect("one vector per text"))
+        Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
     }
 
     /// Embeds `texts`, asking `stop` before each model run. With an int8 model each text
@@ -414,13 +365,7 @@ fn directml(
 /// telemetry off.
 fn environment() -> Result<&'static Environment, EmbedError> {
     static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
-    ENV.get_or_init(|| {
-        ort::init()
-            .with_name("hush")
-            .with_telemetry(false)
-            .build()
-            .map_err(|e| e.to_string())
-    })
-    .as_ref()
-    .map_err(|e| EmbedError::Load(e.clone()))
+    ENV.get_or_init(|| ort::init().with_name("hush").with_telemetry(false).build().map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(|e| EmbedError::Load(e.clone()))
 }

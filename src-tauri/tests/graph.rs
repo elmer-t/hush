@@ -52,11 +52,7 @@ fn session() -> (TempDir, Session, u64) {
 fn index(session: &Session, generation: u64) {
     let source = Source(Arc::new(Controlled));
     for _ in 0..10 {
-        if job::pass(session, generation, &source, &mut |_| {})
-            .unwrap()
-            .stale
-            == 0
-        {
+        if job::pass(session, generation, &source, &mut |_| {}).unwrap().stale == 0 {
             return;
         }
     }
@@ -64,27 +60,17 @@ fn index(session: &Session, generation: u64) {
 }
 
 fn note(session: &Session, folder: &str, title: &str, body: &str) -> i64 {
-    session
-        .with_vault(|v| v.create_note(folder, title, body))
-        .unwrap()
+    session.with_vault(|v| v.create_note(folder, title, body)).unwrap()
 }
 
 fn labels(g: &Graph, kind: NodeKind) -> BTreeSet<String> {
-    g.nodes
-        .iter()
-        .filter(|n| n.kind == kind)
-        .map(|n| n.label.clone())
-        .collect()
+    g.nodes.iter().filter(|n| n.kind == kind).map(|n| n.label.clone()).collect()
 }
 
 /// Edges of `kind` as `source label -> target label`.
 fn edges(g: &Graph, kind: EdgeKind) -> BTreeSet<String> {
     let label = |key: &str| g.nodes.iter().find(|n| n.key == key).unwrap().label.clone();
-    g.edges
-        .iter()
-        .filter(|e| e.kind == kind)
-        .map(|e| format!("{} -> {}", label(&e.source), label(&e.target)))
-        .collect()
+    g.edges.iter().filter(|e| e.kind == kind).map(|e| format!("{} -> {}", label(&e.source), label(&e.target))).collect()
 }
 
 fn set(items: &[&str]) -> BTreeSet<String> {
@@ -120,10 +106,7 @@ fn local_graph_follows_links_both_ways_to_the_depth() {
 
     let g = graph::build(&session, &local(a, 2), &opts).unwrap();
     assert_eq!(labels(&g, NodeKind::Note), set(&["A", "B", "C", "E"]));
-    assert_eq!(
-        edges(&g, EdgeKind::Link),
-        set(&["A -> B", "B -> C", "E -> A"])
-    );
+    assert_eq!(edges(&g, EdgeKind::Link), set(&["A -> B", "B -> C", "E -> A"]));
 
     let g = graph::build(&session, &local(a, 3), &opts).unwrap();
     assert_eq!(labels(&g, NodeKind::Note), set(&["A", "B", "C", "D", "E"]));
@@ -134,10 +117,7 @@ fn local_graph_follows_links_both_ways_to_the_depth() {
 fn the_cap_keeps_the_closest_notes_and_says_so() {
     let (_dir, session, _) = session();
     let [a, ..] = chain(&session);
-    let opts = GraphOptions {
-        cap: 2,
-        ..Default::default()
-    };
+    let opts = GraphOptions { cap: 2, ..Default::default() };
     let g = graph::build(&session, &local(a, 3), &opts).unwrap();
     assert_eq!(g.nodes.len(), 2);
     assert!(g.capped);
@@ -151,17 +131,9 @@ fn tag_and_ghost_nodes_are_toggles() {
     let [a, ..] = chain(&session);
     let g = graph::build(&session, &local(a, 1), &GraphOptions::default()).unwrap();
     assert!(labels(&g, NodeKind::Tag).is_empty() && labels(&g, NodeKind::Ghost).is_empty());
-    assert_eq!(
-        g.nodes.iter().find(|n| n.label == "A").unwrap().tags,
-        ["x"],
-        "tags are there for colouring"
-    );
+    assert_eq!(g.nodes.iter().find(|n| n.label == "A").unwrap().tags, ["x"], "tags are there for colouring");
 
-    let opts = GraphOptions {
-        tags: true,
-        ghosts: true,
-        ..Default::default()
-    };
+    let opts = GraphOptions { tags: true, ghosts: true, ..Default::default() };
     let g = graph::build(&session, &local(a, 1), &opts).unwrap();
     assert_eq!(labels(&g, NodeKind::Tag), set(&["#x"]));
     assert_eq!(edges(&g, EdgeKind::Tag), set(&["A -> #x", "B -> #x"]));
@@ -180,64 +152,28 @@ fn global_graph_is_scoped_and_capped_by_link_count() {
     let nested = note(&session, "q", "Nested", "#t/sub");
     note(&session, "q", "Other", "#tx #T");
 
-    let folder = GraphScope::Global {
-        scope: GraphScopeNotes::Folder { folder: "p".into() },
-    };
+    let folder = GraphScope::Global { scope: GraphScopeNotes::Folder { folder: "p".into() } };
     let g = graph::build(&session, &folder, &GraphOptions::default()).unwrap();
-    assert_eq!(
-        labels(&g, NodeKind::Note),
-        set(&["Hub", "One", "Two", "Lonely"])
-    );
-    assert_eq!(
-        edges(&g, EdgeKind::Link),
-        set(&["One -> Hub", "One -> Two", "Two -> Hub"])
-    );
+    assert_eq!(labels(&g, NodeKind::Note), set(&["Hub", "One", "Two", "Lonely"]));
+    assert_eq!(edges(&g, EdgeKind::Link), set(&["One -> Hub", "One -> Two", "Two -> Hub"]));
     assert_eq!((g.total, g.capped), (4, false));
 
     // Hub: 3 links in; One: 2 out; Two: 1 out + 1 in; Lonely: none.
-    let g = graph::build(
-        &session,
-        &folder,
-        &GraphOptions {
-            cap: 3,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let g = graph::build(&session, &folder, &GraphOptions { cap: 3, ..Default::default() }).unwrap();
     assert_eq!(labels(&g, NodeKind::Note), set(&["Hub", "One", "Two"]));
     assert_eq!((g.total, g.capped), (4, true));
 
-    let tag = GraphScope::Global {
-        scope: GraphScopeNotes::Tag { tag: "t".into() },
-    };
+    let tag = GraphScope::Global { scope: GraphScopeNotes::Tag { tag: "t".into() } };
     let g = graph::build(&session, &tag, &GraphOptions::default()).unwrap();
-    assert_eq!(
-        labels(&g, NodeKind::Note),
-        set(&["Outside", "Nested"]),
-        "nested tags, case-sensitive"
-    );
+    assert_eq!(labels(&g, NodeKind::Note), set(&["Outside", "Nested"]), "nested tags, case-sensitive");
     assert!(g.edges.is_empty(), "Hub is outside the scope");
     session.with_vault(|v| v.trash_note(nested)).unwrap();
     let g = graph::build(&session, &tag, &GraphOptions::default()).unwrap();
-    assert_eq!(
-        labels(&g, NodeKind::Note),
-        set(&["Outside"]),
-        "trashed notes are left out"
-    );
+    assert_eq!(labels(&g, NodeKind::Note), set(&["Outside"]), "trashed notes are left out");
 
-    let search = SearchQuery {
-        text: "Hub".into(),
-        folder: Some("p".into()),
-        ..Default::default()
-    };
-    let g = graph::build(
-        &session,
-        &GraphScope::Global {
-            scope: GraphScopeNotes::Search { query: search },
-        },
-        &GraphOptions::default(),
-    )
-    .unwrap();
+    let search = SearchQuery { text: "Hub".into(), folder: Some("p".into()), ..Default::default() };
+    let g = graph::build(&session, &GraphScope::Global { scope: GraphScopeNotes::Search { query: search } }, &GraphOptions::default())
+        .unwrap();
     assert_eq!(labels(&g, NodeKind::Note), set(&["Hub", "One", "Two"]));
 }
 
@@ -249,53 +185,25 @@ fn meaning_edges_join_close_notes_above_the_threshold() {
     note(&session, "", "Far", "v 0 1 0");
     note(&session, "", "Linked", "v 0 0 1\n[[A]]");
 
-    let opts = GraphOptions {
-        meaning: true,
-        threshold: 0.5,
-        ..Default::default()
-    };
+    let opts = GraphOptions { meaning: true, threshold: 0.5, ..Default::default() };
     let g = graph::build(&session, &local(a, 1), &opts).unwrap();
     assert!(g.meaning_unavailable, "nothing indexed yet");
 
     index(&session, generation);
     let g = graph::build(&session, &local(a, 1), &opts).unwrap();
     assert!(!g.meaning_unavailable);
-    assert_eq!(
-        labels(&g, NodeKind::Note),
-        set(&["A", "Linked", "Near"]),
-        "Near joins through meaning"
-    );
+    assert_eq!(labels(&g, NodeKind::Note), set(&["A", "Linked", "Near"]), "Near joins through meaning");
     assert_eq!(edges(&g, EdgeKind::Meaning).len(), 1);
-    let edge = g
-        .edges
-        .iter()
-        .find(|e| e.kind == EdgeKind::Meaning)
-        .unwrap();
+    let edge = g.edges.iter().find(|e| e.kind == EdgeKind::Meaning).unwrap();
     let expected = 0.9 / (0.9f32 * 0.9 + 0.1 * 0.1).sqrt();
     assert!((edge.score.unwrap() - expected).abs() < 1e-5);
 
-    let all = GraphScope::Global {
-        scope: GraphScopeNotes::All,
-    };
-    let g = graph::build(
-        &session,
-        &all,
-        &GraphOptions {
-            meaning: true,
-            threshold: 0.0,
-            neighbours: 1,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let all = GraphScope::Global { scope: GraphScopeNotes::All };
+    let g = graph::build(&session, &all, &GraphOptions { meaning: true, threshold: 0.0, neighbours: 1, ..Default::default() })
+        .unwrap();
     // Each note's single closest other: A-Near, Near-A, Far-Near, Linked-(A, Near or Far at 0).
     assert!(edges(&g, EdgeKind::Meaning).len() >= 2);
-    assert!(
-        g.edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::Meaning)
-            .all(|e| e.score.unwrap() >= 0.0)
-    );
+    assert!(g.edges.iter().filter(|e| e.kind == EdgeKind::Meaning).all(|e| e.score.unwrap() >= 0.0));
 }
 
 /// The subgraph queries on a synthetic vault with links: `HUSH_GRAPH_NOTES` notes
@@ -305,10 +213,7 @@ fn meaning_edges_join_close_notes_above_the_threshold() {
 #[test]
 #[ignore]
 fn subgraph_queries_at_scale() {
-    let n: usize = std::env::var("HUSH_GRAPH_NOTES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
+    let n: usize = std::env::var("HUSH_GRAPH_NOTES").ok().and_then(|s| s.parse().ok()).unwrap_or(1_000_000);
     let (_dir, session, _) = session();
     let start = Instant::now();
     let bodies: Vec<(String, String, String)> = (0..n)
@@ -318,60 +223,30 @@ fn subgraph_queries_at_scale() {
             (
                 format!("f{}", i / 20),
                 format!("Note {i}"),
-                format!(
-                    "[[Note {hub}]] [[Note {}]] [[Note {}]] #t{}",
-                    (i + 1) % n,
-                    (i * 31) % n,
-                    i % 100
-                ),
+                format!("[[Note {hub}]] [[Note {}]] [[Note {}]] #t{}", (i + 1) % n, (i * 31) % n, i % 100),
             )
         })
         .collect();
     for chunk in bodies.chunks(5_000) {
         let notes: Vec<NewNote> = chunk
             .iter()
-            .map(|(f, t, b)| NewNote {
-                folder: f,
-                title: t,
-                body: b,
-                created_at: 0,
-                updated_at: 0,
-            })
+            .map(|(f, t, b)| NewNote { folder: f, title: t, body: b, created_at: 0, updated_at: 0 })
             .collect();
         session.with_vault(|v| v.import_notes(&notes)).unwrap();
     }
     println!("generated {n} notes in {:?}", start.elapsed());
 
     // "Note 0" is a hub; "Note 1" an ordinary note.
-    let hub = session
-        .with_vault(|v| v.search_ids(&SearchQuery::default(), 0, 1))
-        .unwrap()[0];
+    let hub = session.with_vault(|v| v.search_ids(&SearchQuery::default(), 0, 1)).unwrap()[0];
     let probe = hub + 1;
     for (name, scope) in [
         ("local depth 1", local(probe, 1)),
         ("local depth 2", local(probe, 2)),
         ("local depth 3", local(probe, 3)),
         ("local hub depth 1", local(hub, 1)),
-        (
-            "folder f1",
-            GraphScope::Global {
-                scope: GraphScopeNotes::Folder {
-                    folder: "f1".into(),
-                },
-            },
-        ),
-        (
-            "tag t7 (cap)",
-            GraphScope::Global {
-                scope: GraphScopeNotes::Tag { tag: "t7".into() },
-            },
-        ),
-        (
-            "whole vault (cap)",
-            GraphScope::Global {
-                scope: GraphScopeNotes::All,
-            },
-        ),
+        ("folder f1", GraphScope::Global { scope: GraphScopeNotes::Folder { folder: "f1".into() } }),
+        ("tag t7 (cap)", GraphScope::Global { scope: GraphScopeNotes::Tag { tag: "t7".into() } }),
+        ("whole vault (cap)", GraphScope::Global { scope: GraphScopeNotes::All }),
     ] {
         let start = Instant::now();
         let g = graph::build(&session, &scope, &GraphOptions::default()).unwrap();
@@ -396,22 +271,9 @@ fn meaning_edges_at_the_cap() {
     const DIMS: usize = 384;
     let (_dir, session, _) = session();
     let bodies: Vec<String> = (0..N).map(|i| format!("Note {i}")).collect();
-    let notes: Vec<NewNote> = bodies
-        .iter()
-        .map(|t| NewNote {
-            folder: "f",
-            title: t,
-            body: "",
-            created_at: 0,
-            updated_at: 0,
-        })
-        .collect();
-    let ids: Vec<i64> = session
-        .with_vault(|v| v.import_notes(&notes))
-        .unwrap()
-        .into_iter()
-        .map(|r| r.unwrap())
-        .collect();
+    let notes: Vec<NewNote> =
+        bodies.iter().map(|t| NewNote { folder: "f", title: t, body: "", created_at: 0, updated_at: 0 }).collect();
+    let ids: Vec<i64> = session.with_vault(|v| v.import_notes(&notes)).unwrap().into_iter().map(|r| r.unwrap()).collect();
     let mut seed = 0x2545_f491_4f6c_dd1du64;
     let vectors: Vec<(i64, [u8; 32], Vec<f32>)> = ids
         .iter()
@@ -434,26 +296,13 @@ fn meaning_edges_at_the_cap() {
             v.finish_embedding_model("ctl-384")
         })
         .unwrap();
-    let all = GraphScope::Global {
-        scope: GraphScopeNotes::All,
-    };
-    let opts = GraphOptions {
-        meaning: true,
-        threshold: 0.1,
-        ..Default::default()
-    };
+    let all = GraphScope::Global { scope: GraphScopeNotes::All };
+    let opts = GraphOptions { meaning: true, threshold: 0.1, ..Default::default() };
     for _ in 0..3 {
         let start = Instant::now();
         let g = graph::build(&session, &all, &opts).unwrap();
-        let meaning = g
-            .edges
-            .iter()
-            .filter(|e| e.kind == EdgeKind::Meaning)
-            .count();
-        println!(
-            "{N} notes x {DIMS} with meaning edges: {:?}, {meaning} meaning edges",
-            start.elapsed()
-        );
+        let meaning = g.edges.iter().filter(|e| e.kind == EdgeKind::Meaning).count();
+        println!("{N} notes x {DIMS} with meaning edges: {:?}, {meaning} meaning edges", start.elapsed());
         assert!(!g.meaning_unavailable);
     }
 }

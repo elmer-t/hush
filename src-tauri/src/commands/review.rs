@@ -23,21 +23,13 @@ pub fn review_tag_suggestions(
 /// Adds `tag` to the notes and records each as an accepted example, all or nothing. The
 /// frontend flushes the open note first and reloads it after, as for a bulk edit.
 #[tauri::command]
-pub fn accept_tag_suggestions(
-    session: State<'_, Session>,
-    tag: String,
-    ids: Vec<i64>,
-) -> Result<MetadataEditReport> {
+pub fn accept_tag_suggestions(session: State<'_, Session>, tag: String, ids: Vec<i64>) -> Result<MetadataEditReport> {
     Ok(session.with_vault(|v| v.accept_tag_suggestions(&ids, &tag))?)
 }
 
 /// Records `tag` as rejected on the notes, all or nothing; the notes don't change.
 #[tauri::command]
-pub fn reject_tag_suggestions(
-    session: State<'_, Session>,
-    tag: String,
-    ids: Vec<i64>,
-) -> Result<()> {
+pub fn reject_tag_suggestions(session: State<'_, Session>, tag: String, ids: Vec<i64>) -> Result<()> {
     Ok(session.with_vault(|v| v.reject_tag_suggestions(&ids, &tag))?)
 }
 
@@ -51,10 +43,7 @@ pub async fn retrain_tags(app: AppHandle) -> Result<bool> {
         return Err(SessionError::Locked.into());
     }
     let handle = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        job::pass(&handle.state::<Session>(), generation)
-    })
-    .await;
+    let result = tauri::async_runtime::spawn_blocking(move || job::pass(&handle.state::<Session>(), generation)).await;
     match result {
         Ok(Ok(pass)) => {
             let changed = !pass.trained.is_empty() || pass.dropped > 0;

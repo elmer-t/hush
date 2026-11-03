@@ -6,39 +6,10 @@ use super::formats::cp1252;
 
 /// Groups starting with these control words hold no readable text.
 const SKIPPED_DESTINATIONS: &[&str] = &[
-    "fonttbl",
-    "colortbl",
-    "stylesheet",
-    "info",
-    "pict",
-    "object",
-    "header",
-    "headerl",
-    "headerr",
-    "headerf",
-    "footer",
-    "footerl",
-    "footerr",
-    "footerf",
-    "fldinst",
-    "themedata",
-    "colorschememapping",
-    "latentstyles",
-    "datastore",
-    "xmlnstbl",
-    "listtable",
-    "listoverridetable",
-    "rsidtbl",
-    "generator",
-    "mmathpr",
-    "pgdsctbl",
-    "filetbl",
-    "revtbl",
-    "bkmkstart",
-    "bkmkend",
-    "operator",
-    "author",
-    "company",
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "header", "headerl", "headerr", "headerf",
+    "footer", "footerl", "footerr", "footerf", "fldinst", "themedata", "colorschememapping", "latentstyles",
+    "datastore", "xmlnstbl", "listtable", "listoverridetable", "rsidtbl", "generator", "mmathpr", "pgdsctbl",
+    "filetbl", "revtbl", "bkmkstart", "bkmkend", "operator", "author", "company",
 ];
 
 #[derive(Clone, Copy)]
@@ -125,8 +96,7 @@ pub fn to_text(rtf: &str) -> Option<String> {
                         "u" => {
                             if let Some(n) = n {
                                 let code = if n < 0 { n + 65536 } else { n } as u32;
-                                let ch =
-                                    char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER);
+                                let ch = char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER);
                                 emit(&mut out, &group, &mut 0, &ch.to_string());
                                 skip_chars = group.uc;
                             }
@@ -147,9 +117,7 @@ pub fn to_text(rtf: &str) -> Option<String> {
                         '~' => emit(&mut out, &group, &mut skip_chars, " "),
                         '_' => emit(&mut out, &group, &mut skip_chars, "-"),
                         '\n' | '\r' => emit(&mut out, &group, &mut 0, "\n\n"),
-                        '\\' | '{' | '}' => {
-                            emit(&mut out, &group, &mut skip_chars, &next.to_string())
-                        }
+                        '\\' | '{' | '}' => emit(&mut out, &group, &mut skip_chars, &next.to_string()),
                         _ => {} // optional hyphen and other symbols
                     }
                 }
@@ -163,10 +131,7 @@ pub fn to_text(rtf: &str) -> Option<String> {
         }
     }
 
-    let lines: Vec<&str> = out
-        .split('\n')
-        .map(|l| if l.trim().is_empty() { "" } else { l })
-        .collect();
+    let lines: Vec<&str> = out.split('\n').map(|l| if l.trim().is_empty() { "" } else { l }).collect();
     let mut text = lines.join("\n");
     while text.contains("\n\n\n") {
         text = text.replace("\n\n\n", "\n\n");

@@ -2,84 +2,40 @@ mod common;
 
 use std::time::Instant;
 
-use hush_lib::db::{
-    DEFAULT_TRASH_DAYS, Error, FolderContents, NewNote, Resolution, SearchQuery, TrashEntry, Vault,
-};
+use hush_lib::db::{DEFAULT_TRASH_DAYS, Error, FolderContents, NewNote, Resolution, SearchQuery, TrashEntry, Vault};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn titles(vault: &Vault, q: SearchQuery) -> Vec<String> {
-    vault
-        .search(&q)
-        .unwrap()
-        .into_iter()
-        .map(|h| h.note.title)
-        .collect()
+    vault.search(&q).unwrap().into_iter().map(|h| h.note.title).collect()
 }
 
 fn trashed(vault: &Vault) -> Vec<String> {
-    vault
-        .trashed_notes()
-        .unwrap()
-        .into_iter()
-        .map(|n| n.title)
-        .collect()
+    vault.trashed_notes().unwrap().into_iter().map(|n| n.title).collect()
 }
 
 #[test]
 fn trash_and_restore() {
     let (_dir, mut vault) = common::vault();
-    let id = vault
-        .create_note("journal", "Day", "---\ntopic: life\n---\nherons #bird")
-        .unwrap();
+    let id = vault.create_note("journal", "Day", "---\ntopic: life\n---\nherons #bird").unwrap();
     vault.trash_note(id).unwrap();
 
-    assert!(
-        matches!(vault.note(id), Err(Error::NoteNotFound)),
-        "a trashed note can't be opened"
-    );
-    assert!(matches!(
-        vault.update_body(id, "late save"),
-        Err(Error::NoteNotFound)
-    ));
-    assert!(matches!(
-        vault.rename_note(id, "", "Moved"),
-        Err(Error::NoteNotFound)
-    ));
-    assert!(
-        matches!(vault.trash_note(id), Err(Error::NoteNotFound)),
-        "already in the trash"
-    );
+    assert!(matches!(vault.note(id), Err(Error::NoteNotFound)), "a trashed note can't be opened");
+    assert!(matches!(vault.update_body(id, "late save"), Err(Error::NoteNotFound)));
+    assert!(matches!(vault.rename_note(id, "", "Moved"), Err(Error::NoteNotFound)));
+    assert!(matches!(vault.trash_note(id), Err(Error::NoteNotFound)), "already in the trash");
     let t = vault.trashed_notes().unwrap();
     assert_eq!(t.len(), 1);
-    assert_eq!(
-        (t[0].id, t[0].folder.as_str(), t[0].title.as_str()),
-        (id, "journal", "Day")
-    );
+    assert_eq!((t[0].id, t[0].folder.as_str(), t[0].title.as_str()), (id, "journal", "Day"));
     assert!(vault.folders().unwrap().is_empty());
 
     assert_eq!(vault.restore_note(id).unwrap(), "Day");
     let note = vault.note(id).unwrap();
-    assert_eq!(
-        (note.folder.as_str(), note.title.as_str()),
-        ("journal", "Day")
-    );
+    assert_eq!((note.folder.as_str(), note.title.as_str()), ("journal", "Day"));
     assert_eq!(note.tags, ["bird"], "tags are derived again");
-    assert_eq!(
-        titles(
-            &vault,
-            SearchQuery {
-                text: "herons".into(),
-                ..Default::default()
-            }
-        ),
-        ["Day"]
-    );
+    assert_eq!(titles(&vault, SearchQuery { text: "herons".into(), ..Default::default() }), ["Day"]);
     assert!(trashed(&vault).is_empty());
-    assert!(
-        matches!(vault.restore_note(id), Err(Error::NoteNotFound)),
-        "not in the trash"
-    );
+    assert!(matches!(vault.restore_note(id), Err(Error::NoteNotFound)), "not in the trash");
 }
 
 #[test]
@@ -97,21 +53,12 @@ fn trashed_note_is_hidden_from_search_filters_and_facets() {
     };
     assert_eq!(titles(&vault, SearchQuery::default()), ["Other"]);
     assert!(titles(&vault, q(|q| q.text = "herons".into())).is_empty());
-    assert!(
-        titles(&vault, q(|q| q.text = "Day".into())).is_empty(),
-        "titles too"
-    );
+    assert!(titles(&vault, q(|q| q.text = "Day".into())).is_empty(), "titles too");
     assert!(titles(&vault, q(|q| q.tags = vec!["bird".into()])).is_empty());
     assert!(titles(&vault, q(|q| q.topic = Some("life".into()))).is_empty());
     assert!(titles(&vault, q(|q| q.author = Some("Jan".into()))).is_empty());
     assert!(titles(&vault, q(|q| q.folder = Some("journal".into()))).is_empty());
-    assert!(
-        titles(
-            &vault,
-            q(|q| q.attributes = vec![("mood".into(), "calm".into())])
-        )
-        .is_empty()
-    );
+    assert!(titles(&vault, q(|q| q.attributes = vec![("mood".into(), "calm".into())])).is_empty());
     let facets = vault.facets().unwrap();
     assert!(facets.tags.is_empty() && facets.topics.is_empty() && facets.authors.is_empty());
     assert!(facets.attribute_keys.is_empty());
@@ -121,23 +68,12 @@ fn trashed_note_is_hidden_from_search_filters_and_facets() {
 fn trashed_note_is_hidden_from_links_and_backlinks() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("p", "Target", "").unwrap();
-    let source = vault
-        .create_note("", "Source", "[[Target]] and [[Other]]")
-        .unwrap();
+    let source = vault.create_note("", "Source", "[[Target]] and [[Other]]").unwrap();
     let other = vault.create_note("", "Other", "").unwrap();
 
     vault.trash_note(target).unwrap();
-    assert_eq!(
-        vault.resolve_link("Target").unwrap(),
-        Resolution::Missing,
-        "shows as unresolved"
-    );
-    let out: Vec<_> = vault
-        .outgoing_links(source)
-        .unwrap()
-        .into_iter()
-        .map(|l| l.resolution)
-        .collect();
+    assert_eq!(vault.resolve_link("Target").unwrap(), Resolution::Missing, "shows as unresolved");
+    let out: Vec<_> = vault.outgoing_links(source).unwrap().into_iter().map(|l| l.resolution).collect();
     assert_eq!(out, [Resolution::Unique(other), Resolution::Missing]);
 
     // A trashed note's own links are not backlinks.
@@ -146,10 +82,7 @@ fn trashed_note_is_hidden_from_links_and_backlinks() {
 
     vault.restore_note(source).unwrap();
     vault.restore_note(target).unwrap();
-    assert_eq!(
-        vault.resolve_link("Target").unwrap(),
-        Resolution::Unique(target)
-    );
+    assert_eq!(vault.resolve_link("Target").unwrap(), Resolution::Unique(target));
     assert_eq!(vault.backlinks(target).unwrap().len(), 1);
     assert_eq!(vault.backlinks(other).unwrap().len(), 1);
 }
@@ -180,10 +113,7 @@ fn restore_with_a_name_conflict() {
     assert_eq!(vault.restore_note(first).unwrap(), "Plan (restored 2)");
     assert_eq!(vault.note(first).unwrap().title, "Plan (restored 2)");
     assert_eq!(vault.note(first).unwrap().body, "first");
-    assert_eq!(
-        vault.restore_note(second).unwrap(),
-        "Plan (restored) (restored)"
-    );
+    assert_eq!(vault.restore_note(second).unwrap(), "Plan (restored) (restored)");
     assert_eq!(vault.note(taken).unwrap().title, "Plan");
 }
 
@@ -193,23 +123,12 @@ fn restore_preserves_links_like_create() {
     let trashed = vault.create_note("old", "Index", "").unwrap();
     vault.trash_note(trashed).unwrap();
     let live = vault.create_note("new", "Index", "").unwrap();
-    let source = vault
-        .create_note("", "Source", "see [[Index|the index]]")
-        .unwrap();
-    assert_eq!(
-        vault.resolve_link("Index").unwrap(),
-        Resolution::Unique(live)
-    );
+    let source = vault.create_note("", "Source", "see [[Index|the index]]").unwrap();
+    assert_eq!(vault.resolve_link("Index").unwrap(), Resolution::Unique(live));
 
     vault.restore_note(trashed).unwrap();
-    assert_eq!(
-        vault.note(source).unwrap().body,
-        "see [[new/Index|the index]]"
-    );
-    assert_eq!(
-        vault.resolve_link("new/Index").unwrap(),
-        Resolution::Unique(live)
-    );
+    assert_eq!(vault.note(source).unwrap().body, "see [[new/Index|the index]]");
+    assert_eq!(vault.resolve_link("new/Index").unwrap(), Resolution::Unique(live));
 }
 
 #[test]
@@ -252,22 +171,14 @@ fn auto_purge_after_the_retention_period() {
     let deleted_at = vault.trashed_notes().unwrap()[0].deleted_at;
 
     let days = i64::from(DEFAULT_TRASH_DAYS);
-    assert_eq!(
-        vault
-            .purge_trash_at(deleted_at + days * DAY_MS - 1)
-            .unwrap(),
-        0
-    );
+    assert_eq!(vault.purge_trash_at(deleted_at + days * DAY_MS - 1).unwrap(), 0);
     assert_eq!(trashed(&vault), ["Old"]);
     assert_eq!(vault.purge_trash_at(deleted_at + days * DAY_MS).unwrap(), 1);
     assert!(trashed(&vault).is_empty());
 
     vault.set_trash_days(2).unwrap();
     assert_eq!(vault.trash_days().unwrap(), 2);
-    assert!(matches!(
-        vault.set_trash_days(100_000),
-        Err(Error::InvalidTrashDays)
-    ));
+    assert!(matches!(vault.set_trash_days(100_000), Err(Error::InvalidTrashDays)));
     let id = vault.create_note("", "Newer", "").unwrap();
     vault.trash_note(id).unwrap();
     let deleted_at = vault.trashed_notes().unwrap()[0].deleted_at;
@@ -292,12 +203,7 @@ fn trashed_notes_are_left_out_of_folder_counts_and_the_tree() {
     vault.trash_note(id).unwrap();
     assert_eq!(vault.count_in_folder("OldVault").unwrap(), 1);
     assert_eq!(vault.count_in_folder("").unwrap(), 1);
-    let tree: Vec<i64> = vault
-        .folder_notes("OldVault/a", 0, 500)
-        .unwrap()
-        .iter()
-        .map(|n| n.id)
-        .collect();
+    let tree: Vec<i64> = vault.folder_notes("OldVault/a", 0, 500).unwrap().iter().map(|n| n.id).collect();
     assert_eq!(tree, [live]);
 }
 
@@ -312,10 +218,7 @@ fn entries(vault: &Vault) -> Vec<TrashEntry> {
 }
 
 fn group(vault: &Vault) -> i64 {
-    match entries(vault)
-        .into_iter()
-        .find(|e| matches!(e, TrashEntry::Folder { .. }))
-    {
+    match entries(vault).into_iter().find(|e| matches!(e, TrashEntry::Folder { .. })) {
         Some(TrashEntry::Folder { deleted_at, .. }) => deleted_at,
         _ => panic!("no folder entry"),
     }
@@ -326,35 +229,16 @@ fn trash_folder_takes_everything_below_it_and_nothing_beside_it() {
     let (_dir, mut vault) = common::vault();
     vault.create_note("Projects", "Top", "").unwrap();
     vault.create_note("Projects/a", "A", "").unwrap();
-    vault
-        .create_note("projects/A/deep/er/still", "Deep", "")
-        .unwrap();
+    vault.create_note("projects/A/deep/er/still", "Deep", "").unwrap();
     vault.create_note("Projectsx", "Beside", "").unwrap();
     vault.create_note("Projects-old", "Dash", "").unwrap();
-    vault
-        .create_note("Other/Projects", "Nested name", "")
-        .unwrap();
+    vault.create_note("Other/Projects", "Nested name", "").unwrap();
     vault.create_note("", "Root", "").unwrap();
 
-    assert_eq!(
-        vault.folder_contents("PROJECTS").unwrap(),
-        FolderContents {
-            notes: 3,
-            subfolders: 4
-        }
-    );
+    assert_eq!(vault.folder_contents("PROJECTS").unwrap(), FolderContents { notes: 3, subfolders: 4 });
     assert_eq!(vault.trash_folder("projects").unwrap(), 3);
-    assert_eq!(
-        live_titles(&vault),
-        ["Beside", "Dash", "Nested name", "Root"]
-    );
-    assert!(
-        !vault
-            .folders()
-            .unwrap()
-            .iter()
-            .any(|f| f.to_lowercase().starts_with("projects/") || f == "Projects")
-    );
+    assert_eq!(live_titles(&vault), ["Beside", "Dash", "Nested name", "Root"]);
+    assert!(!vault.folders().unwrap().iter().any(|f| f.to_lowercase().starts_with("projects/") || f == "Projects"));
     let e = entries(&vault);
     assert_eq!(e.len(), 1, "one entry for the folder: {e:?}");
     assert!(matches!(&e[0], TrashEntry::Folder { folder, notes: 3, .. } if folder == "projects"));
@@ -367,13 +251,7 @@ fn trash_folder_leaves_a_sibling_with_a_longer_name_alone() {
     vault.create_note("a/b", "In", "").unwrap();
     vault.create_note("a/b/c", "Below", "").unwrap();
     vault.create_note("a/bc", "Sibling", "").unwrap();
-    assert_eq!(
-        vault.folder_contents("a/b").unwrap(),
-        FolderContents {
-            notes: 2,
-            subfolders: 1
-        }
-    );
+    assert_eq!(vault.folder_contents("a/b").unwrap(), FolderContents { notes: 2, subfolders: 1 });
     assert_eq!(vault.trash_folder("a/b").unwrap(), 2);
     assert_eq!(live_titles(&vault), ["Sibling"]);
 }
@@ -382,9 +260,7 @@ fn trash_folder_leaves_a_sibling_with_a_longer_name_alone() {
 fn trash_folder_hides_tags_attributes_and_links() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("", "Target", "").unwrap();
-    vault
-        .create_note("f", "In", "---\nmood: calm\n---\n#bird [[Target]]")
-        .unwrap();
+    vault.create_note("f", "In", "---\nmood: calm\n---\n#bird [[Target]]").unwrap();
     vault.trash_folder("f").unwrap();
     assert!(vault.backlinks(target).unwrap().is_empty());
     let facets = vault.facets().unwrap();
@@ -395,27 +271,12 @@ fn trash_folder_hides_tags_attributes_and_links() {
 fn an_unknown_or_empty_folder_changes_nothing() {
     let (_dir, mut vault) = common::vault();
     vault.create_note("a", "A", "").unwrap();
-    assert_eq!(
-        vault.folder_contents("nope").unwrap(),
-        FolderContents {
-            notes: 0,
-            subfolders: 0
-        }
-    );
+    assert_eq!(vault.folder_contents("nope").unwrap(), FolderContents { notes: 0, subfolders: 0 });
     assert_eq!(vault.trash_folder("nope").unwrap(), 0);
     assert!(entries(&vault).is_empty());
-    assert!(matches!(
-        vault.trash_folder(""),
-        Err(Error::InvalidFolder(_))
-    ));
-    assert!(matches!(
-        vault.trash_folder("/"),
-        Err(Error::InvalidFolder(_))
-    ));
-    assert!(matches!(
-        vault.folder_contents(""),
-        Err(Error::InvalidFolder(_))
-    ));
+    assert!(matches!(vault.trash_folder(""), Err(Error::InvalidFolder(_))));
+    assert!(matches!(vault.trash_folder("/"), Err(Error::InvalidFolder(_))));
+    assert!(matches!(vault.folder_contents(""), Err(Error::InvalidFolder(_))));
     assert_eq!(live_titles(&vault), ["A"]);
 }
 
@@ -428,18 +289,11 @@ fn notes_already_in_the_trash_stay_separate_entries() {
     vault.trash_folder("f").unwrap();
     let e = entries(&vault);
     assert_eq!(e.len(), 2);
-    assert!(
-        matches!(&e[0], TrashEntry::Folder { notes: 1, .. }),
-        "newest first: {e:?}"
-    );
+    assert!(matches!(&e[0], TrashEntry::Folder { notes: 1, .. }), "newest first: {e:?}");
     assert!(matches!(&e[1], TrashEntry::Note(n) if n.id == early));
 
     vault.restore_folder(group(&vault)).unwrap();
-    assert_eq!(
-        live_titles(&vault),
-        ["Live"],
-        "the earlier note stays in the trash"
-    );
+    assert_eq!(live_titles(&vault), ["Live"], "the earlier note stays in the trash");
     assert_eq!(trashed(&vault), ["Early"]);
 }
 
@@ -451,10 +305,7 @@ fn restore_folder_brings_the_whole_group_back() {
     vault.trash_folder("p").unwrap();
     assert_eq!(vault.restore_folder(group(&vault)).unwrap(), 2);
     assert!(entries(&vault).is_empty());
-    assert_eq!(
-        (vault.note(a).unwrap().folder, vault.note(b).unwrap().folder),
-        ("p".into(), "p/q".into())
-    );
+    assert_eq!((vault.note(a).unwrap().folder, vault.note(b).unwrap().folder), ("p".into(), "p/q".into()));
     assert_eq!(vault.note(a).unwrap().tags, ["bird"], "derived again");
     assert_eq!(vault.backlinks(a).unwrap().len(), 1);
     assert!(matches!(vault.restore_folder(1), Err(Error::NoteNotFound)));
@@ -475,10 +326,7 @@ fn restore_folder_renames_clashing_notes() {
     assert_eq!(vault.note(other).unwrap().title, "Other");
     assert_eq!(vault.note(taken).unwrap().title, "plan");
     // The link meant the live note; it still does.
-    assert_eq!(
-        vault.resolve_link("Plan").unwrap(),
-        Resolution::Unique(taken)
-    );
+    assert_eq!(vault.resolve_link("Plan").unwrap(), Resolution::Unique(taken));
     assert_eq!(vault.note(source).unwrap().body, "see [[Plan]]");
 }
 
@@ -488,18 +336,10 @@ fn restore_folder_preserves_links_like_create() {
     vault.create_note("old", "Index", "").unwrap();
     vault.trash_folder("old").unwrap();
     let live = vault.create_note("new", "Index", "").unwrap();
-    let source = vault
-        .create_note("", "Source", "see [[Index|the index]]")
-        .unwrap();
+    let source = vault.create_note("", "Source", "see [[Index|the index]]").unwrap();
     vault.restore_folder(group(&vault)).unwrap();
-    assert_eq!(
-        vault.note(source).unwrap().body,
-        "see [[new/Index|the index]]"
-    );
-    assert_eq!(
-        vault.resolve_link("new/Index").unwrap(),
-        Resolution::Unique(live)
-    );
+    assert_eq!(vault.note(source).unwrap().body, "see [[new/Index|the index]]");
+    assert_eq!(vault.resolve_link("new/Index").unwrap(), Resolution::Unique(live));
 }
 
 #[test]
@@ -557,17 +397,7 @@ fn trash_entries_are_paged() {
     let rest = vault.trash_entries(4, 4).unwrap();
     assert_eq!((first.len(), rest.len()), (4, 2));
     assert!(matches!(first[0], TrashEntry::Folder { .. }));
-    let ids: Vec<i64> = first
-        .iter()
-        .chain(&rest)
-        .filter_map(|e| {
-            if let TrashEntry::Note(n) = e {
-                Some(n.id)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let ids: Vec<i64> = first.iter().chain(&rest).filter_map(|e| if let TrashEntry::Note(n) = e { Some(n.id) } else { None }).collect();
     let mut sorted = ids.clone();
     sorted.sort_unstable_by(|a, b| b.cmp(a));
     assert_eq!(ids, sorted, "newest first");
@@ -587,36 +417,16 @@ fn folder_of_100k_notes_timings() {
     let notes: Vec<(String, String, String)> = (0..NOTES)
         .map(|i| {
             let folder = format!("Big/{}/{}", i % 50, i % 7);
-            (
-                folder,
-                format!("Note {i}"),
-                format!("note {i} #t{} [[Note {}]] text", i % 20, (i + 1) % NOTES),
-            )
+            (folder, format!("Note {i}"), format!("note {i} #t{} [[Note {}]] text", i % 20, (i + 1) % NOTES))
         })
         .collect();
     for chunk in notes.chunks(5_000) {
-        let batch: Vec<NewNote> = chunk
-            .iter()
-            .map(|(f, t, b)| NewNote {
-                folder: f,
-                title: t,
-                body: b,
-                created_at: 1,
-                updated_at: 1,
-            })
-            .collect();
+        let batch: Vec<NewNote> =
+            chunk.iter().map(|(f, t, b)| NewNote { folder: f, title: t, body: b, created_at: 1, updated_at: 1 }).collect();
         vault.import_notes(&batch).unwrap();
     }
     for i in 0..10_000 {
-        vault
-            .import_notes(&[NewNote {
-                folder: &format!("Other/{}", i % 100),
-                title: &format!("O{i}"),
-                body: "x",
-                created_at: 1,
-                updated_at: 1,
-            }])
-            .unwrap();
+        vault.import_notes(&[NewNote { folder: &format!("Other/{}", i % 100), title: &format!("O{i}"), body: "x", created_at: 1, updated_at: 1 }]).unwrap();
     }
 
     let t = Instant::now();
@@ -633,8 +443,5 @@ fn folder_of_100k_notes_timings() {
     let t = Instant::now();
     assert_eq!(vault.restore_folder(group(&vault)).unwrap(), NOTES);
     let restore = t.elapsed();
-    println!(
-        "100k-note folder: count {count:?} ({} subfolders), trash {trash:?}, trash list page {list:?}, restore {restore:?}",
-        contents.subfolders
-    );
+    println!("100k-note folder: count {count:?} ({} subfolders), trash {trash:?}, trash list page {list:?}, restore {restore:?}", contents.subfolders);
 }

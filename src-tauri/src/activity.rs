@@ -43,15 +43,8 @@ pub enum Job {
 }
 
 impl Job {
-    pub const ALL: [Job; 7] = [
-        Job::Embedding,
-        Job::Related,
-        Job::Training,
-        Job::SafetyNet,
-        Job::Import,
-        Job::Discover,
-        Job::Migration,
-    ];
+    pub const ALL: [Job; 7] =
+        [Job::Embedding, Job::Related, Job::Training, Job::SafetyNet, Job::Import, Job::Discover, Job::Migration];
 
     fn index(self) -> usize {
         Self::ALL.iter().position(|j| *j == self).unwrap_or(0)
@@ -193,12 +186,7 @@ impl Rate {
             self.samples.clear();
         }
         self.samples.push_back((now, done));
-        while self.samples.len() > 2
-            && self
-                .samples
-                .get(1)
-                .is_some_and(|s| now.duration_since(s.0) >= RATE_WINDOW)
-        {
+        while self.samples.len() > 2 && self.samples.get(1).is_some_and(|s| now.duration_since(s.0) >= RATE_WINDOW) {
             self.samples.pop_front();
         }
         let &(start, from) = self.samples.front()?;
@@ -252,13 +240,7 @@ impl Inner {
             old.message.zeroize();
         }
         self.seq += 1;
-        self.log.push_back(LogEntry {
-            seq: self.seq,
-            at: now_ms(),
-            job,
-            error,
-            message,
-        });
+        self.log.push_back(LogEntry { seq: self.seq, at: now_ms(), job, error, message });
     }
 
     fn wipe(&mut self) {
@@ -277,12 +259,7 @@ impl Inner {
         }
         // Revisions keep growing across locks, so the emitter sends the cleared state.
         let revision = self.revision + 1;
-        *self = Self {
-            generation: self.generation,
-            revision,
-            seq: self.seq,
-            ..Self::default()
-        };
+        *self = Self { generation: self.generation, revision, seq: self.seq, ..Self::default() };
     }
 }
 
@@ -302,10 +279,7 @@ impl Activity {
     /// has cleared the activity, so a job outliving its vault can't report into the
     /// next one, or into the locked app.
     pub fn reporter(&self, generation: u64) -> Reporter<'_> {
-        Reporter {
-            activity: self,
-            generation,
-        }
+        Reporter { activity: self, generation }
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -331,12 +305,7 @@ impl Activity {
     /// `interval`: changes made meanwhile go out together in the next one, and the last
     /// change always goes out. Returns once `stop` says so (checked at least once per
     /// `interval`).
-    pub fn run_emitter(
-        &self,
-        interval: Duration,
-        stop: impl Fn() -> bool,
-        mut send: impl FnMut(Snapshot),
-    ) {
+    pub fn run_emitter(&self, interval: Duration, stop: impl Fn() -> bool, mut send: impl FnMut(Snapshot)) {
         let mut sent = self.lock().revision;
         let mut last_send: Option<Instant> = None;
         loop {
@@ -346,11 +315,7 @@ impl Activity {
                     if stop() {
                         return;
                     }
-                    inner = self
-                        .changed
-                        .wait_timeout(inner, interval)
-                        .unwrap_or_else(|e| e.into_inner())
-                        .0;
+                    inner = self.changed.wait_timeout(inner, interval).unwrap_or_else(|e| e.into_inner()).0;
                 }
             }
             if let Some(at) = last_send {
@@ -392,56 +357,48 @@ impl Reporter<'_> {
     /// Starts a run of `job`: running, with no progress yet.
     pub fn start(&self, job: Job, doing: impl Into<String>) {
         let doing = doing.into();
-        self.change(
-            |_| true,
-            |inner| {
-                let i = job.index();
-                inner.started[i] = Some(Instant::now());
-                inner.rates[i] = Rate::default();
-                let s = &mut inner.jobs[i];
-                s.state = State::Running;
-                s.doing = Some(doing);
-                s.reason = None;
-                s.done = None;
-                s.total = None;
-                s.rate = None;
-                s.eta_secs = None;
-                s.started_at = Some(now_ms());
-            },
-        );
+        self.change(|_| true, |inner| {
+            let i = job.index();
+            inner.started[i] = Some(Instant::now());
+            inner.rates[i] = Rate::default();
+            let s = &mut inner.jobs[i];
+            s.state = State::Running;
+            s.doing = Some(doing);
+            s.reason = None;
+            s.done = None;
+            s.total = None;
+            s.rate = None;
+            s.eta_secs = None;
+            s.started_at = Some(now_ms());
+        });
     }
 
     /// Progress of the running `job` (started if it wasn't): `done` of `total` (or of an
     /// unknown number), with the rate and time left worked out from the last minute.
     pub fn progress(&self, job: Job, doing: impl Into<String>, done: u64, total: Option<u64>) {
         let doing = doing.into();
-        self.change(
-            |_| true,
-            |inner| {
-                let i = job.index();
-                let now = Instant::now();
-                if inner.started[i].is_none() {
-                    inner.started[i] = Some(now);
-                    inner.rates[i] = Rate::default();
-                    inner.jobs[i].started_at = Some(now_ms());
-                }
-                let rate = inner.rates[i].update(now, done);
-                let s = &mut inner.jobs[i];
-                s.state = State::Running;
-                s.doing = Some(doing);
-                s.reason = None;
-                s.done = Some(done);
-                s.total = total;
-                s.rate = rate;
-                s.eta_secs = match (rate, total) {
-                    (_, Some(t)) if done >= t => Some(0),
-                    (Some(r), Some(t)) if r > 0.0 => {
-                        Some((t.saturating_sub(done) as f64 / r).ceil() as u64)
-                    }
-                    _ => None,
-                };
-            },
-        );
+        self.change(|_| true, |inner| {
+            let i = job.index();
+            let now = Instant::now();
+            if inner.started[i].is_none() {
+                inner.started[i] = Some(now);
+                inner.rates[i] = Rate::default();
+                inner.jobs[i].started_at = Some(now_ms());
+            }
+            let rate = inner.rates[i].update(now, done);
+            let s = &mut inner.jobs[i];
+            s.state = State::Running;
+            s.doing = Some(doing);
+            s.reason = None;
+            s.done = Some(done);
+            s.total = total;
+            s.rate = rate;
+            s.eta_secs = match (rate, total) {
+                (_, Some(t)) if done >= t => Some(0),
+                (Some(r), Some(t)) if r > 0.0 => Some((t.saturating_sub(done) as f64 / r).ceil() as u64),
+                _ => None,
+            };
+        });
     }
 
     /// Ends the run of `job`: idle, with `summary` as its last run and in the log.
@@ -463,74 +420,44 @@ impl Reporter<'_> {
     /// Ends the run of `job` as failed; `message` names no note content.
     pub fn fail(&self, job: Job, message: impl Into<String>) {
         let message = message.into();
-        self.end(
-            job,
-            State::Failed,
-            Some(message.clone()),
-            format!("failed: {message}"),
-            Some(true),
-        );
+        self.end(job, State::Failed, Some(message.clone()), format!("failed: {message}"), Some(true));
     }
 
     /// `log`: whether to log it, and as an error or not.
-    fn end(
-        &self,
-        job: Job,
-        state: State,
-        reason: Option<String>,
-        summary: String,
-        log: Option<bool>,
-    ) {
-        self.change(
-            |_| true,
-            |inner| {
-                let i = job.index();
-                let duration = inner.started[i]
-                    .take()
-                    .map(|t| t.elapsed())
-                    .unwrap_or_default();
-                let s = &mut inner.jobs[i];
-                s.state = state;
-                s.reason = reason;
-                s.doing = None;
-                s.rate = None;
-                s.eta_secs = None;
-                s.started_at = None;
-                s.last_run = Some(LastRun {
-                    finished_at: now_ms(),
-                    duration_ms: duration.as_millis() as u64,
-                    summary: summary.clone(),
-                });
-                if let Some(error) = log {
-                    inner.push_log(
-                        job,
-                        error,
-                        format!("{summary} ({})", duration_text(duration)),
-                    );
-                }
-            },
-        );
+    fn end(&self, job: Job, state: State, reason: Option<String>, summary: String, log: Option<bool>) {
+        self.change(|_| true, |inner| {
+            let i = job.index();
+            let duration = inner.started[i].take().map(|t| t.elapsed()).unwrap_or_default();
+            let s = &mut inner.jobs[i];
+            s.state = state;
+            s.reason = reason;
+            s.doing = None;
+            s.rate = None;
+            s.eta_secs = None;
+            s.started_at = None;
+            s.last_run = Some(LastRun {
+                finished_at: now_ms(),
+                duration_ms: duration.as_millis() as u64,
+                summary: summary.clone(),
+            });
+            if let Some(error) = log {
+                inner.push_log(job, error, format!("{summary} ({})", duration_text(duration)));
+            }
+        });
     }
 
     /// Records a run that ended before reports could be taken (a migration runs while
     /// the vault opens): its last run, and a log entry.
     pub fn record(&self, job: Job, duration: Duration, summary: impl Into<String>) {
         let summary = summary.into();
-        self.change(
-            |_| true,
-            |inner| {
-                inner.jobs[job.index()].last_run = Some(LastRun {
-                    finished_at: now_ms(),
-                    duration_ms: duration.as_millis() as u64,
-                    summary: summary.clone(),
-                });
-                inner.push_log(
-                    job,
-                    false,
-                    format!("{summary} ({})", duration_text(duration)),
-                );
-            },
-        );
+        self.change(|_| true, |inner| {
+            inner.jobs[job.index()].last_run = Some(LastRun {
+                finished_at: now_ms(),
+                duration_ms: duration.as_millis() as u64,
+                summary: summary.clone(),
+            });
+            inner.push_log(job, false, format!("{summary} ({})", duration_text(duration)));
+        });
     }
 
     /// `job` holds off for `reason`. A run in progress keeps its start, so its duration
@@ -648,11 +575,7 @@ mod tests {
         }
         let log = a.snapshot().log;
         assert_eq!(log.len(), LOG_CAPACITY);
-        assert_eq!(
-            log[0].message,
-            format!("entry {}", LOG_CAPACITY + 119),
-            "newest first"
-        );
+        assert_eq!(log[0].message, format!("entry {}", LOG_CAPACITY + 119), "newest first");
         assert_eq!(log[LOG_CAPACITY - 1].message, "entry 120");
         assert!(log.windows(2).all(|w| w[0].seq == w[1].seq + 1));
     }
@@ -673,8 +596,7 @@ mod tests {
     #[test]
     fn clear_forgets_everything() {
         let a = Activity::default();
-        a.reporter(0)
-            .progress(Job::Training, "training head journal", 1, Some(3));
+        a.reporter(0).progress(Job::Training, "training head journal", 1, Some(3));
         a.reporter(0).log(Job::Training, "head journal trained");
         a.reporter(0).stats(|s| s.notes = Some(10));
         let before = a.snapshot().revision;
@@ -683,11 +605,7 @@ mod tests {
         assert!(s.revision > before, "a clear is a change, so it is sent");
         assert!(s.log.is_empty());
         assert_eq!(s.stats, Stats::default());
-        assert!(
-            s.jobs
-                .iter()
-                .all(|j| j.state == State::Idle && j.doing.is_none() && j.last_run.is_none())
-        );
+        assert!(s.jobs.iter().all(|j| j.state == State::Idle && j.doing.is_none() && j.last_run.is_none()));
     }
 
     #[test]
@@ -695,17 +613,12 @@ mod tests {
         let a = Activity::default();
         a.reporter(0).start(Job::Discover, "grouping notes");
         assert_eq!(a.status(Job::Discover).state, State::Running);
-        a.reporter(0)
-            .finish(Job::Discover, "12 groups from 400 notes");
+        a.reporter(0).finish(Job::Discover, "12 groups from 400 notes");
         let s = a.status(Job::Discover);
         assert_eq!(s.state, State::Idle);
         assert_eq!(s.doing, None);
         assert_eq!(s.last_run.unwrap().summary, "12 groups from 400 notes");
-        assert!(
-            a.snapshot().log[0]
-                .message
-                .starts_with("12 groups from 400 notes (")
-        );
+        assert!(a.snapshot().log[0].message.starts_with("12 groups from 400 notes ("));
 
         a.reporter(0).fail(Job::Import, "could not read the folder");
         let s = a.status(Job::Import);
@@ -722,8 +635,7 @@ mod tests {
         a.reporter(0).wait(Job::Training, "import running");
         a.reporter(0).idle(Job::Embedding, None);
         assert_eq!(a.snapshot().revision, r);
-        a.reporter(0)
-            .wait(Job::Training, "vault changed, waiting for 30 s of quiet");
+        a.reporter(0).wait(Job::Training, "vault changed, waiting for 30 s of quiet");
         assert_eq!(a.snapshot().revision, r + 1);
     }
 
@@ -733,11 +645,7 @@ mod tests {
         let at = |s: u64| start + Duration::from_secs(s);
         let mut rate = Rate::default();
         assert_eq!(rate.update(at(0), 0), None);
-        assert_eq!(
-            rate.update(at(2), 20),
-            None,
-            "under five seconds of progress"
-        );
+        assert_eq!(rate.update(at(2), 20), None, "under five seconds of progress");
         assert_eq!(rate.update(at(10), 100), Some(10.0));
         // Progress started again (a new pass): the old samples don't count.
         assert_eq!(rate.update(at(11), 5), None);
@@ -754,24 +662,18 @@ mod tests {
         let emitter = {
             let (a, stop, sent) = (a.clone(), stop.clone(), sent.clone());
             std::thread::spawn(move || {
-                a.run_emitter(
-                    interval,
-                    || stop.load(Ordering::SeqCst),
-                    |s| {
-                        sent.lock().unwrap().push((Instant::now(), s));
-                    },
-                )
+                a.run_emitter(interval, || stop.load(Ordering::SeqCst), |s| {
+                    sent.lock().unwrap().push((Instant::now(), s));
+                })
             })
         };
 
         let started = Instant::now();
         let total = 20_000;
         for done in 1..=total {
-            a.reporter(0)
-                .progress(Job::Embedding, "embedding", done, Some(total));
+            a.reporter(0).progress(Job::Embedding, "embedding", done, Some(total));
         }
-        a.reporter(0)
-            .finish(Job::Embedding, "embedded 20,000 notes");
+        a.reporter(0).finish(Job::Embedding, "embedded 20,000 notes");
         let elapsed = started.elapsed();
         // Give the emitter one interval (and some) to send the final state.
         std::thread::sleep(interval * 4);
@@ -781,12 +683,7 @@ mod tests {
         let sent = sent.lock().unwrap();
         let most = (elapsed.as_millis() / interval.as_millis()) as usize + 3;
         assert!(!sent.is_empty());
-        assert!(
-            sent.len() <= most,
-            "{} snapshots for {} changes in {elapsed:?}",
-            sent.len(),
-            total + 1
-        );
+        assert!(sent.len() <= most, "{} snapshots for {} changes in {elapsed:?}", sent.len(), total + 1);
         for pair in sent.windows(2) {
             // A little slack for the clock reads around `send`.
             assert!(pair[1].0.duration_since(pair[0].0) + Duration::from_millis(2) >= interval);
@@ -796,10 +693,7 @@ mod tests {
         assert_eq!(last.revision, a.snapshot().revision);
         let job = &last.jobs[Job::Embedding.index()];
         assert_eq!(job.state, State::Idle);
-        assert_eq!(
-            job.last_run.as_ref().unwrap().summary,
-            "embedded 20,000 notes"
-        );
+        assert_eq!(job.last_run.as_ref().unwrap().summary, "embedded 20,000 notes");
     }
 
     #[test]
@@ -810,13 +704,9 @@ mod tests {
         let emitter = {
             let (a, stop, sent) = (a.clone(), stop.clone(), sent.clone());
             std::thread::spawn(move || {
-                a.run_emitter(
-                    Duration::from_millis(250),
-                    || stop.load(Ordering::SeqCst),
-                    |_| {
-                        sent.lock().unwrap().push(Instant::now());
-                    },
-                )
+                a.run_emitter(Duration::from_millis(250), || stop.load(Ordering::SeqCst), |_| {
+                    sent.lock().unwrap().push(Instant::now());
+                })
             })
         };
         std::thread::sleep(Duration::from_millis(300));

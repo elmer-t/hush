@@ -121,10 +121,7 @@ pub struct QueueCursor {
 
 impl Default for QueueCursor {
     fn default() -> Self {
-        Self {
-            updated_at: i64::MAX,
-            id: i64::MAX,
-        }
+        Self { updated_at: i64::MAX, id: i64::MAX }
     }
 }
 
@@ -146,9 +143,7 @@ pub struct EmbeddingScan {
 impl Vault {
     /// The model new vectors are made with.
     pub fn embedding_model(&self) -> Result<String> {
-        Ok(self
-            .setting(EMBEDDING_MODEL_SETTING)?
-            .unwrap_or_else(|| embed::DEFAULT_MODEL.to_string()))
+        Ok(self.setting(EMBEDDING_MODEL_SETTING)?.unwrap_or_else(|| embed::DEFAULT_MODEL.to_string()))
     }
 
     /// Switching to another model queues every live note for it.
@@ -178,12 +173,7 @@ impl Vault {
     /// Scans up to `limit` live notes with an id above `after`, in id order, for ones
     /// whose `model` vector is missing or was made from different text. Notes with
     /// nothing to embed lose any vector they had.
-    pub fn scan_embeddings(
-        &mut self,
-        model: &str,
-        after: i64,
-        limit: u32,
-    ) -> Result<EmbeddingScan> {
+    pub fn scan_embeddings(&mut self, model: &str, after: i64, limit: u32) -> Result<EmbeddingScan> {
         let tx = self.conn.transaction()?;
         let mut scan = EmbeddingScan::default();
         let mut empty = Vec::new();
@@ -218,8 +208,7 @@ impl Vault {
             scan.next = None;
         }
         for id in empty {
-            tx.prepare_cached("DELETE FROM note_embeddings WHERE note_id = ?1 AND model = ?2")?
-                .execute(params![id, model])?;
+            tx.prepare_cached("DELETE FROM note_embeddings WHERE note_id = ?1 AND model = ?2")?.execute(params![id, model])?;
         }
         tx.commit()?;
         Ok(scan)
@@ -231,13 +220,7 @@ impl Vault {
     /// those that already have a first-chunk vector of their text move to the second.
     /// The rest are returned with their text, to embed and write with
     /// [`Vault::write_queued_embeddings`].
-    pub fn queued_embeddings(
-        &mut self,
-        model: &str,
-        after: &QueueCursor,
-        limit: u32,
-        phase: QueuePhase,
-    ) -> Result<QueuePage> {
+    pub fn queued_embeddings(&mut self, model: &str, after: &QueueCursor, limit: u32, phase: QueuePhase) -> Result<QueuePage> {
         let tx = self.conn.transaction()?;
         let mut page = QueuePage::default();
         let mut settled = Vec::new();
@@ -246,10 +229,7 @@ impl Vault {
         // The page's notes in order. A short queue is sorted; for a long one the index
         // on `updated_at` gives the order and the queue is looked up per note.
         let queued: i64 = tx.query_row(
-            &format!(
-                "SELECT count(*) FROM (SELECT 1 FROM embedding_dirty q WHERE {condition} LIMIT {})",
-                QUEUE_SORT_MAX + 1
-            ),
+            &format!("SELECT count(*) FROM (SELECT 1 FROM embedding_dirty q WHERE {condition} LIMIT {})", QUEUE_SORT_MAX + 1),
             [],
             |r| r.get(0),
         )?;
@@ -268,15 +248,11 @@ impl Vault {
                 )
             };
             let mut stmt = tx.prepare_cached(&sql)?;
-            stmt.query_map(params![after.updated_at, after.id, limit], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?
+            stmt.query_map(params![after.updated_at, after.id, limit], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
         };
         if order.len() == limit as usize {
-            page.next = order
-                .last()
-                .map(|&(id, updated_at)| QueueCursor { updated_at, id });
+            page.next = order.last().map(|&(id, updated_at)| QueueCursor { updated_at, id });
         }
         {
             let mut stmt = tx.prepare_cached(
@@ -303,15 +279,10 @@ impl Vault {
                         let hash = embed::content_hash(&text);
                         if stored.as_deref() == Some(&hash[..]) {
                             settled.push((id, version, None));
-                        } else if phase == QueuePhase::First
-                            && stored.as_deref() == Some(&embed::partial_hash(&hash)[..])
-                        {
+                        } else if phase == QueuePhase::First && stored.as_deref() == Some(&embed::partial_hash(&hash)[..]) {
                             partial.push((id, version));
                         } else {
-                            page.stale.push(QueuedText {
-                                note: NoteText { id, text, hash },
-                                version,
-                            });
+                            page.stale.push(QueuedText { note: NoteText { id, text, hash }, version });
                         }
                     }
                     None => settled.push((id, version, Some(stored.is_some()))),
@@ -322,15 +293,12 @@ impl Vault {
         for &(id, version, lost) in &settled {
             if let Some(had) = lost {
                 if had {
-                    tx.prepare_cached(
-                        "DELETE FROM note_embeddings WHERE note_id = ?1 AND model = ?2",
-                    )?
-                    .execute(params![id, model])?;
+                    tx.prepare_cached("DELETE FROM note_embeddings WHERE note_id = ?1 AND model = ?2")?
+                        .execute(params![id, model])?;
                 }
                 page.dropped.push(id);
             }
-            tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?
-                .execute(params![id, version])?;
+            tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?.execute(params![id, version])?;
         }
         for &(id, version) in &partial {
             tx.prepare_cached(TO_REST)?.execute(params![id, version])?;
@@ -349,22 +317,11 @@ impl Vault {
         let tx = self.conn.transaction()?;
         {
             let mut write = tx.prepare_cached(WRITE_EMBEDDING)?;
-            let mut done = tx.prepare_cached(
-                "DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2",
-            )?;
+            let mut done = tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?;
             let mut rest = tx.prepare_cached(TO_REST)?;
             for v in vectors {
-                let hash = if v.partial {
-                    embed::partial_hash(&v.hash)
-                } else {
-                    v.hash
-                };
-                write.execute(params![
-                    v.id,
-                    model,
-                    &hash[..],
-                    embed::vector_to_blob(&v.vector)
-                ])?;
+                let hash = if v.partial { embed::partial_hash(&v.hash) } else { v.hash };
+                write.execute(params![v.id, model, &hash[..], embed::vector_to_blob(&v.vector)])?;
                 if v.partial {
                     rest.execute(params![v.id, v.version])?;
                 } else {
@@ -406,9 +363,7 @@ impl Vault {
 
     /// How many notes are queued for the embedding job.
     pub fn embedding_queue_len(&self) -> Result<usize> {
-        let n: i64 = self
-            .conn
-            .query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0))?;
+        let n: i64 = self.conn.query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0))?;
         Ok(n as usize)
     }
 
@@ -419,32 +374,20 @@ impl Vault {
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        Ok(QueueCounts {
-            first: first as usize,
-            rest: rest as usize,
-        })
+        Ok(QueueCounts { first: first as usize, rest: rest as usize })
     }
 
     /// Whether any queued note waits for a first vector (see [`QueuePhase::First`]).
     pub fn embedding_first_pending(&self) -> Result<bool> {
-        Ok(self
-            .conn
-            .prepare_cached("SELECT 1 FROM embedding_dirty WHERE version >= 0 LIMIT 1")?
-            .exists([])?)
+        Ok(self.conn.prepare_cached("SELECT 1 FROM embedding_dirty WHERE version >= 0 LIMIT 1")?.exists([])?)
     }
 
     /// Whether the embedding job has anything to do: queued or deleted notes, a model
     /// switch to finish, or tag descriptions without a vector from the ready model. Cheap; the
     /// idle job asks once a second.
     pub fn embedding_pending(&self) -> Result<bool> {
-        if self
-            .conn
-            .prepare_cached("SELECT 1 FROM embedding_dirty LIMIT 1")?
-            .exists([])?
-            || self
-                .conn
-                .prepare_cached("SELECT 1 FROM embedding_gone LIMIT 1")?
-                .exists([])?
+        if self.conn.prepare_cached("SELECT 1 FROM embedding_dirty LIMIT 1")?.exists([])?
+            || self.conn.prepare_cached("SELECT 1 FROM embedding_gone LIMIT 1")?.exists([])?
         {
             return Ok(true);
         }
@@ -454,26 +397,17 @@ impl Vault {
         }
         Ok(self
             .conn
-            .prepare_cached(
-                "SELECT 1 FROM tag_descriptions WHERE vector IS NULL OR model IS NOT ?1 LIMIT 1",
-            )?
+            .prepare_cached("SELECT 1 FROM tag_descriptions WHERE vector IS NULL OR model IS NOT ?1 LIMIT 1")?
             .exists([&model])?)
     }
 
     /// The text to embed for each of `ids` that is live and not empty.
     pub fn embedding_texts(&self, ids: &[i64]) -> Result<Vec<NoteText>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
+        let mut stmt = self.conn.prepare_cached("SELECT title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL")?;
         let mut texts = Vec::with_capacity(ids.len());
         for &id in ids {
             let Some((title, body)) = stmt
-                .query_row([id], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        Zeroizing::new(r.get::<_, String>(1)?),
-                    ))
-                })
+                .query_row([id], |r| Ok((r.get::<_, String>(0)?, Zeroizing::new(r.get::<_, String>(1)?))))
                 .optional()?
             else {
                 continue;
@@ -488,11 +422,7 @@ impl Vault {
 
     /// Stores `model` vectors, each with the hash of the text it was made from. Notes
     /// trashed or deleted since their text was read are left without one.
-    pub fn write_embeddings(
-        &mut self,
-        model: &str,
-        vectors: &[(i64, [u8; 32], Vec<f32>)],
-    ) -> Result<()> {
+    pub fn write_embeddings(&mut self, model: &str, vectors: &[(i64, [u8; 32], Vec<f32>)]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(WRITE_EMBEDDING)?;
@@ -519,9 +449,7 @@ impl Vault {
 
     /// A note's vector from the ready model, if it has one.
     pub fn note_embedding(&self, id: i64) -> Result<Option<Vec<f32>>> {
-        let Some(model) = self.embedding_model_ready()? else {
-            return Ok(None);
-        };
+        let Some(model) = self.embedding_model_ready()? else { return Ok(None) };
         let blob: Option<Vec<u8>> = self
             .conn
             .prepare_cached(
@@ -561,24 +489,13 @@ impl Vault {
         let mut vectors = Vec::with_capacity(ids.len());
         for &id in ids {
             let Some((hash, blob)) = stmt
-                .query_row(params![id, model], |r| {
-                    Ok((
-                        r.get::<_, Vec<u8>>(0)?,
-                        Zeroizing::new(r.get::<_, Vec<u8>>(1)?),
-                    ))
-                })
+                .query_row(params![id, model], |r| Ok((r.get::<_, Vec<u8>>(0)?, Zeroizing::new(r.get::<_, Vec<u8>>(1)?))))
                 .optional()?
             else {
                 continue;
             };
-            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else {
-                continue;
-            };
-            vectors.push(StoredVector {
-                id,
-                hash,
-                vector: Zeroizing::new(embed::blob_to_vector(&blob)),
-            });
+            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else { continue };
+            vectors.push(StoredVector { id, hash, vector: Zeroizing::new(embed::blob_to_vector(&blob)) });
         }
         Ok(vectors)
     }
@@ -587,12 +504,7 @@ impl Vault {
     /// to continue after (`None` on the last page): one pass reads the table front to
     /// back instead of looking each note up. Trashed notes are found through the index
     /// of trashed ids, so no note row is read.
-    pub fn embedding_vector_page(
-        &self,
-        model: &str,
-        after: i64,
-        limit: usize,
-    ) -> Result<(Vec<StoredVector>, Option<i64>)> {
+    pub fn embedding_vector_page(&self, model: &str, after: i64, limit: usize) -> Result<(Vec<StoredVector>, Option<i64>)> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT rowid, note_id, content_hash, vector FROM note_embeddings
              WHERE model = ?1 AND rowid > ?2
@@ -606,25 +518,15 @@ impl Vault {
             last = r.get(0)?;
             let hash: Vec<u8> = r.get(2)?;
             let blob = Zeroizing::new(r.get::<_, Vec<u8>>(3)?);
-            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else {
-                continue;
-            };
-            vectors.push(StoredVector {
-                id: r.get(1)?,
-                hash,
-                vector: Zeroizing::new(embed::blob_to_vector(&blob)),
-            });
+            let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) else { continue };
+            vectors.push(StoredVector { id: r.get(1)?, hash, vector: Zeroizing::new(embed::blob_to_vector(&blob)) });
         }
         Ok((vectors, (read == limit).then_some(last)))
     }
 
     /// How many vectors are stored for `model`.
     pub fn embedding_count(&self, model: &str) -> Result<usize> {
-        let n: i64 = self.conn.query_row(
-            "SELECT count(*) FROM note_embeddings WHERE model = ?1",
-            [model],
-            |r| r.get(0),
-        )?;
+        let n: i64 = self.conn.query_row("SELECT count(*) FROM note_embeddings WHERE model = ?1", [model], |r| r.get(0))?;
         Ok(n as usize)
     }
 

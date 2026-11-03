@@ -71,45 +71,36 @@ impl Rng {
     /// Rank in `0..n` with probability roughly proportional to `1 / (rank + 1)` (Zipf, s = 1),
     /// like word frequencies in text.
     fn zipf(&mut self, n: usize) -> usize {
-        (((n as f64 + 1.0).powf(self.unit())) as usize)
-            .saturating_sub(1)
-            .min(n - 1)
+        (((n as f64 + 1.0).powf(self.unit())) as usize).saturating_sub(1).min(n - 1)
     }
 }
 
 /// The most common English words first, so short prefixes (`t`, `th`, `the`) hit
 /// frequent terms as they would in a real archive; then made-up words.
 const COMMON: &[&str] = &[
-    "the", "of", "and", "to", "a", "in", "is", "it", "you", "that", "he", "was", "for", "on",
-    "are", "with", "as", "his", "they", "be", "at", "one", "have", "this", "from", "or", "had",
-    "by", "not", "word", "but", "what", "some", "we", "can", "out", "other", "were", "all",
-    "there", "when", "up", "use", "your", "how", "said", "an", "each", "she", "which", "do",
-    "their", "time", "if", "will", "way", "about", "many", "then", "them", "would", "write",
-    "like", "so", "these", "her", "long", "make", "thing", "see", "him", "two", "has", "look",
-    "more", "day", "could", "go", "come", "did", "number", "sound", "no", "most", "people", "my",
-    "over", "know", "water", "than", "call", "first", "who", "may", "down", "side", "been", "now",
-    "find", "any", "new", "work", "part", "take", "get", "place", "made", "live", "where", "after",
-    "back", "little", "only", "round", "man", "year", "came", "show", "every", "good", "me",
-    "give", "our", "under", "name", "very", "through", "just", "form", "sentence", "great",
-    "think", "say", "help", "low", "line", "differ", "turn", "cause", "much", "mean", "before",
-    "move", "right", "boy", "old", "too", "same", "tell", "does", "set", "three", "want", "air",
-    "well", "also", "play", "small", "end", "put", "home", "read", "hand", "port", "large",
-    "spell", "add", "even", "land", "here", "must", "big", "high", "such", "follow", "act", "why",
-    "ask", "men", "change", "went", "light", "kind", "off", "need", "house", "picture", "try",
-    "again", "animal", "point", "mother", "world", "near", "build", "self", "earth", "father",
-    "head", "stand", "own", "page", "should", "country", "found", "answer", "school", "grow",
-    "study", "still", "learn", "plant", "cover", "food", "sun", "four", "between", "state", "keep",
-    "eye", "never", "last", "let", "thought", "city", "tree", "cross", "farm", "hard", "start",
-    "might", "story", "saw", "far", "sea", "draw", "left", "late", "run", "while", "press",
-    "close", "night", "real", "life", "few", "north",
+    "the", "of", "and", "to", "a", "in", "is", "it", "you", "that", "he", "was", "for", "on", "are", "with", "as",
+    "his", "they", "be", "at", "one", "have", "this", "from", "or", "had", "by", "not", "word", "but", "what", "some",
+    "we", "can", "out", "other", "were", "all", "there", "when", "up", "use", "your", "how", "said", "an", "each",
+    "she", "which", "do", "their", "time", "if", "will", "way", "about", "many", "then", "them", "would", "write",
+    "like", "so", "these", "her", "long", "make", "thing", "see", "him", "two", "has", "look", "more", "day", "could",
+    "go", "come", "did", "number", "sound", "no", "most", "people", "my", "over", "know", "water", "than", "call",
+    "first", "who", "may", "down", "side", "been", "now", "find", "any", "new", "work", "part", "take", "get", "place",
+    "made", "live", "where", "after", "back", "little", "only", "round", "man", "year", "came", "show", "every",
+    "good", "me", "give", "our", "under", "name", "very", "through", "just", "form", "sentence", "great", "think",
+    "say", "help", "low", "line", "differ", "turn", "cause", "much", "mean", "before", "move", "right", "boy", "old",
+    "too", "same", "tell", "does", "set", "three", "want", "air", "well", "also", "play", "small", "end", "put",
+    "home", "read", "hand", "port", "large", "spell", "add", "even", "land", "here", "must", "big", "high", "such",
+    "follow", "act", "why", "ask", "men", "change", "went", "light", "kind", "off", "need", "house", "picture", "try",
+    "again", "animal", "point", "mother", "world", "near", "build", "self", "earth", "father", "head", "stand", "own",
+    "page", "should", "country", "found", "answer", "school", "grow", "study", "still", "learn", "plant", "cover",
+    "food", "sun", "four", "between", "state", "keep", "eye", "never", "last", "let", "thought", "city", "tree",
+    "cross", "farm", "hard", "start", "might", "story", "saw", "far", "sea", "draw", "left", "late", "run", "while",
+    "press", "close", "night", "real", "life", "few", "north",
 ];
 const VOCABULARY: usize = 30_000;
 
 fn vocabulary() -> Vec<String> {
-    const ONSETS: &[&str] = &[
-        "b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z", "br", "st", "tr",
-        "pl", "gr", "sh",
-    ];
+    const ONSETS: &[&str] = &["b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z", "br", "st", "tr", "pl", "gr", "sh"];
     const VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ai", "ou", "ee"];
     const CODAS: &[&str] = &["", "n", "r", "s", "t", "l", "nd", "st"];
     let mut words: Vec<String> = COMMON.iter().map(|w| w.to_string()).collect();
@@ -119,12 +110,7 @@ fn vocabulary() -> Vec<String> {
         let syllables = 2 + rng.below(3);
         let word: String = (0..syllables)
             .map(|_| {
-                format!(
-                    "{}{}{}",
-                    ONSETS[rng.below(ONSETS.len())],
-                    VOWELS[rng.below(VOWELS.len())],
-                    CODAS[rng.below(CODAS.len())]
-                )
+                format!("{}{}{}", ONSETS[rng.below(ONSETS.len())], VOWELS[rng.below(VOWELS.len())], CODAS[rng.below(CODAS.len())])
             })
             .collect();
         if seen.insert(word.clone()) {
@@ -140,11 +126,7 @@ fn folders(count: usize, words: &[String], rng: &mut Rng) -> Vec<String> {
     let mut folders: Vec<(String, usize)> = Vec::with_capacity(count);
     for i in 0..count {
         let name = format!("{} {i}", words[COMMON.len() + rng.below(2_000)]);
-        let parent = if folders.is_empty() || rng.unit() < 0.02 {
-            None
-        } else {
-            Some(rng.below(folders.len()))
-        };
+        let parent = if folders.is_empty() || rng.unit() < 0.02 { None } else { Some(rng.below(folders.len())) };
         match parent.map(|p| &folders[p]) {
             Some((path, depth)) if *depth < MAX_DEPTH => {
                 let entry = (format!("{path}/{name}"), depth + 1);
@@ -176,19 +158,10 @@ impl Generator {
         let words = vocabulary();
         let mut rng = Rng(45);
         let topics = (0..TOPICS)
-            .map(|_| {
-                (0..TOPIC_WORDS)
-                    .map(|_| 1_000 + rng.below(VOCABULARY - 1_000))
-                    .collect()
-            })
+            .map(|_| (0..TOPIC_WORDS).map(|_| 1_000 + rng.below(VOCABULARY - 1_000)).collect())
             .collect();
         let folders = folders((notes / 20).clamp(1, MAX_FOLDERS), &words, &mut rng);
-        Self {
-            words,
-            topics,
-            folders,
-            rng,
-        }
+        Self { words, topics, folders, rng }
     }
 
     /// Note `i`: 100–1,500 words, skewed short (mean ≈ 300), a quarter of them from the
@@ -200,9 +173,7 @@ impl Generator {
         let mut body = String::with_capacity(count * 7 + 64);
         let tags = rng.below(4);
         if tags > 0 {
-            let names: Vec<String> = (0..tags)
-                .map(|t| format!("t{}", (topic + t * 97) % 200))
-                .collect();
+            let names: Vec<String> = (0..tags).map(|t| format!("t{}", (topic + t * 97) % 200)).collect();
             body.push_str(&format!("---\ntags: [{}]\n---\n", names.join(", ")));
         }
         for w in 0..count {
@@ -218,22 +189,12 @@ impl Generator {
                 _ => " ",
             });
         }
-        let title = format!(
-            "{} {} {i}",
-            self.words[self.topics[topic][0]],
-            self.words[COMMON.len() + rng.below(5_000)]
-        );
+        let title = format!("{} {} {i}", self.words[self.topics[topic][0]], self.words[COMMON.len() + rng.below(5_000)]);
         // 2005–2026, in ms.
         let created = 1_104_537_600_000 + (rng.unit() * 6.6e11) as i64;
         let updated = created + (rng.unit() * 3e10) as i64;
         let folder = rng.below(self.folders.len());
-        Generated {
-            folder,
-            title,
-            body,
-            created,
-            updated,
-        }
+        Generated { folder, title, body, created, updated }
     }
 }
 
@@ -248,9 +209,7 @@ impl Embedder for Fake {
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
         let mut v = vec![0.0; DIMS];
         for word in text.split_whitespace() {
-            let h = word.bytes().fold(2166136261u32, |h, b| {
-                (h ^ u32::from(b)).wrapping_mul(16777619)
-            });
+            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
             v[h as usize % DIMS] += 1.0;
         }
         v[0] += 0.01;
@@ -316,32 +275,17 @@ fn median(mut v: Vec<Duration>) -> Duration {
 fn machine() -> String {
     let cpu = std::fs::read_to_string("/proc/cpuinfo")
         .ok()
-        .and_then(|c| {
-            c.lines()
-                .find(|l| l.starts_with("model name"))
-                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
-        })
+        .and_then(|c| c.lines().find(|l| l.starts_with("model name")).map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string()))
         .or_else(|| std::env::var("PROCESSOR_IDENTIFIER").ok())
         .unwrap_or_else(|| "unknown CPU".into());
-    let ram = memory_from_meminfo().map_or("unknown RAM".into(), |kb| {
-        format!("{:.1} GB RAM", kb as f64 / 1024.0 / 1024.0)
-    });
+    let ram = memory_from_meminfo().map_or("unknown RAM".into(), |kb| format!("{:.1} GB RAM", kb as f64 / 1024.0 / 1024.0));
     let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
-    format!(
-        "{} {}, {cpu}, {cores} cores available, {ram}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
+    format!("{} {}, {cpu}, {cores} cores available, {ram}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 fn memory_from_meminfo() -> Option<u64> {
     let info = std::fs::read_to_string("/proc/meminfo").ok()?;
-    info.lines()
-        .find(|l| l.starts_with("MemTotal"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
+    info.lines().find(|l| l.starts_with("MemTotal"))?.split_whitespace().nth(1)?.parse().ok()
 }
 
 /// Locks the session when dropped, so a failed measurement stops the job thread
@@ -392,21 +336,13 @@ fn prepare(path: &Path, notes: usize) -> Vault {
     let mut vault = Vault::create(path, common::PASS).unwrap();
     vault.set_embedding_model(MODEL).unwrap();
     let mut generator = Generator::new(notes);
-    println!(
-        "generating {notes} notes in {} folders",
-        generator.folders.len()
-    );
+    println!("generating {notes} notes in {} folders", generator.folders.len());
     let start = Instant::now();
     let mut words = 0usize;
     let mut i = 0;
     while i < notes {
-        let batch: Vec<Generated> = (i..(i + IMPORT_BATCH).min(notes))
-            .map(|n| generator.note(n))
-            .collect();
-        words += batch
-            .iter()
-            .map(|g| g.body.split_whitespace().count())
-            .sum::<usize>();
+        let batch: Vec<Generated> = (i..(i + IMPORT_BATCH).min(notes)).map(|n| generator.note(n)).collect();
+        words += batch.iter().map(|g| g.body.split_whitespace().count()).sum::<usize>();
         let new: Vec<NewNote> = batch
             .iter()
             .map(|g| NewNote {
@@ -425,11 +361,7 @@ fn prepare(path: &Path, notes: usize) -> Vault {
             println!("  {i} notes, {}", secs(start.elapsed()));
         }
     }
-    println!(
-        "generated: {} ({} words per note on average)",
-        secs(start.elapsed()),
-        words / notes
-    );
+    println!("generated: {} ({} words per note on average)", secs(start.elapsed()), words / notes);
     vault.set_setting(GENERATOR_SETTING, &marker).unwrap();
     vault
 }
@@ -437,13 +369,9 @@ fn prepare(path: &Path, notes: usize) -> Vault {
 #[test]
 #[ignore = "scale benchmark: minutes to hours; run with --ignored --nocapture"]
 fn scale_benchmark() {
-    let notes: usize = std::env::var("HUSH_SCALE_NOTES")
-        .ok()
-        .and_then(|n| n.replace('_', "").parse().ok())
-        .unwrap_or(1_000_000);
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
     let temp = tempfile::tempdir().unwrap();
-    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT")
-        .map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
     println!("machine: {}", machine());
 
     let vault = prepare(&path, notes);
@@ -470,10 +398,7 @@ fn scale_benchmark() {
     let mut idle = Vec::new();
     for _ in 0..3 {
         let start = Instant::now();
-        assert_eq!(
-            job::pass(&session, g, &source, &mut |_| {}).unwrap().stale,
-            0
-        );
+        assert_eq!(job::pass(&session, g, &source, &mut |_| {}).unwrap().stale, 0);
         idle.push(start.elapsed());
     }
     let idle_pass = median(idle);
@@ -481,10 +406,7 @@ fn scale_benchmark() {
     // 1, 2. Saves with the job running as in the app.
     let quiet = idle_pass * 3 + POLL * 3;
     let mut rng = Rng(46);
-    let run = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let run = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let mut latencies = Vec::new();
     let mut passes_per_save = Vec::new();
     std::thread::scope(|s| {
@@ -496,14 +418,10 @@ fn scale_benchmark() {
             let before = session.with_vault(|v| v.note_embedding(id)).unwrap();
             let passes = source.passes();
             // Unique per run, so a kept vault saved by an earlier run still changes.
-            let text =
-                format!("A new text for the benchmark, save {n} of run {run}, about lighthouses.");
+            let text = format!("A new text for the benchmark, save {n} of run {run}, about lighthouses.");
             session.with_vault(|v| v.update_body(id, &text)).unwrap();
             latencies.push(wait_until(Duration::from_secs(3_600), || {
-                session
-                    .with_vault_quiet(g, |v| v.note_embedding(id))
-                    .unwrap()
-                    != before
+                session.with_vault_quiet(g, |v| v.note_embedding(id)).unwrap() != before
             }));
             wait_idle(&source, quiet);
             passes_per_save.push(source.passes() - passes);
@@ -529,9 +447,7 @@ fn scale_benchmark() {
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
         let _stop = LockOnDrop(&session);
-        wait_until(Duration::from_secs(3_600), || {
-            matches!(related::related_notes(&session, probe, 10), Ok(Some(_)))
-        });
+        wait_until(Duration::from_secs(3_600), || matches!(related::related_notes(&session, probe, 10), Ok(Some(_))));
         unlock_to_related = start.elapsed();
         peak = memory_kb("VmHWM:");
         wait_idle(&source, quiet);
@@ -548,10 +464,7 @@ fn scale_benchmark() {
         let words = vocabulary();
         let two = format!("{} {}", words[30], words[1_200]);
         for text in ["t", "th", "the", two.as_str()] {
-            let query = SearchQuery {
-                text: text.into(),
-                ..Default::default()
-            };
+            let query = SearchQuery { text: text.into(), ..Default::default() };
             let mut runs = Vec::new();
             let mut hits = 0;
             for _ in 0..SEARCH_RUNS {
@@ -569,9 +482,7 @@ fn scale_benchmark() {
         let start = Instant::now();
         let d = discover::run(&session, g, &Options::default(), &|| false).unwrap();
         discover_time = start.elapsed();
-        discover_peak = memory_kb("VmHWM:")
-            .zip(before)
-            .map(|(p, b)| p.saturating_sub(b));
+        discover_peak = memory_kb("VmHWM:").zip(before).map(|(p, b)| p.saturating_sub(b));
         discovered = (d.notes, d.groups.len());
         session.lock();
     });
@@ -581,41 +492,14 @@ fn scale_benchmark() {
 
     lookups.sort();
     println!();
-    println!(
-        "== Hush scale benchmark: {notes} notes, {} folders ==",
-        (notes / 20).clamp(1, MAX_FOLDERS)
-    );
+    println!("== Hush scale benchmark: {notes} notes, {} folders ==", (notes / 20).clamp(1, MAX_FOLDERS));
     println!("machine: {}", machine());
-    println!(
-        "1. save-to-vector latency: {} (each: {})",
-        secs(median(latencies.clone())),
-        latencies
-            .iter()
-            .map(|d| secs(*d))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    println!(
-        "2. idle job: {} full passes per save ({passes_per_save:?}); a pass with nothing to do takes {}",
-        passes_per_save.iter().max().unwrap(),
-        secs(idle_pass)
-    );
-    println!(
-        "3. unlock-to-related latency: {} (open + KDF + first pass + index load)",
-        secs(unlock_to_related)
-    );
-    println!(
-        "4. related_notes: median {}, worst {} over {LOOKUPS} lookups",
-        ms(lookups[LOOKUPS / 2]),
-        ms(lookups[LOOKUPS - 1])
-    );
+    println!("1. save-to-vector latency: {} (each: {})", secs(median(latencies.clone())), latencies.iter().map(|d| secs(*d)).collect::<Vec<_>>().join(", "));
+    println!("2. idle job: {} full passes per save ({passes_per_save:?}); a pass with nothing to do takes {}", passes_per_save.iter().max().unwrap(), secs(idle_pass));
+    println!("3. unlock-to-related latency: {} (open + KDF + first pass + index load)", secs(unlock_to_related));
+    println!("4. related_notes: median {}, worst {} over {LOOKUPS} lookups", ms(lookups[LOOKUPS / 2]), ms(lookups[LOOKUPS - 1]));
     match (peak_reset, peak, baseline) {
-        (true, Some(p), Some(b)) => println!(
-            "5. peak RSS during unlock + index load: {} ({} above the {} before unlock)",
-            mb(p),
-            mb(p.saturating_sub(b)),
-            mb(b)
-        ),
+        (true, Some(p), Some(b)) => println!("5. peak RSS during unlock + index load: {} ({} above the {} before unlock)", mb(p), mb(p.saturating_sub(b)), mb(b)),
         _ => println!("5. peak RSS: not measured on this OS (needs /proc/self/clear_refs)"),
     }
     match throughput {
@@ -630,21 +514,14 @@ fn scale_benchmark() {
         None => println!("6. real model: SKIPPED (model files missing; run `npm run fetch-model`)"),
     }
     for (text, median, worst, hits) in &searches {
-        println!(
-            "7. search {text:?}: median {}, worst {} ({hits} hits shown)",
-            ms(*median),
-            ms(*worst)
-        );
+        println!("7. search {text:?}: median {}, worst {} ({hits} hits shown)", ms(*median), ms(*worst));
     }
     println!(
         "8. discover tags: {} for {} notes into {} groups{}",
         secs(discover_time),
         discovered.0,
         discovered.1,
-        discover_peak.map_or(String::new(), |p| format!(
-            ", peak RSS {} above the start",
-            mb(p)
-        ))
+        discover_peak.map_or(String::new(), |p| format!(", peak RSS {} above the start", mb(p)))
     );
 }
 
@@ -679,12 +556,7 @@ fn real_model_throughput(path: &Path, notes: usize) -> Option<Throughput> {
     for batch in texts.chunks(job::BATCH) {
         model.embed_batch(batch, &|| false).unwrap();
     }
-    Some(Throughput {
-        notes: texts.len(),
-        time: start.elapsed(),
-        chunks,
-        tokens,
-    })
+    Some(Throughput { notes: texts.len(), time: start.elapsed(), chunks, tokens })
 }
 
 /// The generator itself, so a change to it shows up without running the benchmark.
@@ -694,22 +566,12 @@ fn generator_is_deterministic_and_shaped_as_specified() {
     let mut b = Generator::new(20_000);
     assert_eq!(a.folders.len(), 1_000);
     assert!(a.folders.iter().all(|f| f.matches('/').count() < MAX_DEPTH));
-    assert!(
-        a.folders
-            .iter()
-            .any(|f| f.matches('/').count() == MAX_DEPTH - 1),
-        "some folders are 5 levels deep"
-    );
+    assert!(a.folders.iter().any(|f| f.matches('/').count() == MAX_DEPTH - 1), "some folders are 5 levels deep");
     let mut words = 0;
     for i in 0..2_000 {
         let (x, y) = (a.note(i), b.note(i));
         assert_eq!((&x.title, &x.body, x.folder), (&y.title, &y.body, y.folder));
-        let n = x
-            .body
-            .lines()
-            .filter(|l| !l.starts_with("---") && !l.starts_with("tags:"))
-            .map(|l| l.split_whitespace().count())
-            .sum::<usize>();
+        let n = x.body.lines().filter(|l| !l.starts_with("---") && !l.starts_with("tags:")).map(|l| l.split_whitespace().count()).sum::<usize>();
         assert!((100..=1_500).contains(&n), "{n} words");
         words += n;
     }

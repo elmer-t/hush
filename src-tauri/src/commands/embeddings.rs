@@ -16,11 +16,9 @@ use super::CommandError;
 use crate::config::Config;
 use crate::embed::gpu::{self, Adapter};
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
-use crate::embed::models::{
-    self, Availability, FileChecks, LoadState, ModelDirs, ModelStatus, ModelTracker, SwitchError,
-};
-use crate::embed::onnx::{Device, OnnxEmbedder};
 use crate::embed::related::{self, RelatedNote};
+use crate::embed::onnx::{Device, OnnxEmbedder};
+use crate::embed::models::{self, Availability, FileChecks, LoadState, ModelDirs, ModelStatus, ModelTracker, SwitchError};
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::Session;
 
@@ -166,11 +164,7 @@ impl LocalModels {
     /// The threads a model gets, and the machine's cores.
     fn threads(&self) -> (usize, usize) {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let threads = if self.all_cores.load(Ordering::SeqCst) {
-            cores
-        } else {
-            (cores / 2).max(1)
-        };
+        let threads = if self.all_cores.load(Ordering::SeqCst) { cores } else { (cores / 2).max(1) };
         (threads, cores)
     }
 
@@ -182,10 +176,7 @@ impl LocalModels {
 
     /// Drops `model` from memory (its files are being removed).
     pub(super) fn unload(&self, model: &str) {
-        self.loaded
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|k, _| k.0 != model);
+        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| k.0 != model);
     }
 
     /// Sends the model status when `changed`.
@@ -207,9 +198,7 @@ impl Indexer {
 
 impl EmbedderSource for LocalModels {
     fn is_loaded(&self, model: &str) -> bool {
-        let Some(descriptor) = embed::descriptor(model) else {
-            return false;
-        };
+        let Some(descriptor) = embed::descriptor(model) else { return false };
         let (threads, _) = self.threads();
         let (device, _) = self.device_for(descriptor);
         self.loaded
@@ -289,9 +278,7 @@ pub fn start(app: &AppHandle, generation: u64) {
         }
         if running.1 != generation {
             // The last vault's model settings don't apply to this one.
-            indexer
-                .models
-                .emit_if(indexer.models.tracker.forget_vault());
+            indexer.models.emit_if(indexer.models.tracker.forget_vault());
         }
         *running = (generation, generation);
     }
@@ -324,10 +311,7 @@ fn set_status(app: &AppHandle, session: &Session, generation: u64, status: &Inde
     if !session.is_open(generation) {
         return;
     }
-    *app.state::<Indexer>()
-        .status
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = status.clone();
+    *app.state::<Indexer>().status.lock().unwrap_or_else(|e| e.into_inner()) = status.clone();
     let _ = app.emit(INDEX_STATUS_EVENT, status);
 }
 
@@ -364,11 +348,7 @@ pub fn set_index_gpu(
 
 /// Saves the choice for this machine; the job uses it from its next pass.
 #[tauri::command]
-pub fn set_index_all_cores(
-    config: State<'_, Config>,
-    indexer: State<'_, Indexer>,
-    on: bool,
-) -> super::Result<()> {
+pub fn set_index_all_cores(config: State<'_, Config>, indexer: State<'_, Indexer>, on: bool) -> super::Result<()> {
     config.update(|c| c.index_all_cores = on)?;
     indexer.models.all_cores.store(on, Ordering::SeqCst);
     Ok(())
@@ -376,21 +356,13 @@ pub fn set_index_all_cores(
 
 #[tauri::command]
 pub fn index_status(indexer: State<'_, Indexer>) -> IndexStatus {
-    indexer
-        .status
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    indexer.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Up to `limit` notes closest in meaning to note `id`, most similar first, with their
 /// score and reasons; `None` when the note has no vector yet.
 #[tauri::command]
-pub fn related_notes(
-    session: State<'_, Session>,
-    id: i64,
-    limit: usize,
-) -> super::Result<Option<Vec<RelatedNote>>> {
+pub fn related_notes(session: State<'_, Session>, id: i64, limit: usize) -> super::Result<Option<Vec<RelatedNote>>> {
     Ok(related::related_notes(&session, id, limit)?)
 }
 
@@ -444,8 +416,7 @@ pub async fn model_overview(
     indexer: State<'_, Indexer>,
     config: State<'_, Config>,
 ) -> super::Result<ModelOverview> {
-    let (model, notes) =
-        session.with_vault(|v| Ok((v.embedding_model()?, v.live_note_count()?)))?;
+    let (model, notes) = session.with_vault(|v| Ok((v.embedding_model()?, v.live_note_count()?)))?;
     let rates = config.get().index_rates;
     let models = embed::MODELS
         .iter()
@@ -464,13 +435,7 @@ pub async fn model_overview(
             gpu: d.gpu,
         })
         .collect();
-    Ok(ModelOverview {
-        status: indexer.models.tracker.status(),
-        model,
-        notes,
-        models,
-        default_rate: models::DEFAULT_RATE,
-    })
+    Ok(ModelOverview { status: indexer.models.tracker.status(), model, notes, models, default_rate: models::DEFAULT_RATE })
 }
 
 /// Switches the vault to `model`, which must be available on this computer: every note
@@ -482,14 +447,7 @@ pub async fn set_embedding_model(
     indexer: State<'_, Indexer>,
     model: String,
 ) -> super::Result<()> {
-    models::switch(
-        &session,
-        &indexer.models.checks,
-        &indexer.models.dirs,
-        embed::MODELS,
-        &model,
-    )
-    .map_err(|e| match e {
+    models::switch(&session, &indexer.models.checks, &indexer.models.dirs, embed::MODELS, &model).map_err(|e| match e {
         SwitchError::Unknown(id) => CommandError::UnknownModel(id),
         SwitchError::Unavailable(problem) => CommandError::ModelUnavailable(problem),
         SwitchError::Session(e) => CommandError::Session(e),
@@ -522,9 +480,5 @@ pub(super) fn models_changed(app: &AppHandle) {
 }
 
 fn host(url: &str) -> String {
-    url.split("://")
-        .nth(1)
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or_default()
-        .to_string()
+    url.split("://").nth(1).and_then(|rest| rest.split('/').next()).unwrap_or_default().to_string()
 }

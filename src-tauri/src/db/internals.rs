@@ -87,53 +87,35 @@ impl Vault {
 
     /// Every trained head, without its weights, by tag.
     pub fn tag_head_times(&self) -> Result<Vec<HeadTime>> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT tag, model, trained_at FROM tag_heads ORDER BY tag")?;
+        let mut stmt = self.conn.prepare_cached("SELECT tag, model, trained_at FROM tag_heads ORDER BY tag")?;
         let rows = stmt
-            .query_map([], |r| {
-                Ok(HeadTime {
-                    tag: r.get(0)?,
-                    model: r.get(1)?,
-                    trained_at: r.get(2)?,
-                })
-            })?
+            .query_map([], |r| Ok(HeadTime { tag: r.get(0)?, model: r.get(1)?, trained_at: r.get(2)? }))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
     /// The schema version (number of migrations applied).
     pub fn schema_version(&self) -> Result<u64> {
-        let v: i64 = self
-            .conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let v: i64 = self.conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         Ok(v.max(0) as u64)
     }
 
     /// See [`NoteInternals`]; live notes only.
     pub fn note_internals(&self, id: i64) -> Result<NoteInternals> {
         let note = self.note(id)?;
-        let content = markdown::split_frontmatter(&note.body)
-            .map_or(note.body.as_str(), |(_, start)| &note.body[start..]);
+        let content = markdown::split_frontmatter(&note.body).map_or(note.body.as_str(), |(_, start)| &note.body[start..]);
         let words = content.split_whitespace().count();
         let chars = content.chars().count();
-        let current =
-            embed::note_text(&note.title, &note.body).map(|text| embed::content_hash(&text));
+        let current = embed::note_text(&note.title, &note.body).map(|text| embed::content_hash(&text));
 
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT model, content_hash FROM note_embeddings WHERE note_id = ?1 ORDER BY model",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT model, content_hash FROM note_embeddings WHERE note_id = ?1 ORDER BY model")?;
         let vectors = stmt
-            .query_map([id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-            })?
+            .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?
             .map(|row| {
                 let (model, hash) = row?;
-                Ok(NoteVector {
-                    current: current.is_some_and(|c| c[..] == hash[..]),
-                    hash: hex(&hash),
-                    model,
-                })
+                Ok(NoteVector { current: current.is_some_and(|c| c[..] == hash[..]), hash: hex(&hash), model })
             })
             .collect::<Result<Vec<_>>>()?;
         let queued = self
@@ -151,20 +133,11 @@ impl Vault {
         let mut tags: Vec<NoteTag> = note_tag_names(&self.conn, id)?
             .into_iter()
             .map(|tag| {
-                let source = if accepted.contains(&tag) {
-                    TagSource::Suggestion
-                } else {
-                    TagSource::Manual
-                };
+                let source = if accepted.contains(&tag) { TagSource::Suggestion } else { TagSource::Manual };
                 NoteTag { tag, source }
             })
             .collect();
-        tags.sort_by(|a, b| {
-            a.tag
-                .to_lowercase()
-                .cmp(&b.tag.to_lowercase())
-                .then_with(|| a.tag.cmp(&b.tag))
-        });
+        tags.sort_by(|a, b| a.tag.to_lowercase().cmp(&b.tag.to_lowercase()).then_with(|| a.tag.cmp(&b.tag)));
 
         Ok(NoteInternals {
             id,

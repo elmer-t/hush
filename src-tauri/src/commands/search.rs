@@ -22,21 +22,10 @@ pub struct SearchResult {
 /// older one still running.
 #[tauri::command]
 pub fn search_notes(session: State<'_, Session>, query: SearchQuery) -> Result<SearchResult> {
-    Ok(
-        match session.search(|v, stop| v.search_page_until(&query, stop))? {
-            Some(page) => SearchResult {
-                page,
-                cancelled: false,
-            },
-            None => SearchResult {
-                page: SearchPage {
-                    hits: Vec::new(),
-                    newest_first: false,
-                },
-                cancelled: true,
-            },
-        },
-    )
+    Ok(match session.search(|v, stop| v.search_page_until(&query, stop))? {
+        Some(page) => SearchResult { page, cancelled: false },
+        None => SearchResult { page: SearchPage { hits: Vec::new(), newest_first: false }, cancelled: true },
+    })
 }
 
 #[tauri::command]

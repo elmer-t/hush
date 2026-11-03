@@ -39,12 +39,7 @@ impl Head {
         if x.len() != self.weights.len() {
             return 0.0;
         }
-        let z: f64 = self
-            .weights
-            .iter()
-            .zip(x)
-            .map(|(w, x)| f64::from(*w) * f64::from(*x))
-            .sum::<f64>()
+        let z: f64 = self.weights.iter().zip(x).map(|(w, x)| f64::from(*w) * f64::from(*x)).sum::<f64>()
             + f64::from(self.bias);
         sigmoid(z) as f32
     }
@@ -72,11 +67,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            l2: 3e-2,
-            max_iterations: 500,
-            tolerance: 1e-5,
-        }
+        Self { l2: 3e-2, max_iterations: 500, tolerance: 1e-5 }
     }
 }
 
@@ -99,13 +90,7 @@ pub struct Quality {
 /// ratios within each class (a rejection still counts [`REJECTED_WEIGHT`] times an
 /// untagged note). Without it a tag on 1% of notes would never reach probability 0.5.
 pub fn balance(examples: &mut [Example]) {
-    let total = |positive: bool| {
-        examples
-            .iter()
-            .filter(|e| e.positive == positive)
-            .map(|e| f64::from(e.weight))
-            .sum::<f64>()
-    };
+    let total = |positive: bool| examples.iter().filter(|e| e.positive == positive).map(|e| f64::from(e.weight)).sum::<f64>();
     let (pos, neg) = (total(true), total(false));
     if pos <= 0.0 || neg <= 0.0 {
         return;
@@ -133,13 +118,7 @@ pub fn train(examples: &[Example], start: Option<&Head>, config: &Config) -> Tra
     }
     let iterations = lbfgs(&mut params, config, |p, g| problem.loss_and_gradient(p, g));
     let bias = params[dims] - dot(&params[..dims], &problem.mean);
-    Trained {
-        head: Head {
-            weights: params[..dims].iter().map(|w| *w as f32).collect(),
-            bias: bias as f32,
-        },
-        iterations,
-    }
+    Trained { head: Head { weights: params[..dims].iter().map(|w| *w as f32).collect(), bias: bias as f32 }, iterations }
 }
 
 /// Stratified `folds`-fold cross-validation: each fold is predicted by a head trained
@@ -157,9 +136,7 @@ pub fn cross_validate(
     let mut rng = Rng(seed);
     let mut fold_of = vec![0; examples.len()];
     for positive in [true, false] {
-        let mut idx: Vec<usize> = (0..examples.len())
-            .filter(|&i| examples[i].positive == positive)
-            .collect();
+        let mut idx: Vec<usize> = (0..examples.len()).filter(|&i| examples[i].positive == positive).collect();
         rng.shuffle(&mut idx);
         for (k, i) in idx.into_iter().enumerate() {
             fold_of[i] = k % folds.max(1);
@@ -173,11 +150,7 @@ pub fn cross_validate(
         let mut train_set: Vec<Example> = Vec::new();
         let mut test_set: Vec<&Example> = Vec::new();
         for (e, f) in examples.iter().zip(&fold_of) {
-            if *f == fold {
-                test_set.push(e)
-            } else {
-                train_set.push(*e)
-            }
+            if *f == fold { test_set.push(e) } else { train_set.push(*e) }
         }
         if test_set.is_empty() || train_set.is_empty() {
             continue;
@@ -194,10 +167,7 @@ pub fn cross_validate(
         }
     }
     let ratio = |a: usize, b: usize| (a + b > 0).then(|| a as f32 / (a + b) as f32);
-    Some(Quality {
-        precision: ratio(tp, fp),
-        recall: ratio(tp, fn_),
-    })
+    Some(Quality { precision: ratio(tp, fp), recall: ratio(tp, fn_) })
 }
 
 /// Weighted mean log loss plus the L2 penalty, over centred vectors.
@@ -216,18 +186,10 @@ impl<'a> Problem<'a> {
         if total > 0.0 {
             for e in examples {
                 let w = f64::from(e.weight) / total;
-                mean.iter_mut()
-                    .zip(e.x)
-                    .for_each(|(m, x)| *m += w * f64::from(*x));
+                mean.iter_mut().zip(e.x).for_each(|(m, x)| *m += w * f64::from(*x));
             }
         }
-        Self {
-            examples,
-            dims,
-            mean,
-            total: if total > 0.0 { total } else { 1.0 },
-            l2,
-        }
+        Self { examples, dims, mean, total: if total > 0.0 { total } else { 1.0 }, l2 }
     }
 
     /// The loss at `params` (weights, then the bias); writes the gradient into `grad`.
@@ -240,35 +202,20 @@ impl<'a> Problem<'a> {
         let mut residual_sum = 0.0;
         for e in self.examples {
             let weight = f64::from(e.weight) / self.total;
-            let z: f64 = w
-                .iter()
-                .zip(e.x)
-                .map(|(w, x)| w * f64::from(*x))
-                .sum::<f64>()
-                - shift
-                + b;
+            let z: f64 = w.iter().zip(e.x).map(|(w, x)| w * f64::from(*x)).sum::<f64>() - shift + b;
             // log(1 + e^-z) for positives, log(1 + e^z) for negatives, computed stably.
             let signed = if e.positive { z } else { -z };
             loss += weight * softplus(-signed);
             let residual = weight * (sigmoid(z) - if e.positive { 1.0 } else { 0.0 });
             residual_sum += residual;
-            grad[..self.dims]
-                .iter_mut()
-                .zip(e.x)
-                .for_each(|(g, x)| *g += residual * f64::from(*x));
+            grad[..self.dims].iter_mut().zip(e.x).for_each(|(g, x)| *g += residual * f64::from(*x));
         }
         // d/dw of the centring term: -mean * sum(residuals).
-        grad[..self.dims]
-            .iter_mut()
-            .zip(&self.mean)
-            .for_each(|(g, m)| *g -= residual_sum * m);
+        grad[..self.dims].iter_mut().zip(&self.mean).for_each(|(g, m)| *g -= residual_sum * m);
         grad[self.dims] = residual_sum;
         let norm2: f64 = w.iter().map(|w| w * w).sum();
         loss += 0.5 * self.l2 * norm2;
-        grad[..self.dims]
-            .iter_mut()
-            .zip(w)
-            .for_each(|(g, w)| *g += self.l2 * w);
+        grad[..self.dims].iter_mut().zip(w).for_each(|(g, w)| *g += self.l2 * w);
         loss
     }
 }
@@ -280,8 +227,7 @@ fn lbfgs(x: &mut [f64], config: &Config, mut f: impl FnMut(&[f64], &mut [f64]) -
     let n = x.len();
     let mut g = vec![0.0; n];
     let mut fx = f(x, &mut g);
-    let mut history: std::collections::VecDeque<(Vec<f64>, Vec<f64>, f64)> =
-        std::collections::VecDeque::new();
+    let mut history: std::collections::VecDeque<(Vec<f64>, Vec<f64>, f64)> = std::collections::VecDeque::new();
     let mut next = vec![0.0; n];
     let mut g_next = vec![0.0; n];
     for iteration in 0..config.max_iterations {
@@ -314,10 +260,7 @@ fn lbfgs(x: &mut [f64], config: &Config, mut f: impl FnMut(&[f64], &mut [f64]) -
         let mut step = 1.0;
         let mut accepted = false;
         for _ in 0..40 {
-            next.iter_mut()
-                .zip(x.iter())
-                .zip(&d)
-                .for_each(|((n, x), d)| *n = x + step * d);
+            next.iter_mut().zip(x.iter()).zip(&d).for_each(|((n, x), d)| *n = x + step * d);
             let f_next = f(&next, &mut g_next);
             if f_next <= fx + 1e-4 * step * slope {
                 fx = f_next;
@@ -349,11 +292,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 }
 
 fn sigmoid(z: f64) -> f64 {
-    if z >= 0.0 {
-        1.0 / (1.0 + (-z).exp())
-    } else {
-        z.exp() / (1.0 + z.exp())
-    }
+    if z >= 0.0 { 1.0 / (1.0 + (-z).exp()) } else { z.exp() / (1.0 + z.exp()) }
 }
 
 /// `log(1 + e^z)` without overflow.
@@ -383,9 +322,7 @@ impl Rng {
 
 /// A stable seed for a tag's folds, so retraining the same data gives the same quality.
 pub fn seed_for(tag: &str) -> u64 {
-    tag.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    })
+    tag.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
 }
 
 #[cfg(test)]
@@ -406,13 +343,7 @@ mod tests {
     }
 
     fn examples(data: &[(Vec<f32>, bool)]) -> Vec<Example<'_>> {
-        data.iter()
-            .map(|(x, p)| Example {
-                x,
-                positive: *p,
-                weight: 1.0,
-            })
-            .collect()
+        data.iter().map(|(x, p)| Example { x, positive: *p, weight: 1.0 }).collect()
     }
 
     #[test]
@@ -426,74 +357,36 @@ mod tests {
         assert!(trained.head.probability(&[2.0, 0.0, 0.0]) > 0.9);
         assert!(trained.head.probability(&[-2.0, 0.0, 0.0]) < 0.1);
         assert!(trained.iterations > 0 && trained.iterations < Config::default().max_iterations);
-        assert_eq!(
-            trained.head.probability(&[1.0, 0.0]),
-            0.0,
-            "another model's vector"
-        );
+        assert_eq!(trained.head.probability(&[1.0, 0.0]), 0.0, "another model's vector");
     }
 
     /// Two overlapping points on a line: weighting one class more moves the boundary
     /// towards the other.
     #[test]
     fn class_weights_shift_the_decision() {
-        let data: Vec<(Vec<f32>, bool)> = vec![
-            (vec![0.0], false),
-            (vec![0.4], false),
-            (vec![0.6], true),
-            (vec![1.0], true),
-            (vec![0.45], true),
-            (vec![0.55], false),
-        ];
-        let config = Config {
-            l2: 1e-2,
-            ..Config::default()
-        };
+        let data: Vec<(Vec<f32>, bool)> =
+            vec![(vec![0.0], false), (vec![0.4], false), (vec![0.6], true), (vec![1.0], true), (vec![0.45], true), (vec![0.55], false)];
+        let config = Config { l2: 1e-2, ..Config::default() };
         let boundary = |negative_weight: f32| {
             let ex: Vec<Example> = data
                 .iter()
-                .map(|(x, p)| Example {
-                    x,
-                    positive: *p,
-                    weight: if *p { 1.0 } else { negative_weight },
-                })
+                .map(|(x, p)| Example { x, positive: *p, weight: if *p { 1.0 } else { negative_weight } })
                 .collect();
             let head = train(&ex, None, &config).head;
             -head.bias / head.weights[0]
         };
         let even = boundary(1.0);
         let heavy = boundary(REJECTED_WEIGHT);
-        assert!(
-            (even - 0.5).abs() < 0.05,
-            "symmetric data, boundary in the middle: {even}"
-        );
-        assert!(
-            heavy > even + 0.05,
-            "heavier negatives push the boundary towards the positives: {heavy} vs {even}"
-        );
+        assert!((even - 0.5).abs() < 0.05, "symmetric data, boundary in the middle: {even}");
+        assert!(heavy > even + 0.05, "heavier negatives push the boundary towards the positives: {heavy} vs {even}");
 
         // balance() makes a rare class count as much as a common one.
-        let mut ex: Vec<Example> = data
-            .iter()
-            .map(|(x, p)| Example {
-                x,
-                positive: *p,
-                weight: 1.0,
-            })
-            .collect();
+        let mut ex: Vec<Example> = data.iter().map(|(x, p)| Example { x, positive: *p, weight: 1.0 }).collect();
         ex[0].weight = 5.0;
         balance(&mut ex);
-        let total = |p: bool| {
-            ex.iter()
-                .filter(|e| e.positive == p)
-                .map(|e| e.weight)
-                .sum::<f32>()
-        };
+        let total = |p: bool| ex.iter().filter(|e| e.positive == p).map(|e| e.weight).sum::<f32>();
         assert!((total(true) - total(false)).abs() < 1e-5);
-        assert!(
-            (ex[0].weight / ex[1].weight - 5.0).abs() < 1e-5,
-            "ratios within a class are kept"
-        );
+        assert!((ex[0].weight / ex[1].weight - 5.0).abs() < 1e-5, "ratios within a class are kept");
     }
 
     #[test]
@@ -503,12 +396,7 @@ mod tests {
         let first = train(&examples(&data[..180]), None, &config);
         let cold = train(&examples(&data), None, &config);
         let warm = train(&examples(&data), Some(&first.head), &config);
-        assert!(
-            warm.iterations < cold.iterations,
-            "warm {} vs cold {}",
-            warm.iterations,
-            cold.iterations
-        );
+        assert!(warm.iterations < cold.iterations, "warm {} vs cold {}", warm.iterations, cold.iterations);
         // Both reach the same optimum (the problem is convex).
         for (a, b) in warm.head.weights.iter().zip(&cold.head.weights) {
             assert!((a - b).abs() < 1e-2, "{a} vs {b}");
@@ -526,14 +414,7 @@ mod tests {
         let a = cross_validate(&ex, FOLDS, 42, None, &config, &|| true).unwrap();
         let b = cross_validate(&ex, FOLDS, 42, None, &config, &|| true).unwrap();
         assert_eq!(a, b);
-        assert_eq!(
-            a,
-            Quality {
-                precision: Some(1.0),
-                recall: Some(1.0)
-            },
-            "separable data"
-        );
+        assert_eq!(a, Quality { precision: Some(1.0), recall: Some(1.0) }, "separable data");
         assert_eq!(seed_for("dream"), seed_for("dream"));
         assert_ne!(seed_for("dream"), seed_for("Dream"));
         let mut x: Vec<u32> = (0..20).collect();
@@ -547,17 +428,7 @@ mod tests {
     #[test]
     fn cross_validation_stops_when_asked() {
         let data = toy(40, 4);
-        assert_eq!(
-            cross_validate(
-                &examples(&data),
-                FOLDS,
-                1,
-                None,
-                &Config::default(),
-                &|| false
-            ),
-            None
-        );
+        assert_eq!(cross_validate(&examples(&data), FOLDS, 1, None, &Config::default(), &|| false), None);
     }
 
     #[test]
@@ -569,22 +440,8 @@ mod tests {
                 d.1 = !d.1;
             }
         }
-        let q = cross_validate(
-            &examples(&data),
-            FOLDS,
-            1,
-            None,
-            &Config::default(),
-            &|| true,
-        )
-        .unwrap();
-        assert!(
-            q.precision.unwrap() < 0.95 && q.recall.unwrap() < 0.95,
-            "{q:?}"
-        );
-        assert!(
-            q.precision.unwrap() > 0.6 && q.recall.unwrap() > 0.6,
-            "{q:?}"
-        );
+        let q = cross_validate(&examples(&data), FOLDS, 1, None, &Config::default(), &|| true).unwrap();
+        assert!(q.precision.unwrap() < 0.95 && q.recall.unwrap() < 0.95, "{q:?}");
+        assert!(q.precision.unwrap() > 0.6 && q.recall.unwrap() > 0.6, "{q:?}");
     }
 }

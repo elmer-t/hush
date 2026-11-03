@@ -12,8 +12,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 static TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|[\s(,;])#([\p{L}\p{N}_\-/]+)").unwrap());
-static WIKILINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(!?)\[\[([^\[\]\n]+)\]\]").unwrap());
+static WIKILINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(!?)\[\[([^\[\]\n]+)\]\]").unwrap());
 static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`\n]+`").unwrap());
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -60,10 +59,7 @@ pub fn parse(body: &str) -> Parsed {
         let m = caps.get(1).unwrap();
         let tag = m.as_str().trim_end_matches('/');
         // "#123" is an issue number, not a tag.
-        if in_code(content_start + m.start())
-            || tag.is_empty()
-            || tag.chars().all(|c| c.is_ascii_digit())
-        {
+        if in_code(content_start + m.start()) || tag.is_empty() || tag.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
         push_unique(&mut parsed.tags, tag);
@@ -123,9 +119,7 @@ pub fn normalize_folder(folder: &str) -> String {
 
 /// Returns the YAML text and the byte offset where the content after the frontmatter starts.
 pub fn split_frontmatter(body: &str) -> Option<(&str, usize)> {
-    let rest = body
-        .strip_prefix("---\n")
-        .or_else(|| body.strip_prefix("---\r\n"))?;
+    let rest = body.strip_prefix("---\n").or_else(|| body.strip_prefix("---\r\n"))?;
     let offset = body.len() - rest.len();
     let mut pos = 0;
     for line in rest.split_inclusive('\n') {
@@ -162,17 +156,9 @@ pub fn set_frontmatter_field(body: &str, key: &str, values: &[String]) -> String
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
 
     let mut new_yaml = String::new();
-    match lines
-        .iter()
-        .position(|l| top_level_key(l).is_some_and(|k| k.eq_ignore_ascii_case(key)))
-    {
+    match lines.iter().position(|l| top_level_key(l).is_some_and(|k| k.eq_ignore_ascii_case(key))) {
         Some(start) => {
-            let end = start
-                + 1
-                + lines[start + 1..]
-                    .iter()
-                    .take_while(|l| l.starts_with([' ', '\t', '-']))
-                    .count();
+            let end = start + 1 + lines[start + 1..].iter().take_while(|l| l.starts_with([' ', '\t', '-'])).count();
             let written_key = top_level_key(lines[start]).unwrap_or(key);
             new_yaml.extend(lines[..start].iter().copied());
             if !values.is_empty() {
@@ -205,9 +191,7 @@ fn top_level_key(line: &str) -> Option<&str> {
     if line.starts_with([' ', '\t', '-', '#']) {
         return None;
     }
-    line.split_once(':')
-        .map(|(k, _)| k.trim())
-        .filter(|k| !k.is_empty())
+    line.split_once(':').map(|(k, _)| k.trim()).filter(|k| !k.is_empty())
 }
 
 /// `tags` is always a list; other keys are a plain value when there is only one.
@@ -224,10 +208,7 @@ fn render_field(key: &str, values: &[String], eol: &str) -> String {
 fn yaml_scalar(value: &str) -> String {
     let value = value.replace(['\r', '\n'], " ");
     let value = value.trim();
-    let reserved = matches!(
-        value.to_lowercase().as_str(),
-        "" | "~" | "null" | "true" | "false"
-    );
+    let reserved = matches!(value.to_lowercase().as_str(), "" | "~" | "null" | "true" | "false");
     let plain = !reserved
         && !value.starts_with(|c: char| "-?:,[]{}#&*!|>'\"%@`".contains(c))
         && !value.contains([',', '[', ']', '{', '}'])
@@ -248,12 +229,7 @@ pub fn parse_date(s: &str) -> Option<i64> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Some(dt.timestamp_millis());
     }
-    for fmt in [
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%d %H:%M",
-    ] {
+    for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"] {
         if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
             return Some(dt.and_utc().timestamp_millis());
         }
@@ -288,24 +264,15 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
             "topic" => parsed.topic = values.into_iter().next(),
             "rating" => match rating(&v) {
                 Some(r) => parsed.rating = Some(r),
-                None => parsed
-                    .attributes
-                    .extend(values.into_iter().map(|v| (key.clone(), v))),
+                None => parsed.attributes.extend(values.into_iter().map(|v| (key.clone(), v))),
             },
-            "created" => {
-                parsed.created_at = values
-                    .first()
-                    .and_then(|s| parse_date(s))
-                    .or(parsed.created_at)
-            }
+            "created" => parsed.created_at = values.first().and_then(|s| parse_date(s)).or(parsed.created_at),
             "date" => {
                 if parsed.created_at.is_none() {
                     parsed.created_at = values.first().and_then(|s| parse_date(s));
                 }
             }
-            _ => parsed
-                .attributes
-                .extend(values.into_iter().map(|v| (key.clone(), v))),
+            _ => parsed.attributes.extend(values.into_iter().map(|v| (key.clone(), v))),
         }
     }
 }
@@ -368,11 +335,7 @@ fn code_ranges(body: &str, from: usize) -> Vec<Range<usize>> {
     if let Some((start, _)) = fence {
         ranges.push(start..body.len());
     }
-    ranges.extend(
-        INLINE_CODE
-            .find_iter(&body[from..])
-            .map(|m| from + m.start()..from + m.end()),
-    );
+    ranges.extend(INLINE_CODE.find_iter(&body[from..]).map(|m| from + m.start()..from + m.end()));
     ranges
 }
 
@@ -408,44 +371,18 @@ mod tests {
 
     #[test]
     fn rating_is_a_whole_number_from_1_to_5() {
-        for (yaml, want) in [
-            ("4", Some(4)),
-            ("1", Some(1)),
-            ("5", Some(5)),
-            ("\"3\"", Some(3)),
-            (" 2 ", Some(2)),
-        ] {
+        for (yaml, want) in [("4", Some(4)), ("1", Some(1)), ("5", Some(5)), ("\"3\"", Some(3)), (" 2 ", Some(2))] {
             let p = parse(&format!("---\nrating: {yaml}\n---\n"));
             assert_eq!(p.rating, want, "{yaml}");
-            assert!(
-                p.attributes.is_empty(),
-                "{yaml}: a valid rating isn't also an attribute"
-            );
+            assert!(p.attributes.is_empty(), "{yaml}: a valid rating isn't also an attribute");
         }
-        for (yaml, kept) in [
-            ("4.5", vec!["4.5"]),
-            ("five", vec!["five"]),
-            ("0", vec!["0"]),
-            ("6", vec!["6"]),
-            ("-3", vec!["-3"]),
-            ("[4]", vec!["4"]),
-            ("[4, 5]", vec!["4", "5"]),
-        ] {
+        for (yaml, kept) in [("4.5", vec!["4.5"]), ("five", vec!["five"]), ("0", vec!["0"]), ("6", vec!["6"]), ("-3", vec!["-3"]), ("[4]", vec!["4"]), ("[4, 5]", vec!["4", "5"])] {
             let p = parse(&format!("---\nrating: {yaml}\n---\n"));
             assert_eq!(p.rating, None, "{yaml}");
-            let attrs: Vec<&str> = p
-                .attributes
-                .iter()
-                .filter(|(k, _)| k == "rating")
-                .map(|(_, v)| v.as_str())
-                .collect();
+            let attrs: Vec<&str> = p.attributes.iter().filter(|(k, _)| k == "rating").map(|(_, v)| v.as_str()).collect();
             assert_eq!(attrs, kept, "{yaml}: kept as an attribute");
         }
-        assert_eq!(
-            parse("---\nRating: 3\n---\n").rating,
-            Some(3),
-            "keys are case-insensitive"
-        );
+        assert_eq!(parse("---\nRating: 3\n---\n").rating, Some(3), "keys are case-insensitive");
         assert_eq!(parse("no frontmatter").rating, None);
     }
 
@@ -463,13 +400,8 @@ mod tests {
 
     #[test]
     fn inline_tags() {
-        let p =
-            parse("# Heading\n#one and #two/sub, (#three) #123 a#notatag http://x/#anchor #One");
-        assert_eq!(
-            p.tags,
-            vec!["one", "two/sub", "three", "One"],
-            "tags are case-sensitive"
-        );
+        let p = parse("# Heading\n#one and #two/sub, (#three) #123 a#notatag http://x/#anchor #One");
+        assert_eq!(p.tags, vec!["one", "two/sub", "three", "One"], "tags are case-sensitive");
     }
 
     #[test]
@@ -487,14 +419,7 @@ mod tests {
         let got: Vec<_> = p
             .links
             .iter()
-            .map(|l| {
-                (
-                    l.path.as_str(),
-                    l.title.as_str(),
-                    l.heading.as_deref(),
-                    l.alias.as_deref(),
-                )
-            })
+            .map(|l| (l.path.as_str(), l.title.as_str(), l.heading.as_deref(), l.alias.as_deref()))
             .collect();
         assert_eq!(
             got,
@@ -522,15 +447,9 @@ mod tests {
 
     #[test]
     fn set_field_creates_frontmatter() {
-        assert_eq!(
-            set("Body", "author", &["Ada"]),
-            "---\nauthor: Ada\n---\nBody"
-        );
+        assert_eq!(set("Body", "author", &["Ada"]), "---\nauthor: Ada\n---\nBody");
         assert_eq!(set("Body", "author", &[]), "Body");
-        assert_eq!(
-            set("a\r\nb", "topic", &["T"]),
-            "---\r\ntopic: T\r\n---\r\na\r\nb"
-        );
+        assert_eq!(set("a\r\nb", "topic", &["T"]), "---\r\ntopic: T\r\n---\r\na\r\nb");
     }
 
     #[test]
@@ -540,44 +459,22 @@ mod tests {
             set(body, "tags", &["a", "c"]),
             "---\n# comment\nTags: [a, c]\nauthor: Ada\n---\nBody #x"
         );
-        assert_eq!(
-            set(body, "author", &["Bea"]),
-            "---\n# comment\nTags:\n  - a\n  - b\nauthor: Bea\n---\nBody #x"
-        );
-        assert_eq!(
-            set(body, "mood", &["calm"]),
-            "---\n# comment\nTags:\n  - a\n  - b\nauthor: Ada\nmood: calm\n---\nBody #x"
-        );
+        assert_eq!(set(body, "author", &["Bea"]), "---\n# comment\nTags:\n  - a\n  - b\nauthor: Bea\n---\nBody #x");
+        assert_eq!(set(body, "mood", &["calm"]), "---\n# comment\nTags:\n  - a\n  - b\nauthor: Ada\nmood: calm\n---\nBody #x");
     }
 
     #[test]
     fn set_field_removes_key_and_empty_frontmatter() {
-        assert_eq!(
-            set("---\nauthor: Ada\ntopic: T\n---\nBody", "author", &[]),
-            "---\ntopic: T\n---\nBody"
-        );
+        assert_eq!(set("---\nauthor: Ada\ntopic: T\n---\nBody", "author", &[]), "---\ntopic: T\n---\nBody");
         assert_eq!(set("---\nauthor: Ada\n---\nBody", "author", &[]), "Body");
     }
 
     #[test]
     fn set_field_values_round_trip() {
-        let tricky = [
-            "a: b",
-            "#notcomment",
-            "x, y",
-            "say \"hi\"",
-            "null",
-            "2019",
-            "back\\slash",
-            "[x]",
-        ];
+        let tricky = ["a: b", "#notcomment", "x, y", "say \"hi\"", "null", "2019", "back\\slash", "[x]"];
         for value in tricky {
             let body = set("", "note", &[value]);
-            assert_eq!(
-                parse(&body).attributes,
-                vec![("note".to_string(), value.to_string())],
-                "{body}"
-            );
+            assert_eq!(parse(&body).attributes, vec![("note".to_string(), value.to_string())], "{body}");
         }
         let body = set("", "tags", &["a b", "c,d"]);
         assert_eq!(parse(&body).frontmatter_tags, vec!["a", "b", "c", "d"]);
