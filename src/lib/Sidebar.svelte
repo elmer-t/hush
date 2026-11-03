@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
+  import { indexText, indexing } from "$lib/indexing";
   import {
     api,
     errorMessage,
@@ -146,6 +147,7 @@
 
   // The background indexing job (embeddings): a progress line while it works.
   let indexStatus = $state<IndexStatus>({ state: "idle" });
+  const progress = $derived(indexing(indexStatus));
   // Why features that need the model are off, if they are: the footer says so until
   // they work again (no pop-up to dismiss).
   const modelReason = $derived(reducedText());
@@ -837,11 +839,11 @@
         <button class="ghost index failed wrap" onclick={() => model.open?.()} title="Off: {MODEL_FEATURES}. Open Settings → Model">
           Model off: {modelReason}. Settings → Model
         </button>
-      {:else if indexStatus.state === "indexing" && indexStatus.done < indexStatus.total}
+      {:else if progress}
         <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
-          Indexing {indexStatus.done.toLocaleString()} / {indexStatus.total.toLocaleString()}{#if indexStatus.etaSecs != null},
-            {timeLeft(indexStatus.etaSecs)}{/if}
-          {#if indexStatus.total - indexStatus.done >= PAUSE_NOTICE_MIN}
+          Indexing: {indexText(progress)}{#if progress.etaSecs != null},
+            {timeLeft(progress.etaSecs)}{/if}
+          {#if progress.total - progress.complete >= PAUSE_NOTICE_MIN}
             <span class="pause">Indexing pauses when the vault locks.</span>
           {/if}
         </button>

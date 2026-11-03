@@ -5,6 +5,13 @@
 //! Two settings drive it: `embedding_model` is the model the job embeds with, and
 //! `embedding_model_ready` the model whose vectors are complete. Everything that reads
 //! vectors uses the ready model, so switching models never leaves the user without them.
+//!
+//! Indexing has two phases ([`QueuePhase`]). A long note first gets a vector from its
+//! first chunk only, stored with [`embed::partial_hash`] as its content hash, and stays
+//! queued with `version` set to -1; the second phase replaces that vector with the full
+//! one and takes the note off the queue. Every queueing adds 1 to `version`, so a save
+//! moves a note back to the first phase (-1 becomes 0) without any schema change: an
+//! older Hush reading the vault simply sees queued notes and embeds them whole.
 
 use rusqlite::{OptionalExtension, params};
 use zeroize::Zeroizing;
@@ -46,7 +53,46 @@ pub struct QueuedVector {
     pub version: i64,
     pub hash: [u8; 32],
     pub vector: Vec<f32>,
+    /// Made from the text's first chunk only: the note stays queued for the second
+    /// phase.
+    pub partial: bool,
 }
+
+/// The two indexing phases: notes waiting for any vector, then notes whose vector comes
+/// from their first chunk only (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueuePhase {
+    /// Queued notes without a vector of their current text (`version` >= 0).
+    First,
+    /// Notes with a first-chunk vector of their current text, waiting for the full one
+    /// (`version` -1).
+    Rest,
+}
+
+impl QueuePhase {
+    fn condition(self) -> &'static str {
+        match self {
+            Self::First => "q.version >= 0",
+            Self::Rest => "q.version < 0",
+        }
+    }
+}
+
+/// How many notes are queued in each phase.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueueCounts {
+    pub first: usize,
+    pub rest: usize,
+}
+
+impl QueueCounts {
+    pub fn total(self) -> usize {
+        self.first + self.rest
+    }
+}
+
+/// Moves a note to the second phase unless it was queued again since it was read.
+const TO_REST: &str = "UPDATE embedding_dirty SET version = -1 WHERE note_id = ?1 AND version = ?2";
 
 /// One page of the embedding queue (see [`Vault::queued_embeddings`]).
 #[derive(Default)]
@@ -55,6 +101,9 @@ pub struct QueuePage {
     pub stale: Vec<QueuedText>,
     /// Queued notes that needed no embedding and left the queue.
     pub settled: usize,
+    /// First phase only: queued notes that already had a first-chunk vector of their
+    /// text and moved on to the second phase without embedding.
+    pub partial: usize,
     /// Of those, the ones without a vector now (emptied or trashed).
     pub dropped: Vec<i64>,
     /// Where to continue, or `None` when this was the last page.
@@ -165,28 +214,40 @@ impl Vault {
         Ok(scan)
     }
 
-    /// Up to `limit` queued notes after `after`, most recently updated first. Those
-    /// whose text still matches their `model` vector, that have no text or that are
-    /// trashed leave the queue here (losing any vector they had); the rest are returned
-    /// with their text, to embed and write with [`Vault::write_queued_embeddings`].
-    pub fn queued_embeddings(&mut self, model: &str, after: &QueueCursor, limit: u32) -> Result<QueuePage> {
+    /// Up to `limit` notes queued in `phase` after `after`, most recently updated first.
+    /// Those whose text still matches their `model` vector, that have no text or that
+    /// are trashed leave the queue here (losing any vector they had); in the first phase,
+    /// those that already have a first-chunk vector of their text move to the second.
+    /// The rest are returned with their text, to embed and write with
+    /// [`Vault::write_queued_embeddings`].
+    pub fn queued_embeddings(&mut self, model: &str, after: &QueueCursor, limit: u32, phase: QueuePhase) -> Result<QueuePage> {
         let tx = self.conn.transaction()?;
         let mut page = QueuePage::default();
         let mut settled = Vec::new();
+        let mut partial = Vec::new();
+        let condition = phase.condition();
         // The page's notes in order. A short queue is sorted; for a long one the index
         // on `updated_at` gives the order and the queue is looked up per note.
-        let queued: i64 =
-            tx.query_row(&format!("SELECT count(*) FROM (SELECT 1 FROM embedding_dirty LIMIT {})", QUEUE_SORT_MAX + 1), [], |r| r.get(0))?;
+        let queued: i64 = tx.query_row(
+            &format!("SELECT count(*) FROM (SELECT 1 FROM embedding_dirty q WHERE {condition} LIMIT {})", QUEUE_SORT_MAX + 1),
+            [],
+            |r| r.get(0),
+        )?;
         let order: Vec<(i64, i64)> = {
             let sql = if queued <= QUEUE_SORT_MAX {
-                "SELECT n.id, n.updated_at FROM embedding_dirty q CROSS JOIN notes n ON n.id = q.note_id
-                 WHERE (n.updated_at, n.id) < (?1, ?2) ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+                format!(
+                    "SELECT n.id, n.updated_at FROM embedding_dirty q CROSS JOIN notes n ON n.id = q.note_id
+                     WHERE {condition} AND (n.updated_at, n.id) < (?1, ?2) ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+                )
             } else {
-                "SELECT n.id, n.updated_at FROM notes n INDEXED BY notes_updated
-                 WHERE (n.updated_at, n.id) < (?1, ?2) AND EXISTS (SELECT 1 FROM embedding_dirty q WHERE q.note_id = n.id)
-                 ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+                format!(
+                    "SELECT n.id, n.updated_at FROM notes n INDEXED BY notes_updated
+                     WHERE (n.updated_at, n.id) < (?1, ?2)
+                       AND EXISTS (SELECT 1 FROM embedding_dirty q WHERE q.note_id = n.id AND {condition})
+                     ORDER BY n.updated_at DESC, n.id DESC LIMIT ?3"
+                )
             };
-            let mut stmt = tx.prepare_cached(sql)?;
+            let mut stmt = tx.prepare_cached(&sql)?;
             stmt.query_map(params![after.updated_at, after.id, limit], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?
         };
@@ -218,6 +279,8 @@ impl Vault {
                         let hash = embed::content_hash(&text);
                         if stored.as_deref() == Some(&hash[..]) {
                             settled.push((id, version, None));
+                        } else if phase == QueuePhase::First && stored.as_deref() == Some(&embed::partial_hash(&hash)[..]) {
+                            partial.push((id, version));
                         } else {
                             page.stale.push(QueuedText { note: NoteText { id, text, hash }, version });
                         }
@@ -237,21 +300,33 @@ impl Vault {
             }
             tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?.execute(params![id, version])?;
         }
+        for &(id, version) in &partial {
+            tx.prepare_cached(TO_REST)?.execute(params![id, version])?;
+        }
         tx.commit()?;
         page.settled = settled.len();
+        page.partial = partial.len();
         Ok(page)
     }
 
-    /// Stores `model` vectors for queued notes, as [`Vault::write_embeddings`], and takes
-    /// each note off the queue unless it was queued again since its text was read.
+    /// Stores `model` vectors for queued notes, as [`Vault::write_embeddings`]. Unless a
+    /// note was queued again since its text was read, a full vector takes it off the
+    /// queue and a partial one (stored with [`embed::partial_hash`]) moves it to the
+    /// second phase.
     pub fn write_queued_embeddings(&mut self, model: &str, vectors: &[QueuedVector]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut write = tx.prepare_cached(WRITE_EMBEDDING)?;
             let mut done = tx.prepare_cached("DELETE FROM embedding_dirty WHERE note_id = ?1 AND version = ?2")?;
+            let mut rest = tx.prepare_cached(TO_REST)?;
             for v in vectors {
-                write.execute(params![v.id, model, &v.hash[..], embed::vector_to_blob(&v.vector)])?;
-                done.execute(params![v.id, v.version])?;
+                let hash = if v.partial { embed::partial_hash(&v.hash) } else { v.hash };
+                write.execute(params![v.id, model, &hash[..], embed::vector_to_blob(&v.vector)])?;
+                if v.partial {
+                    rest.execute(params![v.id, v.version])?;
+                } else {
+                    done.execute(params![v.id, v.version])?;
+                }
             }
         }
         tx.commit()?;
@@ -290,6 +365,21 @@ impl Vault {
     pub fn embedding_queue_len(&self) -> Result<usize> {
         let n: i64 = self.conn.query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0))?;
         Ok(n as usize)
+    }
+
+    /// How many notes are queued in each phase.
+    pub fn embedding_queue_counts(&self) -> Result<QueueCounts> {
+        let (first, rest): (i64, i64) = self.conn.query_row(
+            "SELECT coalesce(sum(version >= 0), 0), coalesce(sum(version < 0), 0) FROM embedding_dirty",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(QueueCounts { first: first as usize, rest: rest as usize })
+    }
+
+    /// Whether any queued note waits for a first vector (see [`QueuePhase::First`]).
+    pub fn embedding_first_pending(&self) -> Result<bool> {
+        Ok(self.conn.prepare_cached("SELECT 1 FROM embedding_dirty WHERE version >= 0 LIMIT 1")?.exists([])?)
     }
 
     /// Whether the embedding job has anything to do: queued or deleted notes, a model

@@ -10,7 +10,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 use tokenizers::{Encoding, PostProcessor, Token, Tokenizer};
 
-use super::{EmbedError, Embedder, ModelDescriptor, TokenPooling, normalize, pool_chunks, read_verified};
+use super::{EmbedError, Embedder, FirstChunk, ModelDescriptor, TokenPooling, normalize, pool_chunks, read_verified};
 
 /// A note longer than this many chunks is embedded from its start only, so one huge
 /// note can't keep the job busy for minutes.
@@ -156,6 +156,23 @@ impl Embedder for OnnxEmbedder {
 
     fn embed_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
         self.batch_with(texts, self.descriptor.prefix, stop)
+    }
+
+    /// Each text's first chunk on its own run (for the int8 model, see
+    /// [`OnnxEmbedder::batch_with`]); a one-chunk text gets exactly its full vector.
+    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            if stop() {
+                return Err(EmbedError::Stopped);
+            }
+            let mut chunks = self.chunks(text, self.descriptor.prefix)?;
+            let complete = chunks.len() <= 1;
+            chunks.truncate(1);
+            let vectors = if chunks.is_empty() { Vec::new() } else { self.run(&chunks)? };
+            out.push(FirstChunk { vector: pool_chunks(self.descriptor.chunk_pooling, &vectors), complete });
+        }
+        Ok(out)
     }
 }
 

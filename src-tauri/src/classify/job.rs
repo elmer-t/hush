@@ -74,28 +74,32 @@ pub struct TrainPass {
 /// `report` gets every pass that changed a head.
 ///
 /// While notes are queued for embedding it waits too: every batch of new vectors
-/// changes every head's inputs, and batches can be more than `quiet` apart. A queue
-/// that hasn't shrunk for [`STALLED_QUIETS`] times `quiet` (the model can't load, say)
-/// no longer holds it back.
+/// changes every head's inputs, and batches can be more than `quiet` apart. That
+/// includes notes that only have a first-chunk vector (they stay queued until their
+/// full one is written), so heads train on full vectors once instead of again when
+/// each partial one is replaced. A queue whose counts haven't moved for
+/// [`STALLED_QUIETS`] times `quiet` (the model can't load, say) no longer holds it back.
 pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, report: impl Fn(&TrainPass)) {
     let activity = session.activity().reporter(generation);
     let mut seen = None;
-    // The queue length, and since when it has been that.
-    let mut queue: Option<(usize, Instant)> = None;
+    // The queue's counts per indexing phase, and since when they have been that: the
+    // first phase moves notes between the counts without shrinking the queue.
+    let mut queue: Option<(db::QueueCounts, Instant)> = None;
     // A pass on unlock, for heads that went stale while locked (or never were trained).
     let mut changed_at = Some(Instant::now() - quiet);
     loop {
-        let (changes, queued) =
-            match session.with_vault_quiet(generation, |v| Ok((v.change_count(), v.embedding_queue_len()?))) {
+        let (changes, counts) =
+            match session.with_vault_quiet(generation, |v| Ok((v.change_count(), v.embedding_queue_counts()?))) {
                 Ok(c) => c,
                 Err(_) => return,
             };
+        let queued = counts.total();
         if seen.is_some_and(|s| s != changes) {
             changed_at = Some(Instant::now());
         }
         seen = Some(changes);
-        if queue.is_none_or(|(n, _)| n != queued) {
-            queue = Some((queued, Instant::now()));
+        if queue.is_none_or(|(n, _)| n != counts) {
+            queue = Some((counts, Instant::now()));
         }
         let embedding = queued > 0 && queue.is_some_and(|(_, since)| since.elapsed() < quiet * STALLED_QUIETS);
         // The notes an import brings have no vectors yet: wait until it is over.
