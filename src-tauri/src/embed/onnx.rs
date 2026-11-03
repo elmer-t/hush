@@ -159,15 +159,20 @@ impl OnnxEmbedder {
             .collect()
     }
 
-    /// One unit-length vector per chunk.
+    /// One unit-length vector per chunk. On the GPU a run of fewer than [`CHUNK_BATCH`]
+    /// chunks is filled up with copies of its chunks, whose vectors are dropped: DirectML
+    /// ran a note's last few chunks no faster than a full batch, and a full batch every
+    /// time made indexing 3,000-word notes 27% faster (8.8 to 11.2 notes/s, #105).
     fn run(&self, chunks: &[Encoding]) -> Result<Vec<Vec<f32>>, EmbedError> {
         let err = |e: ort::Error| EmbedError::Inference(e.to_string());
         let rows = chunks.len();
+        let run_rows = if self.device == Device::Gpu && rows > 0 { rows.max(CHUNK_BATCH) } else { rows };
         let len = chunks.iter().map(Encoding::len).max().unwrap_or(0);
-        let mut ids = vec![0i64; rows * len];
-        let mut mask = vec![0i64; rows * len];
-        let mut types = vec![0i64; rows * len];
-        for (r, chunk) in chunks.iter().enumerate() {
+        let mut ids = vec![0i64; run_rows * len];
+        let mut mask = vec![0i64; run_rows * len];
+        let mut types = vec![0i64; run_rows * len];
+        for r in 0..run_rows {
+            let chunk = &chunks[r % rows];
             for (c, ((&id, &m), &t)) in
                 chunk.get_ids().iter().zip(chunk.get_attention_mask()).zip(chunk.get_type_ids()).enumerate()
             {
@@ -176,7 +181,7 @@ impl OnnxEmbedder {
                 types[r * len + c] = i64::from(t);
             }
         }
-        let shape = [rows as i64, len as i64];
+        let shape = [run_rows as i64, len as i64];
         let mut inputs = vec![
             ("input_ids", Tensor::from_array((shape, ids)).map_err(err)?.into_dyn()),
             ("attention_mask", Tensor::from_array((shape, mask.clone())).map_err(err)?.into_dyn()),
@@ -201,7 +206,7 @@ impl OnnxEmbedder {
             }
         };
         let dims = self.descriptor.dims;
-        if out_shape.len() != 3 || out_shape[0] as usize != rows || out_shape[2] as usize != dims {
+        if out_shape.len() != 3 || out_shape[0] as usize != run_rows || out_shape[2] as usize != dims {
             return Err(EmbedError::Inference(format!("unexpected model output shape {out_shape:?}")));
         }
         let seq = out_shape[1] as usize;

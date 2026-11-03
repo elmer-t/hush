@@ -6,28 +6,50 @@
 //! `HUSH_GPU_MODELS`, or else in the app's local data `models` folder. Run in release:
 //!
 //! `cargo test --release --manifest-path src-tauri/Cargo.toml --test gpu_model -- --ignored --nocapture`
+//!
+//! The second test indexes a vault with the embedding job on the GPU. It is a temporary
+//! one unless `HUSH_KEEP_VAULT` names a new `.hush` file to keep (passphrase
+//! [`common::PASS`]).
+
+mod common;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
-use hush_lib::embed::job::BATCH;
+use hush_lib::db::Vault;
+use hush_lib::embed::job::{self, BATCH, EmbedderSource};
 use hush_lib::embed::onnx::{Device, OnnxEmbedder};
-use hush_lib::embed::{self, Embedder, gpu};
+use hush_lib::embed::{self, EmbedError, Embedder, ModelDescriptor, gpu};
+use hush_lib::session::Session;
 
 const NOTES: usize = 50;
 const WORDS: usize = 3_000;
+const MODEL: &str = "bge-small-en-v1.5-fp16";
 
-fn model_dir() -> PathBuf {
-    std::env::var_os("HUSH_GPU_MODELS")
+/// The model's folder and descriptor, or `None` (and a note why) when its files are missing.
+fn model() -> Option<(PathBuf, &'static ModelDescriptor)> {
+    let dir = std::env::var_os("HUSH_GPU_MODELS")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default())
                 .join("com.redheadit.hush")
                 .join("models")
-        })
+        });
+    let d = embed::descriptor(MODEL).unwrap();
+    if !dir.join(d.model.name).exists() || !dir.join(d.tokenizer.name).exists() {
+        println!("SKIPPED: the fp16 model files aren't in {}", dir.display());
+        return None;
+    }
+    Some((dir, d))
 }
 
-fn notes() -> Vec<String> {
+fn threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
+}
+
+/// `NOTES` titles and bodies of `WORDS` words, cut from `docs/decisions.md`.
+fn bodies() -> Vec<(String, String)> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/decisions.md");
     let text = std::fs::read_to_string(path).unwrap();
     let all: Vec<&str> = text.split_whitespace().collect();
@@ -35,10 +57,15 @@ fn notes() -> Vec<String> {
         .map(|i| {
             let start = (i * 997) % all.len();
             let body: Vec<&str> = (0..WORDS).map(|w| all[(start + w) % all.len()]).collect();
-            embed::note_text(&format!("Note {i}"), &body.join(" "))
-                .unwrap()
-                .to_string()
+            (format!("Note {i}"), body.join(" "))
         })
+        .collect()
+}
+
+fn notes() -> Vec<String> {
+    bodies()
+        .iter()
+        .map(|(title, body)| embed::note_text(title, body).unwrap().to_string())
         .collect()
 }
 
@@ -73,21 +100,14 @@ fn measure_the_fp16_model_on_the_gpu_and_the_cpu() {
     let adapters = gpu::adapters();
     println!("adapters: {adapters:?}");
     println!("best: {:?}", gpu::best(&adapters));
-
-    let dir = model_dir();
-    let d = embed::descriptor("bge-small-en-v1.5-fp16").unwrap();
-    if !dir.join(d.model.name).exists() || !dir.join(d.tokenizer.name).exists() {
-        println!("SKIPPED: the fp16 model files aren't in {}", dir.display());
-        return;
-    }
+    let Some((dir, d)) = model() else { return };
     let texts = notes();
     let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let threads = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
 
     let mut results = Vec::new();
     for device in [Device::Gpu, Device::Cpu] {
         let start = Instant::now();
-        let model = match OnnxEmbedder::load_on(&dir, d, threads, device) {
+        let model = match OnnxEmbedder::load_on(&dir, d, threads(), device) {
             Ok(m) => m,
             Err(e) => {
                 println!("{device:?}: FAILED to load: {e}");
@@ -146,4 +166,63 @@ fn measure_the_fp16_model_on_the_gpu_and_the_cpu() {
             "the GPU's vectors differ from the CPU's: {min}"
         );
     }
+}
+
+/// Hands the job one model, loaded once.
+struct Loaded(Arc<dyn Embedder>);
+
+impl EmbedderSource for Loaded {
+    fn embedder(&self, _: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+#[ignore = "needs the fp16 model files and a GPU; prints measurements"]
+fn index_a_vault_on_the_gpu() {
+    let Some((dir, d)) = model() else { return };
+    let temp = tempfile::tempdir().unwrap();
+    let path = std::env::var_os("HUSH_KEEP_VAULT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temp.path().join("gpu-test.hush"));
+    assert!(!path.exists(), "{} exists already", path.display());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let mut vault = Vault::create(&path, common::PASS).unwrap();
+    vault.set_embedding_model(MODEL).unwrap();
+    for (title, body) in bodies() {
+        vault.create_note("", &title, &body).unwrap();
+    }
+    let session = Session::default();
+    let generation = session.unlock(vault, path.clone()).unwrap();
+
+    let model = OnnxEmbedder::load_on(&dir, d, threads(), Device::Gpu).unwrap();
+    println!("model {MODEL} runs on {:?}", model.device());
+    let source = Loaded(Arc::new(model));
+    let start = Instant::now();
+    for n in 1.. {
+        let pass = job::pass(&session, generation, &source, &mut |_| {}).unwrap();
+        let queued = session
+            .with_vault_quiet(generation, |v| v.embedding_queue_len())
+            .unwrap();
+        println!(
+            "pass {n}: {} stale, {queued} queued, {:.1}s so far",
+            pass.stale,
+            start.elapsed().as_secs_f64()
+        );
+        if pass.stale == 0 && queued == 0 {
+            break;
+        }
+        assert!(n < 10, "indexing never finished");
+    }
+    let secs = start.elapsed().as_secs_f64();
+    let indexed = session.with_vault(|v| v.embedding_count(MODEL)).unwrap();
+    println!(
+        "job: {indexed} of {NOTES} notes in {secs:.1}s = {:.2} notes/s",
+        NOTES as f64 / secs
+    );
+    assert_eq!(indexed, NOTES);
+    session.lock();
+    println!("vault: {}", path.display());
 }
