@@ -43,9 +43,18 @@ sha2 = "0.10"
 # descriptor's pinned URL (see docs/decisions.md, Optional models). Nothing else uses it.
 ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
 
+# GPU embedding on Windows through DirectML (issue #105, prototype). `download-binaries`
+# then fetches ONNX Runtime's DirectML build; DirectML needs memory pattern off and
+# sequential execution on the session.
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["directml"] }
+
 [dev-dependencies]
 insta = "1.49.0"
 tempfile = "3"
+# The fp16 model export returns float16 tensors; only the GPU benchmark reads them.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["half"] }
+half = { version = "2.1", default-features = false }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
