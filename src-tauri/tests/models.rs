@@ -8,23 +8,42 @@ use std::sync::{Arc, Mutex};
 
 use hush_lib::db::Vault;
 use hush_lib::embed::job::{self, EmbedderSource};
-use hush_lib::embed::models::{self, FileChecks, LoadState, ModelDirs, ModelTracker, ReducedReason, SwitchError};
-use hush_lib::embed::{self, ChunkPooling, EmbedError, Embedder, ModelDescriptor, ModelFile, TokenPooling};
+use hush_lib::embed::models::{
+    self, FileChecks, LoadState, ModelDirs, ModelTracker, ReducedReason, SwitchError,
+};
+use hush_lib::embed::{
+    self, ChunkPooling, EmbedError, Embedder, ModelDescriptor, ModelFile, TokenPooling,
+};
 use hush_lib::session::Session;
 
 // sha256("hello") and sha256("{}").
 const HELLO: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 const BRACES: &str = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 
-const fn stub(id: &'static str, model: &'static str, tokenizer: &'static str, dims: usize) -> ModelDescriptor {
+const fn stub(
+    id: &'static str,
+    model: &'static str,
+    tokenizer: &'static str,
+    dims: usize,
+) -> ModelDescriptor {
     ModelDescriptor {
         id,
         name: id,
         licence: "MIT",
         licence_url: "",
         bundled: false,
-        model: ModelFile { name: model, url: "", sha256: HELLO, size: 5 },
-        tokenizer: ModelFile { name: tokenizer, url: "", sha256: BRACES, size: 2 },
+        model: ModelFile {
+            name: model,
+            url: "",
+            sha256: HELLO,
+            size: 5,
+        },
+        tokenizer: ModelFile {
+            name: tokenizer,
+            url: "",
+            sha256: BRACES,
+            size: 2,
+        },
         dims,
         max_tokens: 16,
         token_pooling: TokenPooling::Mean,
@@ -32,15 +51,22 @@ const fn stub(id: &'static str, model: &'static str, tokenizer: &'static str, di
         prefix: "",
         query_prefix: "",
         suggestion_threshold: 0.5,
+        gpu: false,
+        batch_across_notes: false,
     }
 }
 
-const CATALOGUE: &[ModelDescriptor] =
-    &[stub("stub-4", "stub-4.onnx", "stub-4.json", 4), stub("stub-8", "stub-8.onnx", "stub-8.json", 8)];
+const CATALOGUE: &[ModelDescriptor] = &[
+    stub("stub-4", "stub-4.onnx", "stub-4.json", 4),
+    stub("stub-8", "stub-8.onnx", "stub-8.json", 8),
+];
 
 /// Optional models live in the user folder; nothing is bundled here.
 fn dirs(user: &Path) -> ModelDirs {
-    ModelDirs { bundled: user.join("bundled"), user: user.to_path_buf() }
+    ModelDirs {
+        bundled: user.join("bundled"),
+        user: user.to_path_buf(),
+    }
 }
 
 fn install(dir: &Path, d: &ModelDescriptor) {
@@ -76,7 +102,10 @@ struct Source<'a> {
 
 impl EmbedderSource for Source<'_> {
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
-        let d = CATALOGUE.iter().find(|d| d.id == model).ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
+        let d = CATALOGUE
+            .iter()
+            .find(|d| d.id == model)
+            .ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
         let result = match self.checks.availability(self.dir, d) {
             models::Availability::Available { .. } => Ok(Arc::new(Fake(d)) as Arc<dyn Embedder>),
             models::Availability::Missing { file } => Err(EmbedError::Missing(self.dir.join(file))),
@@ -90,7 +119,10 @@ impl EmbedderSource for Source<'_> {
     }
 
     fn vault_models(&self, model: &str, ready: Option<&str>) {
-        self.vault_reports.lock().unwrap().push((model.into(), ready.map(Into::into)));
+        self.vault_reports
+            .lock()
+            .unwrap()
+            .push((model.into(), ready.map(Into::into)));
         self.tracker.vault_models(model, ready);
     }
 }
@@ -119,7 +151,11 @@ fn switching_between_two_available_models_works_end_to_end() {
     let session = Session::default();
     let g = session.unlock(vault, path).unwrap();
     let ids: Vec<i64> = session
-        .with_vault(|v| (0..5).map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}"))).collect())
+        .with_vault(|v| {
+            (0..5)
+                .map(|i| v.create_note("", &format!("N{i}"), &format!("text {i}")))
+                .collect()
+        })
         .unwrap();
     let source = Source {
         dir: models.path(),
@@ -138,33 +174,92 @@ fn switching_between_two_available_models_works_end_to_end() {
     );
     index(&session, g, &source);
     assert_eq!(ready(&session).as_deref(), Some("stub-4"));
-    assert_eq!(source.tracker.status().ready_model.as_deref(), Some("stub-4"));
+    assert_eq!(
+        source.tracker.status().ready_model.as_deref(),
+        Some("stub-4")
+    );
     assert_eq!(source.tracker.status().reduced, None);
 
     // Not on this computer, or unknown: refused, and the vault keeps its model.
-    let refused = models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-8");
-    assert!(matches!(&refused, Err(SwitchError::Unavailable(p)) if p.contains("stub-8.json is missing")), "{refused:?}");
-    let unknown = models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "nope");
+    let refused = models::switch(
+        &session,
+        &source.checks,
+        &dirs(models.path()),
+        CATALOGUE,
+        "stub-8",
+    );
+    assert!(
+        matches!(&refused, Err(SwitchError::Unavailable(p)) if p.contains("stub-8.json is missing")),
+        "{refused:?}"
+    );
+    let unknown = models::switch(
+        &session,
+        &source.checks,
+        &dirs(models.path()),
+        CATALOGUE,
+        "nope",
+    );
     assert!(matches!(unknown, Err(SwitchError::Unknown(_))));
-    assert_eq!(session.with_vault(|v| v.embedding_model()).unwrap(), "stub-4");
+    assert_eq!(
+        session.with_vault(|v| v.embedding_model()).unwrap(),
+        "stub-4"
+    );
 
     // Installed: the switch queues every note; the old vectors serve meanwhile.
     install(models.path(), &CATALOGUE[1]);
-    models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-8").unwrap();
-    assert_eq!(session.with_vault(|v| v.embedding_queue_len()).unwrap(), ids.len());
-    assert_eq!(session.with_vault(|v| v.note_embedding(ids[0])).unwrap().unwrap().len(), 4);
+    models::switch(
+        &session,
+        &source.checks,
+        &dirs(models.path()),
+        CATALOGUE,
+        "stub-8",
+    )
+    .unwrap();
+    assert_eq!(
+        session.with_vault(|v| v.embedding_queue_len()).unwrap(),
+        ids.len()
+    );
+    assert_eq!(
+        session
+            .with_vault(|v| v.note_embedding(ids[0]))
+            .unwrap()
+            .unwrap()
+            .len(),
+        4
+    );
     source.tracker.vault_models("stub-8", Some("stub-4"));
-    assert_eq!(source.tracker.status().reduced, None, "mid-switch nothing is off");
+    assert_eq!(
+        source.tracker.status().reduced,
+        None,
+        "mid-switch nothing is off"
+    );
 
     index(&session, g, &source);
     assert_eq!(ready(&session).as_deref(), Some("stub-8"));
-    assert_eq!(source.tracker.status().ready_model.as_deref(), Some("stub-8"));
+    assert_eq!(
+        source.tracker.status().ready_model.as_deref(),
+        Some("stub-8")
+    );
     for &id in &ids {
-        assert_eq!(session.with_vault(|v| v.note_embedding(id)).unwrap().unwrap().len(), 8);
+        assert_eq!(
+            session
+                .with_vault(|v| v.note_embedding(id))
+                .unwrap()
+                .unwrap()
+                .len(),
+            8
+        );
     }
 
     // And back again.
-    models::switch(&session, &source.checks, &dirs(models.path()), CATALOGUE, "stub-4").unwrap();
+    models::switch(
+        &session,
+        &source.checks,
+        &dirs(models.path()),
+        CATALOGUE,
+        "stub-4",
+    )
+    .unwrap();
     index(&session, g, &source);
     assert_eq!(ready(&session).as_deref(), Some("stub-4"));
 }
@@ -178,7 +273,9 @@ fn a_missing_model_shows_as_reduced_functionality_with_the_file_named() {
     vault.set_embedding_model("stub-4").unwrap();
     let session = Session::default();
     let g = session.unlock(vault, path).unwrap();
-    session.with_vault(|v| v.create_note("", "T", "Text")).unwrap();
+    session
+        .with_vault(|v| v.create_note("", "T", "Text"))
+        .unwrap();
     let source = Source {
         dir: models.path(),
         checks: FileChecks::default(),

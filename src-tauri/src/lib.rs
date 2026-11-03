@@ -49,7 +49,10 @@ pub fn run() {
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = Config::new(config_path);
-            let all_cores = config.get().index_all_cores;
+            let (all_cores, gpu_off) = {
+                let c = config.get();
+                (c.index_all_cores, c.index_gpu_off)
+            };
             app.manage(config);
             // Downloaded and imported models go to the local (not roaming) app data
             // folder: they are large, and per machine.
@@ -57,7 +60,7 @@ pub fn run() {
                 bundled: app.path().resource_dir()?.join("models"),
                 user: app.path().app_local_data_dir()?.join("models"),
             };
-            app.manage(Indexer::new(app.handle().clone(), dirs, all_cores));
+            app.manage(Indexer::new(app.handle().clone(), dirs, all_cores, gpu_off));
             commands::activity::start_emitter(app.handle());
 
             // Auto-lock runs here rather than in the webview, whose timers are throttled
@@ -76,7 +79,9 @@ pub fn run() {
         // Closing is handled here rather than with a webview close listener, which would
         // keep the window open forever if the page reloaded (as it does on lock).
         .on_window_event(|window, event| {
-            let WindowEvent::CloseRequested { api, .. } = event else { return };
+            let WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
             let app = window.app_handle();
             if app.state::<Session>().path().is_none() {
                 return;
@@ -155,6 +160,8 @@ pub fn run() {
             commands::embeddings::index_status,
             commands::embeddings::index_all_cores,
             commands::embeddings::set_index_all_cores,
+            commands::embeddings::gpu_status,
+            commands::embeddings::set_index_gpu,
             commands::embeddings::model_status,
             commands::embeddings::model_overview,
             commands::embeddings::set_embedding_model,

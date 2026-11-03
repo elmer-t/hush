@@ -27,11 +27,14 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
-    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCounts, QueueCursor, QueuePage, QueuePhase, QueuedText,
-    QueuedVector, StoredVector,
+    EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCounts,
+    QueueCursor, QueuePage, QueuePhase, QueuedText, QueuedVector, StoredVector,
 };
 pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
-pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
+pub use heads::{
+    ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus,
+    new_stored_head,
+};
 pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
@@ -39,14 +42,24 @@ pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{NewNote, Note, NoteSummary};
 pub use reasons::{MAX_VIA, Reasons};
 pub use recent::{
-    DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING,
-    RECENT_OPENED_SETTING,
+    DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT,
+    RECENT_OPENED_COUNT_SETTING, RECENT_OPENED_SETTING,
 };
-pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
+pub use review::{
+    REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score,
+    sort_review,
+};
 pub use schema::Upgrade;
-pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
-pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
-pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote};
+pub use search::{
+    DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage,
+    SearchQuery,
+};
+pub use tags::{
+    SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion,
+};
+pub use trash::{
+    DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -84,7 +97,10 @@ pub enum Error {
     InvalidRule(String),
     #[error("trash retention must be between 0 and {} days", trash::MAX_TRASH_DAYS)]
     InvalidTrashDays,
-    #[error("the number of recently opened notes must be between 0 and {}", recent::MAX_RECENT_OPENED_COUNT)]
+    #[error(
+        "the number of recently opened notes must be between 0 and {}",
+        recent::MAX_RECENT_OPENED_COUNT
+    )]
     InvalidRecentOpenedCount,
     #[error("a rating must be a whole number from 1 to 5")]
     InvalidRating,
@@ -121,7 +137,11 @@ impl Vault {
 
     /// [`Vault::open`], reporting the progress of a schema upgrade that rebuilds
     /// derived data (it can take minutes on a very large vault).
-    pub fn open_with_progress(path: &Path, passphrase: &str, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
+    pub fn open_with_progress(
+        path: &Path,
+        passphrase: &str,
+        progress: &mut dyn FnMut(Upgrade),
+    ) -> Result<Self> {
         if !path.is_file() {
             return Err(Error::VaultNotFound);
         }
@@ -131,10 +151,18 @@ impl Vault {
         Self::init(conn, lock, progress)
     }
 
-    fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
+    fn init(
+        mut conn: Connection,
+        lock: lock::VaultLock,
+        progress: &mut dyn FnMut(Upgrade),
+    ) -> Result<Self> {
         schema::migrate(&mut conn, progress)?;
         notes::reset_bulk_writes(&conn)?;
-        Ok(Self { conn, lock, setting_changes: Cell::new(0) })
+        Ok(Self {
+            conn,
+            lock,
+            setting_changes: Cell::new(0),
+        })
     }
 
     /// Lets another thread stop the statement running on this connection.
@@ -172,7 +200,9 @@ impl Vault {
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
             .optional()?)
     }
 
@@ -182,13 +212,17 @@ impl Vault {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, value],
         )?;
-        self.setting_changes.set(self.setting_changes.get() + n as u64);
+        self.setting_changes
+            .set(self.setting_changes.get() + n as u64);
         Ok(())
     }
 
     pub fn delete_setting(&self, key: &str) -> Result<()> {
-        let n = self.conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
-        self.setting_changes.set(self.setting_changes.get() + n as u64);
+        let n = self
+            .conn
+            .execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        self.setting_changes
+            .set(self.setting_changes.get() + n as u64);
         Ok(())
     }
 }
@@ -218,9 +252,13 @@ fn apply_key(conn: &Connection, passphrase: &str) -> Result<()> {
     run_pragma(conn, "PRAGMA cipher_log_level = NONE")?;
     conn.pragma_update(None, "key", passphrase)?;
     // The key is only checked on the first read.
-    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
+    match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    }) {
         Ok(_) => Ok(()),
-        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => Err(Error::WrongPassphrase),
+        Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => {
+            Err(Error::WrongPassphrase)
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -242,5 +280,9 @@ pub(crate) fn now_ms() -> i64 {
 
 /// `“A”, “B”` for error messages.
 fn quote_list(items: &[String]) -> String {
-    items.iter().map(|t| format!("“{t}”")).collect::<Vec<_>>().join(", ")
+    items
+        .iter()
+        .map(|t| format!("“{t}”"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

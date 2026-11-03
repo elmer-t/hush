@@ -12,11 +12,14 @@ use regex::Regex;
 /// where an editor wrapped it, so the next line is not joined to it.
 pub const UNWRAP_MIN_LINE: usize = 50;
 
-static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*)?/?>|<!--").unwrap());
-static ENTITY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6});").unwrap());
+static TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*)?/?>|<!--").unwrap());
+static ENTITY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6});").unwrap()
+});
 /// The backslash escapes the converter adds to text that only looks like Markdown.
-static ESCAPE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\([\\`*_{}\[\]()#+\-.!|<>~=])").unwrap());
+static ESCAPE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\([\\`*_{}\[\]()#+\-.!|<>~=])").unwrap());
 static BLANK_RUNS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 static SPACE_RUNS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\S) {2,}(\S)").unwrap());
 /// Stands in for a line break while a paragraph goes through the HTML parser, which
@@ -26,33 +29,193 @@ const LINE_BREAK: char = '\u{e000}';
 /// Element names that count as HTML; anything else in angle brackets (`<jan@example.org>`,
 /// `<3`) is text.
 const HTML_TAGS: &[&str] = &[
-    "a", "abbr", "acronym", "address", "area", "article", "aside", "b", "base", "basefont", "big", "blink",
-    "blockquote", "body", "br", "button", "caption", "center", "cite", "code", "col", "colgroup", "dd", "del",
-    "details", "dfn", "dir", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption", "figure", "font", "footer",
-    "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "i", "iframe",
-    "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "marquee", "menu", "meta",
-    "nav", "nobr", "noscript", "object", "ol", "option", "p", "param", "pre", "q", "s", "samp", "script", "section",
-    "select", "small", "source", "span", "strike", "strong", "style", "sub", "summary", "sup", "table", "tbody", "td",
-    "textarea", "tfoot", "th", "thead", "title", "tr", "tt", "u", "ul", "var", "video", "wbr",
+    "a",
+    "abbr",
+    "acronym",
+    "address",
+    "area",
+    "article",
+    "aside",
+    "b",
+    "base",
+    "basefont",
+    "big",
+    "blink",
+    "blockquote",
+    "body",
+    "br",
+    "button",
+    "caption",
+    "center",
+    "cite",
+    "code",
+    "col",
+    "colgroup",
+    "dd",
+    "del",
+    "details",
+    "dfn",
+    "dir",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "embed",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "font",
+    "footer",
+    "form",
+    "frame",
+    "frameset",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "header",
+    "hr",
+    "html",
+    "i",
+    "iframe",
+    "img",
+    "input",
+    "ins",
+    "kbd",
+    "label",
+    "legend",
+    "li",
+    "link",
+    "main",
+    "map",
+    "mark",
+    "marquee",
+    "menu",
+    "meta",
+    "nav",
+    "nobr",
+    "noscript",
+    "object",
+    "ol",
+    "option",
+    "p",
+    "param",
+    "pre",
+    "q",
+    "s",
+    "samp",
+    "script",
+    "section",
+    "select",
+    "small",
+    "source",
+    "span",
+    "strike",
+    "strong",
+    "style",
+    "sub",
+    "summary",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "textarea",
+    "tfoot",
+    "th",
+    "thead",
+    "title",
+    "tr",
+    "tt",
+    "u",
+    "ul",
+    "var",
+    "video",
+    "wbr",
 ];
 
 /// Tags that structure a whole block; a block holding one is converted as one piece of HTML.
 const BLOCK_TAGS: &[&str] = &[
-    "address", "article", "aside", "blockquote", "body", "br", "center", "dd", "div", "dl", "dt", "fieldset",
-    "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "li", "main",
-    "nav", "ol", "p", "pre", "script", "section", "style", "table", "tbody", "td", "tfoot", "th", "thead", "title",
-    "tr", "ul",
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "body",
+    "br",
+    "center",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "header",
+    "hr",
+    "html",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "script",
+    "section",
+    "style",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "title",
+    "tr",
+    "ul",
 ];
 
 /// Tags with a Markdown equivalent. Others are dropped (keeping their text) and reported.
 const CONVERTED_TAGS: &[&str] = &[
-    "a", "b", "blockquote", "body", "br", "code", "em", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "html", "i",
-    "img", "li", "ol", "p", "pre", "strong", "ul",
+    "a",
+    "b",
+    "blockquote",
+    "body",
+    "br",
+    "code",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "hr",
+    "html",
+    "i",
+    "img",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "strong",
+    "ul",
 ];
 
 /// Removed together with their content.
-const SKIPPED_TAGS: &[&str] =
-    &["script", "style", "title", "meta", "link", "iframe", "object", "embed", "form", "noscript", "head"];
+const SKIPPED_TAGS: &[&str] = &[
+    "script", "style", "title", "meta", "link", "iframe", "object", "embed", "form", "noscript",
+    "head",
+];
 
 thread_local! {
     static CONVERTER: HtmlToMarkdown = HtmlToMarkdown::builder()
@@ -85,7 +248,11 @@ pub fn clean(content: &str) -> (String, Vec<String>) {
     for (i, line) in lines.iter().enumerate() {
         // A hard break before a blank line (or at the end) breaks nothing.
         let next_blank = lines.get(i + 1).is_none_or(|l| l.trim().is_empty());
-        out.push_str(if next_blank { line.trim_end() } else { trim_end_keep_break(line) });
+        out.push_str(if next_blank {
+            line.trim_end()
+        } else {
+            trim_end_keep_break(line)
+        });
         out.push('\n');
     }
     if out.trim().is_empty() {
@@ -105,7 +272,11 @@ pub fn html_document(html: &str) -> (String, Vec<String>) {
 fn note_dropped(tags: &[String], dropped: &mut BTreeSet<String>) {
     for tag in tags {
         if !CONVERTED_TAGS.contains(&tag.as_str()) {
-            dropped.insert(if tag == "!--" { "<!-- comment -->".to_string() } else { format!("<{tag}>") });
+            dropped.insert(if tag == "!--" {
+                "<!-- comment -->".to_string()
+            } else {
+                format!("<{tag}>")
+            });
         }
     }
 }
@@ -191,17 +362,27 @@ fn tags_in(text: &str) -> Vec<String> {
 }
 
 fn clean_block(block: &str, dropped: &mut BTreeSet<String>) -> String {
-    if block.lines().all(|l| l.starts_with('\t') || l.starts_with("    ")) {
+    if block
+        .lines()
+        .all(|l| l.starts_with('\t') || l.starts_with("    "))
+    {
         // Indented code.
         return block.to_string();
     }
     let tags = tags_in(block);
     note_dropped(&tags, dropped);
-    if tags.iter().any(|t| t == "!--" || BLOCK_TAGS.contains(&t.as_str())) {
+    if tags
+        .iter()
+        .any(|t| t == "!--" || BLOCK_TAGS.contains(&t.as_str()))
+    {
         // Structural HTML: convert as one piece, so tags left open close at the block's end.
         let trailing = &block[block.trim_end_matches(['\n', '\r']).len()..];
         let md = convert(block);
-        return if md.is_empty() { String::new() } else { format!("{md}{trailing}") };
+        return if md.is_empty() {
+            String::new()
+        } else {
+            format!("{md}{trailing}")
+        };
     }
     if tags.is_empty() && !ENTITY.is_match(block) {
         return block.to_string();
@@ -224,7 +405,11 @@ fn clean_block(block: &str, dropped: &mut BTreeSet<String>) -> String {
             }
             let indent = &body[..body.len() - body.trim_start().len()];
             let hard_break = if body.ends_with("  ") { "  " } else { "" };
-            format!("{indent}{}{hard_break}{}", convert(body.trim()), &line[body.len()..])
+            format!(
+                "{indent}{}{hard_break}{}",
+                convert(body.trim()),
+                &line[body.len()..]
+            )
         })
         .collect()
 }
@@ -287,9 +472,11 @@ fn unwrap(text: &str) -> String {
 
 /// A line of plain paragraph text, as opposed to blank lines and other block syntax.
 fn is_paragraph_line(line: &str) -> bool {
-    static LIST_ITEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(?:[-*+]|\d{1,9}[.)])(?:\s|$)").unwrap());
-    static RULE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}|=+)\s*$").unwrap());
+    static LIST_ITEM: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^\s*(?:[-*+]|\d{1,9}[.)])(?:\s|$)").unwrap());
+    static RULE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}|=+)\s*$").unwrap()
+    });
     let t = line.trim_start();
     !(t.is_empty()
         || line.starts_with('\t')
@@ -302,7 +489,11 @@ fn is_paragraph_line(line: &str) -> bool {
 /// Trims trailing whitespace but keeps a two-space hard break.
 fn trim_end_keep_break(line: &str) -> &str {
     let trimmed = line.trim_end();
-    if !trimmed.is_empty() && line[trimmed.len()..].starts_with("  ") { &line[..trimmed.len() + 2] } else { trimmed }
+    if !trimmed.is_empty() && line[trimmed.len()..].starts_with("  ") {
+        &line[..trimmed.len() + 2]
+    } else {
+        trimmed
+    }
 }
 
 #[cfg(test)]
@@ -322,50 +513,87 @@ mod tests {
     #[test]
     fn hard_wraps_are_joined() {
         let long = "This line is long enough that an editor would have wrapped it here";
-        assert_eq!(cleaned(&format!("{long}\nand here.\n")), format!("{long} and here.\n"));
-        assert_eq!(cleaned("Dear Jan,\nHow are you?\n"), "Dear Jan,\nHow are you?\n");
-        assert_eq!(cleaned(&format!("{long}  \nkept\n")), format!("{long}  \nkept\n"));
-        assert_eq!(cleaned(&format!("{long}\\\nkept\n")), format!("{long}\\\nkept\n"));
-        assert_eq!(cleaned(&format!("{long}\n- item\n")), format!("{long}\n- item\n"));
-        assert_eq!(cleaned(&format!("- {long}\n  continued\n")), format!("- {long}\n  continued\n"));
+        assert_eq!(
+            cleaned(&format!("{long}\nand here.\n")),
+            format!("{long} and here.\n")
+        );
+        assert_eq!(
+            cleaned("Dear Jan,\nHow are you?\n"),
+            "Dear Jan,\nHow are you?\n"
+        );
+        assert_eq!(
+            cleaned(&format!("{long}  \nkept\n")),
+            format!("{long}  \nkept\n")
+        );
+        assert_eq!(
+            cleaned(&format!("{long}\\\nkept\n")),
+            format!("{long}\\\nkept\n")
+        );
+        assert_eq!(
+            cleaned(&format!("{long}\n- item\n")),
+            format!("{long}\n- item\n")
+        );
+        assert_eq!(
+            cleaned(&format!("- {long}\n  continued\n")),
+            format!("- {long}\n  continued\n")
+        );
         assert_eq!(cleaned(&format!("{long}\n===\n")), format!("{long}\n===\n"));
     }
 
     #[test]
     fn code_is_untouched() {
         let long = "This line is long enough that an editor would have wrapped it here";
-        let md = format!("```\n<b>x</b>\n\n{long}\nnext\n```\n\n    <b>indented</b> {long}\n    next\n");
+        let md =
+            format!("```\n<b>x</b>\n\n{long}\nnext\n```\n\n    <b>indented</b> {long}\n    next\n");
         assert_eq!(cleaned(&md), md);
     }
 
     #[test]
     fn structural_html_is_converted_per_block() {
-        assert_eq!(cleaned("<p>One\ntwo <b>bold</b><br>three</p>\n"), "One two **bold**  \nthree\n");
+        assert_eq!(
+            cleaned("<p>One\ntwo <b>bold</b><br>three</p>\n"),
+            "One two **bold**  \nthree\n"
+        );
         assert_eq!(cleaned("<ul><li>a<li>b</ul>"), "- a\n- b\n");
-        assert_eq!(cleaned("<p>unclosed <i>italic\n\nnext block</i>\n"), "unclosed *italic*\n\nnext block\n");
+        assert_eq!(
+            cleaned("<p>unclosed <i>italic\n\nnext block</i>\n"),
+            "unclosed *italic*\n\nnext block\n"
+        );
         assert_eq!(cleaned("<script>x()</script>\n\nkept\n"), "kept\n");
     }
 
     #[test]
     fn inline_html_keeps_markdown_structure() {
         assert_eq!(
-            cleaned("Some **md** and <i>html</i> with [[A link]] and #tag\n- item <b>b</b>\n  - nested &amp; more\n"),
+            cleaned(
+                "Some **md** and <i>html</i> with [[A link]] and #tag\n- item <b>b</b>\n  - nested &amp; more\n"
+            ),
             "Some **md** and *html* with [[A link]] and #tag\n- item **b**\n  - nested & more\n"
         );
     }
 
     #[test]
     fn entities_and_lookalikes() {
-        assert_eq!(cleaned("Tom &amp; Jerry&nbsp;&mdash; 1. &lt;3\n"), "Tom & Jerry — 1. <3\n");
-        assert_eq!(cleaned("From: Jan <jan@example.org>\n"), "From: Jan <jan@example.org>\n");
+        assert_eq!(
+            cleaned("Tom &amp; Jerry&nbsp;&mdash; 1. &lt;3\n"),
+            "Tom & Jerry — 1. <3\n"
+        );
+        assert_eq!(
+            cleaned("From: Jan <jan@example.org>\n"),
+            "From: Jan <jan@example.org>\n"
+        );
         assert_eq!(cleaned("a <3 b > c\n"), "a <3 b > c\n");
     }
 
     #[test]
     fn dropped_markup_is_reported() {
-        let (md, warnings) = clean("<font color=red>Red <u>x</u></font>\n\n<!-- c -->\n\n<b>ok</b>");
+        let (md, warnings) =
+            clean("<font color=red>Red <u>x</u></font>\n\n<!-- c -->\n\n<b>ok</b>");
         assert_eq!(md, "Red x\n\n**ok**\n");
-        assert_eq!(warnings, ["dropped HTML markup: <!-- comment -->, <font>, <u>"]);
+        assert_eq!(
+            warnings,
+            ["dropped HTML markup: <!-- comment -->, <font>, <u>"]
+        );
     }
 
     #[test]
@@ -377,8 +605,14 @@ mod tests {
     #[test]
     fn inline_markup_may_span_paragraph_lines() {
         let long = "This line is long enough that an editor would have wrapped it here";
-        assert_eq!(cleaned(&format!("<i>{long}\nand here</i>\n")), format!("*{long} and here*\n"));
-        assert_eq!(cleaned("<b>Dear</b> Jan,\nHow are you?\n"), "**Dear** Jan,\nHow are you?\n");
+        assert_eq!(
+            cleaned(&format!("<i>{long}\nand here</i>\n")),
+            format!("*{long} and here*\n")
+        );
+        assert_eq!(
+            cleaned("<b>Dear</b> Jan,\nHow are you?\n"),
+            "**Dear** Jan,\nHow are you?\n"
+        );
     }
 
     #[test]

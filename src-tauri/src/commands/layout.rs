@@ -44,7 +44,9 @@ impl GraphScope {
 #[tauri::command]
 pub fn graph_scope(session: State<'_, Session>) -> Result<Option<GraphScope>> {
     let value = session.with_vault(|v| v.setting(GRAPH_SCOPE_SETTING))?;
-    Ok(value.and_then(|v| serde_json::from_str::<GraphScope>(&v).ok()).filter(GraphScope::valid))
+    Ok(value
+        .and_then(|v| serde_json::from_str::<GraphScope>(&v).ok())
+        .filter(GraphScope::valid))
 }
 
 #[tauri::command]

@@ -140,7 +140,10 @@ impl Vault {
                 Ok(StoredHead {
                     tag: r.get(0)?,
                     model: r.get(1)?,
-                    head: Head { weights: embed::blob_to_vector(&r.get::<_, Vec<u8>>(2)?), bias: r.get::<_, f64>(3)? as f32 },
+                    head: Head {
+                        weights: embed::blob_to_vector(&r.get::<_, Vec<u8>>(2)?),
+                        bias: r.get::<_, f64>(3)? as f32,
+                    },
                     positives: r.get::<_, i64>(4)? as usize,
                     negatives: r.get::<_, i64>(5)? as usize,
                     precision: r.get::<_, Option<f64>>(6)?.map(|v| v as f32),
@@ -184,7 +187,9 @@ impl Vault {
         let tx = self.conn.transaction()?;
         let tags: Vec<(String, String)> = {
             let mut stmt = tx.prepare("SELECT tag, model FROM tag_heads")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
             rows
         };
         let mut gone = 0;
@@ -207,10 +212,16 @@ impl Vault {
             .query_map(params![model, after, limit], |r| {
                 let hash: Vec<u8> = r.get(1)?;
                 let blob: Zeroizing<Vec<u8>> = Zeroizing::new(r.get(2)?);
-                Ok((r.get(0)?, hash.try_into().unwrap_or([0; 32]), Zeroizing::new(embed::blob_to_vector(&blob))))
+                Ok((
+                    r.get(0)?,
+                    hash.try_into().unwrap_or([0; 32]),
+                    Zeroizing::new(embed::blob_to_vector(&blob)),
+                ))
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let next = (vectors.len() == limit as usize).then(|| vectors.last().map(|v| v.0)).flatten();
+        let next = (vectors.len() == limit as usize)
+            .then(|| vectors.last().map(|v| v.0))
+            .flatten();
         Ok(TrainingPage { vectors, next })
     }
 
@@ -223,11 +234,21 @@ impl Vault {
              SELECT f.tag, f.note_id, f.accepted FROM tag_feedback f JOIN notes n ON n.id = f.note_id
              WHERE n.deleted_at IS NULL",
         )?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
+        })?;
         for row in rows {
             let (tag, id, positive) = row?;
             let entry = sets.entry(tag).or_default();
-            if positive { entry.0.insert(id) } else { entry.1.insert(id) };
+            if positive {
+                entry.0.insert(id)
+            } else {
+                entry.1.insert(id)
+            };
         }
         let mut labels: Vec<TagLabels> = sets
             .into_iter()
@@ -247,7 +268,9 @@ impl Vault {
     /// of its positive notes when there are any. Tags with neither aren't included.
     /// Empty when no model is ready (or the model has no threshold for descriptions).
     pub fn tag_scorers(&self) -> Result<Vec<TagScorer>> {
-        let Some(model) = self.embedding_model_ready()? else { return Ok(Vec::new()) };
+        let Some(model) = self.embedding_model_ready()? else {
+            return Ok(Vec::new());
+        };
         let mut scorers: Vec<TagScorer> = self
             .tag_heads()?
             .into_iter()
@@ -259,12 +282,16 @@ impl Vault {
                 kind: ScorerKind::Head(h.head),
             })
             .collect();
-        let Some(threshold) = self.suggestion_threshold(&model)? else { return Ok(scorers) };
+        let Some(threshold) = self.suggestion_threshold(&model)? else {
+            return Ok(scorers);
+        };
         let described: Vec<(String, Vec<u8>)> = {
             let mut stmt = self.conn.prepare_cached(
                 "SELECT tag, vector FROM tag_descriptions WHERE model = ?1 AND vector IS NOT NULL ORDER BY tag",
             )?;
-            let rows = stmt.query_map([&model], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+            let rows = stmt
+                .query_map([&model], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
             rows
         };
         for (tag, blob) in described {
@@ -280,11 +307,19 @@ impl Vault {
                 // The examples count for more as they approach the number a head needs:
                 // 1 example adds a tenth of the centroid, 10 weigh as much as the description.
                 let alpha = n.min(MIN_POSITIVES) as f32 / MIN_POSITIVES as f32;
-                target.iter_mut().zip(&centroid).for_each(|(t, c)| *t += alpha * c);
+                target
+                    .iter_mut()
+                    .zip(&centroid)
+                    .for_each(|(t, c)| *t += alpha * c);
                 embed::normalize(&mut target);
                 ScoreMethod::DescriptionAndExamples
             };
-            scorers.push(TagScorer { tag, method, threshold, kind: ScorerKind::Cosine(target) });
+            scorers.push(TagScorer {
+                tag,
+                method,
+                threshold,
+                kind: ScorerKind::Cosine(target),
+            });
         }
         scorers.sort_by(|a, b| a.tag.cmp(&b.tag));
         Ok(scorers)
@@ -320,15 +355,26 @@ impl Vault {
     /// The score of one tag for one note, whether or not it would be suggested (the note
     /// may have the tag, or have rejected it). `None` without a note vector or a scorer.
     pub fn tag_score(&self, id: i64, tag: &str) -> Result<Option<(f32, ScoreMethod)>> {
-        let Some(note) = self.note_embedding(id)? else { return Ok(None) };
-        Ok(self.tag_scorers()?.into_iter().find(|s| s.tag == tag).map(|s| (s.score(&note), s.method)))
+        let Some(note) = self.note_embedding(id)? else {
+            return Ok(None);
+        };
+        Ok(self
+            .tag_scorers()?
+            .into_iter()
+            .find(|s| s.tag == tag)
+            .map(|s| (s.score(&note), s.method)))
     }
 
     /// The classifier state of every tag that is used or described, for the Tags settings.
     pub fn tag_training(&self) -> Result<Vec<TagTraining>> {
         let model = self.embedding_model_ready()?;
         let heads: HashMap<String, StoredHead> = match &model {
-            Some(m) => self.tag_heads()?.into_iter().filter(|h| &h.model == m).map(|h| (h.tag.clone(), h)).collect(),
+            Some(m) => self
+                .tag_heads()?
+                .into_iter()
+                .filter(|h| &h.model == m)
+                .map(|h| (h.tag.clone(), h))
+                .collect(),
             None => HashMap::new(),
         };
         let total: usize = match &model {
@@ -359,7 +405,13 @@ impl Vault {
                    AND NOT EXISTS (SELECT 1 FROM pos WHERE pos.tag = f.tag AND pos.note_id = f.note_id)
                  GROUP BY f.tag",
             )?;
-            let rows = stmt.query_map([m], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
+            let rows = stmt.query_map([m], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?;
             for row in rows {
                 let (tag, pos, rej) = row?;
                 let entry = counts.entry(tag).or_default();

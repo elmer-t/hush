@@ -4,7 +4,9 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashEntry, Vault};
+use crate::db::{
+    FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashEntry, Vault,
+};
 use crate::markdown;
 use crate::session::Session;
 
@@ -64,7 +66,12 @@ pub const SIDEBAR_VIEW_SETTING: &str = "sidebar_view";
 
 /// Notes directly in `folder` (not its subfolders), sorted by title, one page at a time.
 #[tauri::command]
-pub fn folder_notes(session: State<'_, Session>, folder: String, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
+pub fn folder_notes(
+    session: State<'_, Session>,
+    folder: String,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<NoteSummary>> {
     Ok(session.with_vault(|v| v.folder_notes(&folder, offset, limit))?)
 }
 
@@ -99,13 +106,20 @@ pub fn confirm_trash(session: State<'_, Session>) -> Result<bool> {
 
 #[tauri::command]
 pub fn set_confirm_trash(session: State<'_, Session>, confirm: bool) -> Result<()> {
-    Ok(session.with_vault(|v| v.set_setting(CONFIRM_TRASH_SETTING, if confirm { "true" } else { "false" }))?)
+    Ok(session.with_vault(|v| {
+        v.set_setting(
+            CONFIRM_TRASH_SETTING,
+            if confirm { "true" } else { "false" },
+        )
+    })?)
 }
 
 /// The body a new note starts with: the vault's default author in its frontmatter.
 pub(super) fn new_note_body(vault: &Vault) -> crate::db::Result<String> {
     Ok(match vault.setting(DEFAULT_AUTHOR_SETTING)? {
-        Some(author) if !author.trim().is_empty() => markdown::set_frontmatter_field("", "author", &[author]),
+        Some(author) if !author.trim().is_empty() => {
+            markdown::set_frontmatter_field("", "author", &[author])
+        }
         _ => String::new(),
     })
 }
@@ -162,12 +176,20 @@ pub const RECENT_OPENED_COLLAPSED_SETTING: &str = "recent_opened_collapsed";
 
 #[tauri::command]
 pub fn recent_opened_collapsed(session: State<'_, Session>) -> Result<bool> {
-    Ok(session.with_vault(|v| v.setting(RECENT_OPENED_COLLAPSED_SETTING))?.as_deref() == Some("true"))
+    Ok(session
+        .with_vault(|v| v.setting(RECENT_OPENED_COLLAPSED_SETTING))?
+        .as_deref()
+        == Some("true"))
 }
 
 #[tauri::command]
 pub fn set_recent_opened_collapsed(session: State<'_, Session>, collapsed: bool) -> Result<()> {
-    Ok(session.with_vault(|v| v.set_setting(RECENT_OPENED_COLLAPSED_SETTING, if collapsed { "true" } else { "false" }))?)
+    Ok(session.with_vault(|v| {
+        v.set_setting(
+            RECENT_OPENED_COLLAPSED_SETTING,
+            if collapsed { "true" } else { "false" },
+        )
+    })?)
 }
 
 #[tauri::command]
@@ -175,13 +197,21 @@ pub fn save_note(session: State<'_, Session>, id: i64, body: String) -> Result<S
     Ok(session.with_vault(|v| {
         v.update_body(id, &body)?;
         let summary = v.note(id)?.summary();
-        Ok(SavedNote { summary, meta: NoteMeta::of(&body) })
+        Ok(SavedNote {
+            summary,
+            meta: NoteMeta::of(&body),
+        })
     })?)
 }
 
 /// Renames and/or moves a note. Returns it fresh: its own links may have been rewritten.
 #[tauri::command]
-pub fn rename_note(session: State<'_, Session>, id: i64, folder: String, title: String) -> Result<OpenedNote> {
+pub fn rename_note(
+    session: State<'_, Session>,
+    id: i64,
+    folder: String,
+    title: String,
+) -> Result<OpenedNote> {
     Ok(session.with_vault(|v| {
         v.rename_note(id, &folder, &title)?;
         opened(v, id)
@@ -215,7 +245,11 @@ pub fn trash_notes(session: State<'_, Session>, ids: Vec<i64>) -> Result<()> {
 
 /// Adds or removes a tag, or sets the topic or author, on several notes, all or nothing.
 #[tauri::command]
-pub fn edit_notes_metadata(session: State<'_, Session>, ids: Vec<i64>, edit: MetadataEdit) -> Result<MetadataEditReport> {
+pub fn edit_notes_metadata(
+    session: State<'_, Session>,
+    ids: Vec<i64>,
+    edit: MetadataEdit,
+) -> Result<MetadataEditReport> {
     Ok(session.with_vault(|v| v.edit_notes_metadata(&ids, &edit))?)
 }
 
@@ -227,7 +261,11 @@ pub fn delete_note(session: State<'_, Session>, id: i64) -> Result<()> {
 
 /// One page of the trash: folder groups as one entry each, and loose notes.
 #[tauri::command]
-pub fn trash_entries(session: State<'_, Session>, offset: u32, limit: u32) -> Result<Vec<TrashEntry>> {
+pub fn trash_entries(
+    session: State<'_, Session>,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<TrashEntry>> {
     Ok(session.with_vault(|v| v.trash_entries(offset, limit))?)
 }
 

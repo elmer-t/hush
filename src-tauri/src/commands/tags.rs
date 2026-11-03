@@ -17,7 +17,11 @@ pub fn tag_list(session: State<'_, Session>) -> Result<Vec<TagInfo>> {
 
 /// Sets a tag's description; an empty one removes it.
 #[tauri::command]
-pub fn set_tag_description(session: State<'_, Session>, tag: String, description: String) -> Result<()> {
+pub fn set_tag_description(
+    session: State<'_, Session>,
+    tag: String,
+    description: String,
+) -> Result<()> {
     Ok(session.with_vault(|v| v.set_tag_description(&tag, &description))?)
 }
 
@@ -29,7 +33,11 @@ pub fn tag_suggestions(session: State<'_, Session>, id: i64) -> Result<Vec<TagSu
 /// Adds the tag to the note's frontmatter and returns the note fresh; the frontend
 /// flushes its autosave first and reloads the editor after.
 #[tauri::command]
-pub fn accept_tag_suggestion(session: State<'_, Session>, id: i64, tag: String) -> Result<OpenedNote> {
+pub fn accept_tag_suggestion(
+    session: State<'_, Session>,
+    id: i64,
+    tag: String,
+) -> Result<OpenedNote> {
     Ok(session.with_vault(|v| {
         v.accept_tag_suggestion(id, &tag)?;
         opened(v, id)

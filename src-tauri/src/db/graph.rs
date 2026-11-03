@@ -17,11 +17,17 @@ use crate::markdown;
 pub enum GraphScopeNotes {
     All,
     /// A folder and its subfolders; `""` is the whole vault.
-    Folder { folder: String },
+    Folder {
+        folder: String,
+    },
     /// Notes with the tag or a tag nested in it (`journal` takes `journal/2019`).
-    Tag { tag: String },
+    Tag {
+        tag: String,
+    },
     /// The notes matching a search (text and filters).
-    Search { query: SearchQuery },
+    Search {
+        query: SearchQuery,
+    },
 }
 
 /// Ids read per page of a whole-vault or search scope.
@@ -58,7 +64,11 @@ impl Vault {
     /// Up to [`SCOPE_PAGE`] ids of the live notes of `scope` above `after`, in id order;
     /// a folder or tag scope comes in one page (`after` is ignored). Folder and tag
     /// read only their index range, never every note.
-    pub fn graph_scope_page(&self, scope: &GraphScopeNotes, after: i64) -> Result<(Vec<i64>, Option<i64>)> {
+    pub fn graph_scope_page(
+        &self,
+        scope: &GraphScopeNotes,
+        after: i64,
+    ) -> Result<(Vec<i64>, Option<i64>)> {
         let ids: Vec<i64> = match scope {
             GraphScopeNotes::Search { query } => self.search_ids(query, after, SCOPE_PAGE)?,
             GraphScopeNotes::All => self
@@ -109,7 +119,11 @@ impl Vault {
 
     /// The links from each of `ids`, resolved: `(from, target)` without repeats, sorted.
     /// Ambiguous links are left out; a self-link is kept.
-    pub fn graph_links_from(&self, ids: &[i64], resolver: &mut Resolver) -> Result<Vec<(i64, LinkTarget)>> {
+    pub fn graph_links_from(
+        &self,
+        ids: &[i64],
+        resolver: &mut Resolver,
+    ) -> Result<Vec<(i64, LinkTarget)>> {
         let mut out = Vec::new();
         for chunk in ids.chunks(CHUNK) {
             let mut stmt = self.conn.prepare(&format!(
@@ -117,10 +131,16 @@ impl Vault {
                 marks(chunk.len())
             ))?;
             let rows: Vec<(i64, String, String)> = stmt
-                .query_map(params_from_iter(chunk), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map(params_from_iter(chunk), |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
                 .collect::<rusqlite::Result<_>>()?;
             for (from, path, title) in rows {
-                let joined = if path.is_empty() { title.clone() } else { format!("{path}/{title}") };
+                let joined = if path.is_empty() {
+                    title.clone()
+                } else {
+                    format!("{path}/{title}")
+                };
                 match resolver.resolve(self, path, title)? {
                     Resolution::Unique(to) => out.push((from, LinkTarget::Note(*to))),
                     Resolution::Missing => out.push((from, LinkTarget::Missing(joined))),
@@ -132,21 +152,28 @@ impl Vault {
         // Missing targets that differ only in case name the same note-to-be.
         let mut seen = HashSet::new();
         out.retain(|(from, to)| {
-            seen.insert((*from, match to {
-                LinkTarget::Note(id) => id.to_string(),
-                LinkTarget::Missing(target) => format!("?{}", target.to_lowercase()),
-            }))
+            seen.insert((
+                *from,
+                match to {
+                    LinkTarget::Note(id) => id.to_string(),
+                    LinkTarget::Missing(target) => format!("?{}", target.to_lowercase()),
+                },
+            ))
         });
         Ok(out)
     }
 
     /// The notes with a link that resolves to exactly `id`, sorted.
     pub fn graph_links_to(&self, id: i64, resolver: &mut Resolver) -> Result<Vec<i64>> {
-        let title: String = self.conn.query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))?;
-        let mut stmt =
-            self.conn.prepare_cached("SELECT DISTINCT from_note_id, target_path FROM links WHERE target_title = ?1")?;
-        let rows: Vec<(i64, String)> =
-            stmt.query_map([&title], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let title: String =
+            self.conn
+                .query_row("SELECT title FROM notes WHERE id = ?1", [id], |r| r.get(0))?;
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT from_note_id, target_path FROM links WHERE target_title = ?1",
+        )?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([&title], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         let mut from = Vec::new();
         for (source, path) in rows {
             if *resolver.resolve(self, path, title.clone())? == Resolution::Unique(id) {
@@ -167,7 +194,9 @@ impl Vault {
                   + (SELECT COUNT(*) FROM links WHERE target_title = n.title)
              FROM notes n WHERE n.id = ?1",
         )?;
-        ids.iter().map(|id| Ok(stmt.query_row([id], |r| r.get(0))?)).collect()
+        ids.iter()
+            .map(|id| Ok(stmt.query_row([id], |r| r.get(0))?))
+            .collect()
     }
 
     /// The tags of each of `ids` (those with any), each list sorted.
@@ -178,7 +207,9 @@ impl Vault {
                 "SELECT nt.note_id, t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id IN ({})",
                 marks(chunk.len())
             ))?;
-            for row in stmt.query_map(params_from_iter(chunk), |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            for row in stmt.query_map(params_from_iter(chunk), |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })? {
                 let (note, tag) = row?;
                 tags.entry(note).or_default().push(tag);
             }

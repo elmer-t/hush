@@ -9,13 +9,18 @@ fn create_lock_unlock_roundtrip() {
     let path = dir.path().join("vault.hush");
 
     let mut vault = Vault::create(&path, PASS).unwrap();
-    let id = vault.create_note("", "Secret", "the launch code is swordfish").unwrap();
+    let id = vault
+        .create_note("", "Secret", "the launch code is swordfish")
+        .unwrap();
     vault.set_setting("auto_lock_minutes", "5").unwrap();
     vault.close().unwrap();
 
     let vault = Vault::open(&path, PASS).unwrap();
     assert_eq!(vault.note(id).unwrap().body, "the launch code is swordfish");
-    assert_eq!(vault.setting("auto_lock_minutes").unwrap().as_deref(), Some("5"));
+    assert_eq!(
+        vault.setting("auto_lock_minutes").unwrap().as_deref(),
+        Some("5")
+    );
     assert_eq!(vault.setting("missing").unwrap(), None);
 }
 
@@ -40,7 +45,10 @@ fn wrong_passphrase_is_rejected() {
     let (dir, vault) = common::vault();
     vault.close().unwrap();
     let path = dir.path().join("vault.hush");
-    assert!(matches!(Vault::open(&path, "nope"), Err(Error::WrongPassphrase)));
+    assert!(matches!(
+        Vault::open(&path, "nope"),
+        Err(Error::WrongPassphrase)
+    ));
     assert!(Vault::open(&path, PASS).is_ok());
 }
 
@@ -49,9 +57,18 @@ fn create_and_open_guard_paths_and_passphrase() {
     let (dir, vault) = common::vault();
     vault.close().unwrap();
     let path = dir.path().join("vault.hush");
-    assert!(matches!(Vault::create(&path, PASS), Err(Error::VaultExists)));
-    assert!(matches!(Vault::open(&dir.path().join("missing.hush"), PASS), Err(Error::VaultNotFound)));
-    assert!(matches!(Vault::create(&dir.path().join("x.hush"), ""), Err(Error::EmptyPassphrase)));
+    assert!(matches!(
+        Vault::create(&path, PASS),
+        Err(Error::VaultExists)
+    ));
+    assert!(matches!(
+        Vault::open(&dir.path().join("missing.hush"), PASS),
+        Err(Error::VaultNotFound)
+    ));
+    assert!(matches!(
+        Vault::create(&dir.path().join("x.hush"), ""),
+        Err(Error::EmptyPassphrase)
+    ));
 }
 
 #[test]
@@ -59,7 +76,10 @@ fn non_vault_file_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("notes.txt");
     std::fs::write(&path, "just some text, definitely not a database").unwrap();
-    assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)));
+    assert!(matches!(
+        Vault::open(&path, PASS),
+        Err(Error::WrongPassphrase)
+    ));
 }
 
 #[test]
@@ -67,13 +87,19 @@ fn change_passphrase() {
     let (dir, mut vault) = common::vault();
     let path = dir.path().join("vault.hush");
     let id = vault.create_note("", "Kept", "still here").unwrap();
-    assert!(matches!(vault.verify_passphrase("nope"), Err(Error::WrongPassphrase)));
+    assert!(matches!(
+        vault.verify_passphrase("nope"),
+        Err(Error::WrongPassphrase)
+    ));
     vault.verify_passphrase(PASS).unwrap();
     vault.change_passphrase("new passphrase").unwrap();
     vault.verify_passphrase("new passphrase").unwrap();
     vault.close().unwrap();
 
-    assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)));
+    assert!(matches!(
+        Vault::open(&path, PASS),
+        Err(Error::WrongPassphrase)
+    ));
     let vault = Vault::open(&path, "new passphrase").unwrap();
     assert_eq!(vault.note(id).unwrap().body, "still here");
 }
@@ -83,9 +109,15 @@ fn vault_open_twice_fails_until_the_first_closes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.hush");
     let first = Vault::create(&path, PASS).unwrap();
-    assert!(hush_lib::db::lock_path(&path).is_file(), "the lock file sits next to the vault");
+    assert!(
+        hush_lib::db::lock_path(&path).is_file(),
+        "the lock file sits next to the vault"
+    );
     assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
-    assert!(matches!(Vault::open(&path, "wrong"), Err(Error::VaultInUse)), "checked before the passphrase");
+    assert!(
+        matches!(Vault::open(&path, "wrong"), Err(Error::VaultInUse)),
+        "checked before the passphrase"
+    );
     first.close().unwrap();
 
     let second = Vault::open(&path, PASS).unwrap();
@@ -99,7 +131,9 @@ fn locking_the_session_releases_the_vault() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.hush");
     let session = hush_lib::session::Session::default();
-    session.unlock(Vault::create(&path, PASS).unwrap(), path.clone()).unwrap();
+    session
+        .unlock(Vault::create(&path, PASS).unwrap(), path.clone())
+        .unwrap();
     assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
     assert!(session.lock());
     Vault::open(&path, PASS).unwrap();
@@ -120,7 +154,9 @@ const CHILD_VAULT: &str = "HUSH_TEST_CHILD_VAULT";
 #[test]
 #[ignore = "helper process for vault_held_by_another_process"]
 fn child_holds_vault() {
-    let Ok(path) = std::env::var(CHILD_VAULT) else { return };
+    let Ok(path) = std::env::var(CHILD_VAULT) else {
+        return;
+    };
     let _vault = Vault::open(std::path::Path::new(&path), PASS).unwrap();
     println!("holding");
     std::thread::sleep(std::time::Duration::from_secs(60));
@@ -136,7 +172,13 @@ fn vault_held_by_another_process() {
     Vault::create(&path, PASS).unwrap().close().unwrap();
 
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "child_holds_vault", "--ignored", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "child_holds_vault",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(CHILD_VAULT, &path)
         .stdout(Stdio::piped())
         .spawn()
@@ -145,7 +187,10 @@ fn vault_held_by_another_process() {
     let mut line = String::new();
     while !line.contains("holding") {
         line.clear();
-        assert!(out.read_line(&mut line).unwrap() > 0, "child exited before opening the vault");
+        assert!(
+            out.read_line(&mut line).unwrap() > 0,
+            "child exited before opening the vault"
+        );
     }
     assert!(matches!(Vault::open(&path, PASS), Err(Error::VaultInUse)));
 

@@ -78,7 +78,12 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
         match &result {
             Ok(Ok(d)) => activity.finish(
                 Job::Discover,
-                format!("{} groups from {} notes ({} sampled)", count(d.groups.len() as u64), count(d.notes as u64), count(d.sampled as u64)),
+                format!(
+                    "{} groups from {} notes ({} sampled)",
+                    count(d.groups.len() as u64),
+                    count(d.notes as u64),
+                    count(d.sampled as u64)
+                ),
             ),
             Ok(Err(DiscoverError::Cancelled)) => activity.stop(Job::Discover, "cancelled"),
             Ok(Err(DiscoverError::Locked)) => {}
@@ -88,13 +93,21 @@ pub async fn discover_tags(app: AppHandle, options: Options) -> Result<Option<Di
     }
     match result {
         Ok(Ok(mut discovery)) => {
-            let members = discovery.groups.iter_mut().map(|g| std::mem::take(&mut g.members)).collect();
+            let members = discovery
+                .groups
+                .iter_mut()
+                .map(|g| std::mem::take(&mut g.members))
+                .collect();
             let job = app.state::<DiscoverJob>();
             let mut last = job.last.lock().unwrap();
             if job.runs.load(Ordering::SeqCst) != run {
                 return Ok(None);
             }
-            *last = Some(LastRun { run, generation, members });
+            *last = Some(LastRun {
+                run,
+                generation,
+                members,
+            });
             Ok(Some(DiscoverResult { run, discovery }))
         }
         Ok(Err(DiscoverError::Cancelled)) => Ok(None),
@@ -129,9 +142,11 @@ pub fn create_tag_from_group(
     let members = {
         let last = job.last.lock().unwrap();
         match last.as_ref() {
-            Some(l) if l.run == whole.run && l.generation == session.generation() => {
-                l.members.get(whole.group).cloned().ok_or(CommandError::StaleGroups)?
-            }
+            Some(l) if l.run == whole.run && l.generation == session.generation() => l
+                .members
+                .get(whole.group)
+                .cloned()
+                .ok_or(CommandError::StaleGroups)?,
             _ => return Err(CommandError::StaleGroups),
         }
     };

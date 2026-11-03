@@ -35,13 +35,15 @@ impl Rng {
 }
 
 const WORDS: &[&str] = &[
-    "the", "of", "and", "to", "in", "is", "that", "it", "was", "for", "on", "are", "with", "as", "they", "be", "at",
-    "one", "have", "this", "from", "or", "had", "by", "word", "but", "what", "some", "we", "can", "out", "other",
-    "were", "all", "there", "when", "up", "use", "your", "how", "said", "an", "each", "she", "which", "do", "their",
-    "time", "if", "will", "way", "about", "many", "then", "them", "write", "would", "like", "so", "these", "her",
-    "long", "make", "thing", "see", "him", "two", "has", "look", "more", "day", "could", "go", "come", "did",
-    "number", "sound", "no", "most", "people", "my", "over", "know", "water", "than", "call", "first", "who", "may",
-    "down", "side", "been", "now", "find", "harbour", "letter", "garden", "meeting", "travel", "winter", "kitchen",
+    "the", "of", "and", "to", "in", "is", "that", "it", "was", "for", "on", "are", "with", "as",
+    "they", "be", "at", "one", "have", "this", "from", "or", "had", "by", "word", "but", "what",
+    "some", "we", "can", "out", "other", "were", "all", "there", "when", "up", "use", "your",
+    "how", "said", "an", "each", "she", "which", "do", "their", "time", "if", "will", "way",
+    "about", "many", "then", "them", "write", "would", "like", "so", "these", "her", "long",
+    "make", "thing", "see", "him", "two", "has", "look", "more", "day", "could", "go", "come",
+    "did", "number", "sound", "no", "most", "people", "my", "over", "know", "water", "than",
+    "call", "first", "who", "may", "down", "side", "been", "now", "find", "harbour", "letter",
+    "garden", "meeting", "travel", "winter", "kitchen",
 ];
 
 /// Mail-style records like the old online archive: From/Date/Subject headers and a
@@ -57,7 +59,12 @@ fn generate(root: &Path, files: usize) {
         let mut text = String::with_capacity(words * 7 + 200);
         let md = i % 10 == 0;
         if md {
-            text.push_str(&format!("---\ntags: [t{}]\ncreated: 2011-0{}-1{}\n---\n", i % 50, 1 + i % 9, i % 10));
+            text.push_str(&format!(
+                "---\ntags: [t{}]\ncreated: 2011-0{}-1{}\n---\n",
+                i % 50,
+                1 + i % 9,
+                i % 10
+            ));
         } else {
             text.push_str(&format!(
                 "From: Person {} <person{}@example.org>\nDate: {} Mar 20{:02} 10:{:02}\nSubject: {} {}\n\n",
@@ -85,7 +92,12 @@ fn generate(root: &Path, files: usize) {
                 col = 0;
             }
         }
-        let name = format!("{} {} {i}.{}", WORDS[rng.below(WORDS.len())], if i % 7 == 0 { "jr" } else { "note" }, if md { "md" } else { "txt" });
+        let name = format!(
+            "{} {} {i}.{}",
+            WORDS[rng.below(WORDS.len())],
+            if i % 7 == 0 { "jr" } else { "note" },
+            if md { "md" } else { "txt" }
+        );
         fs::write(folder.join(name), text).unwrap();
     }
 }
@@ -97,9 +109,17 @@ fn secs(d: Duration) -> String {
 fn rss_mb() -> String {
     let status = fs::read_to_string("/proc/self/status").unwrap_or_default();
     let field = |name: &str| {
-        status.lines().find(|l| l.starts_with(name)).and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap_or(0)
+        status
+            .lines()
+            .find(|l| l.starts_with(name))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+            .unwrap_or(0)
     };
-    format!("rss {} MB, peak {} MB", field("VmRSS:") / 1024, field("VmHWM:") / 1024)
+    format!(
+        "rss {} MB, peak {} MB",
+        field("VmRSS:") / 1024,
+        field("VmHWM:") / 1024
+    )
 }
 
 fn ms(d: Duration) -> u128 {
@@ -112,12 +132,21 @@ fn spread(mut times: Vec<Duration>) -> String {
         return "none".into();
     }
     times.sort();
-    format!("median {} ms, p99 {} ms, max {} ms", ms(times[times.len() / 2]), ms(times[times.len() * 99 / 100]), ms(times[times.len() - 1]))
+    format!(
+        "median {} ms, p99 {} ms, max {} ms",
+        ms(times[times.len() / 2]),
+        ms(times[times.len() * 99 / 100]),
+        ms(times[times.len() - 1])
+    )
 }
 
 /// A vault holding `notes` copies of `prepared` (under `Base <n>/…`), kept at `keep`
 /// when given. Returns the temp dir holding the copy to import into, and its path.
-fn base_vault(prepared: &[Prepared], notes: usize, keep: Option<PathBuf>) -> (tempfile::TempDir, PathBuf) {
+fn base_vault(
+    prepared: &[Prepared],
+    notes: usize,
+    keep: Option<PathBuf>,
+) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = keep.unwrap_or_else(|| dir.path().join("base.hush"));
     if !path.exists() {
@@ -125,13 +154,25 @@ fn base_vault(prepared: &[Prepared], notes: usize, keep: Option<PathBuf>) -> (te
         let mut vault = Vault::create(&path, common::PASS).unwrap();
         let mut done = 0;
         for round in 1.. {
-            let folders: Vec<String> = prepared.iter().map(|p| format!("Base {round}/{}", p.folder)).collect();
-            for (chunk, folders) in prepared.chunks(import::BATCH_SIZE).zip(folders.chunks(import::BATCH_SIZE)) {
+            let folders: Vec<String> = prepared
+                .iter()
+                .map(|p| format!("Base {round}/{}", p.folder))
+                .collect();
+            for (chunk, folders) in prepared
+                .chunks(import::BATCH_SIZE)
+                .zip(folders.chunks(import::BATCH_SIZE))
+            {
                 let take = chunk.len().min(notes - done);
                 let new: Vec<NewNote> = chunk[..take]
                     .iter()
                     .zip(folders)
-                    .map(|(p, f)| NewNote { folder: f, title: &p.title, body: &p.body, created_at: p.created_at, updated_at: p.updated_at })
+                    .map(|(p, f)| NewNote {
+                        folder: f,
+                        title: &p.title,
+                        body: &p.body,
+                        created_at: p.created_at,
+                        updated_at: p.updated_at,
+                    })
                     .collect();
                 for outcome in vault.import_notes(&new).unwrap() {
                     outcome.unwrap();
@@ -170,21 +211,33 @@ unsafe extern "C" {
 #[test]
 #[ignore = "import benchmark: minutes; run with --ignored --nocapture"]
 fn import_benchmark() {
-    let files: usize = std::env::var("HUSH_IMPORT_FILES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(100_000);
+    let files: usize = std::env::var("HUSH_IMPORT_FILES")
+        .ok()
+        .and_then(|n| n.replace('_', "").parse().ok())
+        .unwrap_or(100_000);
     let temp = tempfile::tempdir().unwrap();
-    let source: PathBuf = std::env::var_os("HUSH_IMPORT_SOURCE").map_or_else(|| temp.path().join("source"), PathBuf::from);
+    let source: PathBuf = std::env::var_os("HUSH_IMPORT_SOURCE")
+        .map_or_else(|| temp.path().join("source"), PathBuf::from);
     if !source.exists() {
         let start = Instant::now();
         generate(&source, files);
         println!("generated {files} files in {}", secs(start.elapsed()));
     }
-    let rules: Vec<_> = Rule::defaults().iter().map(|r| r.compile().unwrap()).collect();
+    let rules: Vec<_> = Rule::defaults()
+        .iter()
+        .map(|r| r.compile().unwrap())
+        .collect();
 
     // Scan, cold and warm.
     let cold = drop_caches();
     let start = Instant::now();
     let scan = import::scan(&source).unwrap();
-    println!("scan ({}): {} files, {}", if cold { "cold" } else { "warm" }, scan.files.len(), secs(start.elapsed()));
+    println!(
+        "scan ({}): {} files, {}",
+        if cold { "cold" } else { "warm" },
+        scan.files.len(),
+        secs(start.elapsed())
+    );
     let start = Instant::now();
     import::scan(&source).unwrap();
     println!("scan (warm): {}", secs(start.elapsed()));
@@ -205,7 +258,12 @@ fn import_benchmark() {
         clean::clean(&text);
         t_clean += s.elapsed();
     }
-    println!("stages, 1 thread: detect {}, read+decode {}, clean {}", secs(t_detect), secs(t_read), secs(t_clean));
+    println!(
+        "stages, 1 thread: detect {}, read+decode {}, clean {}",
+        secs(t_detect),
+        secs(t_read),
+        secs(t_clean)
+    );
 
     let cold = drop_caches();
     let start = Instant::now();
@@ -213,14 +271,25 @@ fn import_benchmark() {
     for rel in &scan.files {
         prepared.push(import::prepare(&source, rel, &rules).unwrap());
     }
-    println!("prepare, 1 thread ({}): {}", if cold { "cold" } else { "warm" }, secs(start.elapsed()));
+    println!(
+        "prepare, 1 thread ({}): {}",
+        if cold { "cold" } else { "warm" },
+        secs(start.elapsed())
+    );
     let start = Instant::now();
     for rel in &scan.files {
         import::prepare(&source, rel, &rules).unwrap();
     }
     println!("prepare, 1 thread (warm): {}", secs(start.elapsed()));
-    let bytes: usize = prepared.iter().map(|p| p.body.len() + p.original.len()).sum();
-    println!("prepared held in memory: {} MB (body + original), {}", bytes >> 20, rss_mb());
+    let bytes: usize = prepared
+        .iter()
+        .map(|p| p.body.len() + p.original.len())
+        .sum();
+    println!(
+        "prepared held in memory: {} MB (body + original), {}",
+        bytes >> 20,
+        rss_mb()
+    );
 
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     for cold in [true, false] {
@@ -237,15 +306,26 @@ fn import_benchmark() {
                 });
             }
         });
-        println!("prepare, {threads} threads ({}): {}", if cold { "cold" } else { "warm" }, secs(start.elapsed()));
+        println!(
+            "prepare, {threads} threads ({}): {}",
+            if cold { "cold" } else { "warm" },
+            secs(start.elapsed())
+        );
     }
 
     // Writes alone, on prepared notes, as `import::run` does them.
     write_only(&prepared);
 
-    let base: usize = std::env::var("HUSH_IMPORT_BASE").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(0);
+    let base: usize = std::env::var("HUSH_IMPORT_BASE")
+        .ok()
+        .and_then(|n| n.replace('_', "").parse().ok())
+        .unwrap_or(0);
     let (_dir, vault_path) = if base > 0 {
-        base_vault(&prepared, base, std::env::var_os("HUSH_IMPORT_BASE_VAULT").map(PathBuf::from))
+        base_vault(
+            &prepared,
+            base,
+            std::env::var_os("HUSH_IMPORT_BASE_VAULT").map(PathBuf::from),
+        )
     } else {
         let (dir, vault) = common::vault();
         vault.close().unwrap();
@@ -256,10 +336,23 @@ fn import_benchmark() {
 
     // The whole flow as the app runs it: preview, then import, then preview again.
     let session = Session::default();
-    session.unlock(Vault::open(&vault_path, common::PASS).unwrap(), vault_path.clone()).unwrap();
+    session
+        .unlock(
+            Vault::open(&vault_path, common::PASS).unwrap(),
+            vault_path.clone(),
+        )
+        .unwrap();
     let cold = drop_caches();
     let start = Instant::now();
-    let preview = import::run(&session, &source, "Import", true, &AtomicBool::new(false), |_| {}).unwrap();
+    let preview = import::run(
+        &session,
+        &source,
+        "Import",
+        true,
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
     println!(
         "run: preview ({}) {}, {} would be imported, samples {}, {}",
         if cold { "cold" } else { "warm" },
@@ -285,16 +378,37 @@ fn import_benchmark() {
             }
             waits
         });
-        let report = import::run(&session, &source, "Import", false, &AtomicBool::new(false), |_| {}).unwrap();
+        let report = import::run(
+            &session,
+            &source,
+            "Import",
+            false,
+            &AtomicBool::new(false),
+            |_| {},
+        )
+        .unwrap();
         finished.store(true, Ordering::Relaxed);
         (report, probe.join().unwrap())
     });
-    println!("run: import {}, {} imported, {}", secs(start.elapsed()), report.imported, rss_mb());
+    println!(
+        "run: import {}, {} imported, {}",
+        secs(start.elapsed()),
+        report.imported,
+        rss_mb()
+    );
     println!("UI wait for the vault during import: {}", spread(waits));
     let dirty = session.with_vault(|v| v.embedding_queue_len()).unwrap();
     println!("embedding queue after import: {dirty}");
     let start = Instant::now();
-    let again = import::run(&session, &source, "Import", true, &AtomicBool::new(false), |_| {}).unwrap();
+    let again = import::run(
+        &session,
+        &source,
+        "Import",
+        true,
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
     let json = serde_json::to_string(&again).unwrap();
     println!(
         "run: preview again {}, {} skipped (already exist), report JSON {} KB",
@@ -312,19 +426,38 @@ fn write_only(prepared: &[Prepared]) {
     for chunk in prepared.chunks(import::BATCH_SIZE) {
         let notes: Vec<NewNote> = chunk
             .iter()
-            .map(|p| NewNote { folder: &p.folder, title: &p.title, body: &p.body, created_at: p.created_at, updated_at: p.updated_at })
+            .map(|p| NewNote {
+                folder: &p.folder,
+                title: &p.title,
+                body: &p.body,
+                created_at: p.created_at,
+                updated_at: p.updated_at,
+            })
             .collect();
         let mut written = 0;
         while written < notes.len() {
             let s = Instant::now();
-            written += vault.import_notes_within(&notes[written..], import::INSERT_BUDGET).unwrap().len();
+            written += vault
+                .import_notes_within(&notes[written..], import::INSERT_BUDGET)
+                .unwrap()
+                .len();
             holds.push(s.elapsed());
         }
     }
-    println!("write {} notes: {} in {} transactions ({})", prepared.len(), secs(start.elapsed()), holds.len(), spread(holds));
+    println!(
+        "write {} notes: {} in {} transactions ({})",
+        prepared.len(),
+        secs(start.elapsed()),
+        holds.len(),
+        spread(holds)
+    );
     vault.set_bulk_writes(false).unwrap();
     let ids: Vec<i64> = (1..=prepared.len() as i64).collect();
     let s = Instant::now();
     let ambiguous = vault.ambiguous_links(&ids).unwrap();
-    println!("ambiguous_links over imported ids: {} ({} found)", secs(s.elapsed()), ambiguous.len());
+    println!(
+        "ambiguous_links over imported ids: {} ({} found)",
+        secs(s.elapsed()),
+        ambiguous.len()
+    );
 }

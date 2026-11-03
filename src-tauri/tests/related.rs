@@ -40,13 +40,26 @@ struct Source(Vec<Arc<Controlled>>);
 
 impl EmbedderSource for Source {
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
-        let e = self.0.iter().find(|e| e.id == model).ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
+        let e = self
+            .0
+            .iter()
+            .find(|e| e.id == model)
+            .ok_or_else(|| EmbedError::UnknownModel(model.into()))?;
         Ok(e.clone())
     }
 }
 
 fn source(dims: &[usize]) -> Source {
-    Source(dims.iter().map(|&dims| Arc::new(Controlled { id: format!("ctl-{dims}"), dims })).collect())
+    Source(
+        dims.iter()
+            .map(|&dims| {
+                Arc::new(Controlled {
+                    id: format!("ctl-{dims}"),
+                    dims,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn session(model: &str) -> (TempDir, PathBuf, Session, u64) {
@@ -62,7 +75,11 @@ fn session(model: &str) -> (TempDir, PathBuf, Session, u64) {
 /// Runs passes until one finds nothing to do, as the job does after every change.
 fn index(session: &Session, generation: u64, source: &dyn EmbedderSource) {
     for _ in 0..10 {
-        if job::pass(session, generation, source, &mut |_| {}).unwrap().stale == 0 {
+        if job::pass(session, generation, source, &mut |_| {})
+            .unwrap()
+            .stale
+            == 0
+        {
             return;
         }
     }
@@ -70,12 +87,16 @@ fn index(session: &Session, generation: u64, source: &dyn EmbedderSource) {
 }
 
 fn note(session: &Session, title: &str, vector: &str) -> i64 {
-    session.with_vault(|v| v.create_note("", title, &format!("v {vector}"))).unwrap()
+    session
+        .with_vault(|v| v.create_note("", title, &format!("v {vector}")))
+        .unwrap()
 }
 
 /// Titles of the notes related to `id`, or `None` if it isn't indexed.
 fn related(session: &Session, id: i64, limit: usize) -> Option<Vec<String>> {
-    related::related_notes(session, id, limit).unwrap().map(|notes| notes.into_iter().map(|n| n.note.title).collect())
+    related::related_notes(session, id, limit)
+        .unwrap()
+        .map(|notes| notes.into_iter().map(|n| n.note.title).collect())
 }
 
 fn indexed(session: &Session) -> usize {
@@ -91,16 +112,29 @@ fn related_notes_are_ordered_by_similarity_and_skip_self_and_unindexed_notes() {
     note(&session, "Mid", "0.5 0.5 0 0");
     note(&session, "Far", "0 1 0 0");
     note(&session, "Opposite", "-1 0 0 0");
-    let empty = session.with_vault(|v| v.create_note("", "Empty", "---\ntags: [x]\n---\n")).unwrap();
+    let empty = session
+        .with_vault(|v| v.create_note("", "Empty", "---\ntags: [x]\n---\n"))
+        .unwrap();
 
     // Nothing is ready before the first pass.
     assert_eq!(related(&session, a, 10), None);
     index(&session, g, &source);
 
-    assert_eq!(related(&session, a, 10).unwrap(), ["Near", "Mid", "Far", "Opposite"]);
-    assert_eq!(related(&session, a, 2).unwrap(), ["Near", "Mid"], "limit honoured");
+    assert_eq!(
+        related(&session, a, 10).unwrap(),
+        ["Near", "Mid", "Far", "Opposite"]
+    );
+    assert_eq!(
+        related(&session, a, 2).unwrap(),
+        ["Near", "Mid"],
+        "limit honoured"
+    );
     assert_eq!(related(&session, a, 0).unwrap(), Vec::<String>::new());
-    assert_eq!(related(&session, empty, 10), None, "a note without a vector isn't indexed yet");
+    assert_eq!(
+        related(&session, empty, 10),
+        None,
+        "a note without a vector isn't indexed yet"
+    );
     assert_eq!(indexed(&session), 5);
 
     // A note added later isn't related to anything until the job has embedded it.
@@ -115,14 +149,22 @@ fn related_notes_are_ordered_by_similarity_and_skip_self_and_unindexed_notes() {
 fn related_notes_carry_the_exact_score_and_reasons() {
     let (_dir, _path, session, g) = session("ctl-4");
     let source = source(&[4]);
-    let a = session.with_vault(|v| v.create_note("f", "A", "v 1 0 0 0\n#shared [[Near]]")).unwrap();
-    session.with_vault(|v| v.create_note("f", "Near", "v 0.6 0.8 0 0\n#shared")).unwrap();
+    let a = session
+        .with_vault(|v| v.create_note("f", "A", "v 1 0 0 0\n#shared [[Near]]"))
+        .unwrap();
+    session
+        .with_vault(|v| v.create_note("f", "Near", "v 0.6 0.8 0 0\n#shared"))
+        .unwrap();
     note(&session, "Far", "0 1 0 0");
     index(&session, g, &source);
 
     let notes = related::related_notes(&session, a, 10).unwrap().unwrap();
     assert_eq!(notes[0].note.title, "Near");
-    assert!((notes[0].score - 0.6).abs() < 1e-6, "exact cosine, not the i8 estimate: {}", notes[0].score);
+    assert!(
+        (notes[0].score - 0.6).abs() < 1e-6,
+        "exact cosine, not the i8 estimate: {}",
+        notes[0].score
+    );
     assert!(notes[0].reasons.links_to && notes[0].reasons.same_folder);
     assert_eq!(notes[0].reasons.shared_tags, ["shared"]);
     assert!(notes[1].score.abs() < 1e-6);
@@ -140,13 +182,23 @@ fn the_index_follows_saves_trash_restore_and_delete() {
     assert_eq!(related(&session, a, 10).unwrap(), ["B", "C"]);
 
     // Save: C is re-embedded closer to A than B.
-    session.with_vault(|v| v.update_body(c, "v 1 0.01 0 0")).unwrap();
-    assert!(job::pass(&session, g, &source, &mut |_| {}).unwrap().related_changed);
+    session
+        .with_vault(|v| v.update_body(c, "v 1 0.01 0 0"))
+        .unwrap();
+    assert!(
+        job::pass(&session, g, &source, &mut |_| {})
+            .unwrap()
+            .related_changed
+    );
     assert_eq!(related(&session, a, 10).unwrap(), ["C", "B"]);
 
     // Trash: gone from the results at once, and from the index after the next pass.
     session.with_vault(|v| v.trash_note(c)).unwrap();
-    assert_eq!(related(&session, a, 1).unwrap(), ["B"], "trashed notes are skipped before the job runs");
+    assert_eq!(
+        related(&session, a, 1).unwrap(),
+        ["B"],
+        "trashed notes are skipped before the job runs"
+    );
     assert_eq!(indexed(&session), 3);
     index(&session, g, &source);
     assert_eq!(indexed(&session), 2);
@@ -154,7 +206,9 @@ fn the_index_follows_saves_trash_restore_and_delete() {
     assert_eq!(related(&session, c, 10), None);
 
     // Restore: re-embedded and back.
-    session.with_vault(|v| v.restore_note(c).map(|_| ())).unwrap();
+    session
+        .with_vault(|v| v.restore_note(c).map(|_| ()))
+        .unwrap();
     index(&session, g, &source);
     assert_eq!(related(&session, a, 10).unwrap(), ["C", "B"]);
 
@@ -176,7 +230,11 @@ fn the_index_follows_saves_trash_restore_and_delete() {
     assert_eq!(related(&session, d, 10), None);
 
     // A pass with nothing new leaves the index alone.
-    assert!(!job::pass(&session, g, &source, &mut |_| {}).unwrap().related_changed);
+    assert!(
+        !job::pass(&session, g, &source, &mut |_| {})
+            .unwrap()
+            .related_changed
+    );
 }
 
 #[test]
@@ -203,7 +261,10 @@ fn job_passes_update_only_the_notes_they_changed() {
     index(&session, g, &source);
     let contains = |id| session.related_index().as_ref().unwrap().contains(id);
     assert!(contains(b), "the note the pass embedded is loaded");
-    assert!(!contains(hidden), "the pass handed the index only its own notes, no full diff");
+    assert!(
+        !contains(hidden),
+        "the pass handed the index only its own notes, no full diff"
+    );
     assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
     // A full sync does find it.
     assert!(related::sync(&session, g).unwrap());
@@ -225,9 +286,14 @@ fn the_index_is_empty_after_lock_and_rebuilt_after_unlock() {
     assert!(session.update_related_index(g, |_| ()).is_none());
     assert!(related::related_notes(&session, a, 10).is_err());
 
-    let g2 = session.unlock(Vault::open(&path, common::PASS).unwrap(), path.clone()).unwrap();
+    let g2 = session
+        .unlock(Vault::open(&path, common::PASS).unwrap(), path.clone())
+        .unwrap();
     assert!(session.related_index().is_none());
-    assert!(related::sync(&session, g).is_err(), "the old generation is refused");
+    assert!(
+        related::sync(&session, g).is_err(),
+        "the old generation is refused"
+    );
     index(&session, g2, &source);
     assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
 }
@@ -242,14 +308,27 @@ fn the_job_builds_the_index_from_stored_vectors_before_loading_the_model() {
     index(&session, g, &source(&[4]));
     session.lock();
 
-    let g2 = session.unlock(Vault::open(&path, common::PASS).unwrap(), path.clone()).unwrap();
+    let g2 = session
+        .unlock(Vault::open(&path, common::PASS).unwrap(), path.clone())
+        .unwrap();
     let changed = std::sync::atomic::AtomicUsize::new(0);
     // No embedder for `ctl-4`: the first pass fails and the job stops.
-    job::run_with(&session, g2, &source(&[]), Duration::from_millis(10), |_| {}, || {
-        changed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    });
+    job::run_with(
+        &session,
+        g2,
+        &source(&[]),
+        Duration::from_millis(10),
+        |_| {},
+        || {
+            changed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        },
+    );
     assert_eq!(related(&session, a, 10).unwrap(), ["B"]);
-    assert_eq!(changed.load(std::sync::atomic::Ordering::SeqCst), 1, "the UI is told once");
+    assert_eq!(
+        changed.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the UI is told once"
+    );
 }
 
 #[test]
@@ -260,14 +339,20 @@ fn the_index_is_rebuilt_when_the_ready_model_changes() {
     note(&session, "B", "0 1 0 0 0 0 0 0");
     note(&session, "C", "0 0 0 0 1 0 0 0");
     index(&session, g, &source);
-    let model = |s: &Session| s.related_index().as_ref().and_then(|i| i.model().map(str::to_string));
+    let model = |s: &Session| {
+        s.related_index()
+            .as_ref()
+            .and_then(|i| i.model().map(str::to_string))
+    };
     assert_eq!(model(&session).as_deref(), Some("ctl-4"));
     // In 4 dims C's vector is all zeros, so B and C tie at 0.
     assert_eq!(related(&session, a, 10).unwrap().len(), 2);
 
     // Switch: the old vectors keep serving until the new model is complete.
     // (A pass that drains the queue completes the new model, so check before it.)
-    session.with_vault(|v| v.set_embedding_model("ctl-8")).unwrap();
+    session
+        .with_vault(|v| v.set_embedding_model("ctl-8"))
+        .unwrap();
     related::sync(&session, g).unwrap();
     assert_eq!(model(&session).as_deref(), Some("ctl-4"));
     index(&session, g, &source);
@@ -276,7 +361,9 @@ fn the_index_is_rebuilt_when_the_ready_model_changes() {
 
     // Lock and unlock: rebuilt for the ready model.
     session.lock();
-    let g2 = session.unlock(Vault::open(&path, common::PASS).unwrap(), path).unwrap();
+    let g2 = session
+        .unlock(Vault::open(&path, common::PASS).unwrap(), path)
+        .unwrap();
     index(&session, g2, &source);
     assert_eq!(model(&session).as_deref(), Some("ctl-8"));
     assert_eq!(related(&session, a, 10).unwrap().len(), 2);
@@ -290,9 +377,16 @@ fn the_running_job_reports_index_changes() {
     let changes = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|s| {
         s.spawn(|| {
-            job::run_with(&session, g, &source, Duration::from_millis(5), |_| {}, || {
-                changes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            })
+            job::run_with(
+                &session,
+                g,
+                &source,
+                Duration::from_millis(5),
+                |_| {},
+                || {
+                    changes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
         });
         let wait = |f: &dyn Fn() -> bool| {
             let start = Instant::now();
@@ -301,7 +395,12 @@ fn the_running_job_reports_index_changes() {
                 std::thread::sleep(Duration::from_millis(5));
             }
         };
-        wait(&|| session.related_index().as_ref().is_some_and(|i| i.contains(a)));
+        wait(&|| {
+            session
+                .related_index()
+                .as_ref()
+                .is_some_and(|i| i.contains(a))
+        });
         let before = changes.load(std::sync::atomic::Ordering::SeqCst);
         assert!(before >= 1);
         note(&session, "B", "1 0 0 0");
@@ -322,14 +421,34 @@ fn related_notes_on_10k_notes_is_fast() {
     let (_dir, _path, session, g) = session("ctl-384");
     // Tags and links, so the reasons for the shown notes have something to find.
     let bodies: Vec<(String, String)> = (0..N)
-        .map(|i| (format!("Note {i}"), format!("body {i} #t{} [[Note {}]] [[Note {}]]", i % 50, (i * 7) % N, (i + 1) % N)))
+        .map(|i| {
+            (
+                format!("Note {i}"),
+                format!(
+                    "body {i} #t{} [[Note {}]] [[Note {}]]",
+                    i % 50,
+                    (i * 7) % N,
+                    (i + 1) % N
+                ),
+            )
+        })
         .collect();
     let notes: Vec<NewNote> = bodies
         .iter()
-        .map(|(t, b)| NewNote { folder: "f", title: t, body: b, created_at: 0, updated_at: 0 })
+        .map(|(t, b)| NewNote {
+            folder: "f",
+            title: t,
+            body: b,
+            created_at: 0,
+            updated_at: 0,
+        })
         .collect();
-    let ids: Vec<i64> =
-        session.with_vault(|v| v.import_notes(&notes)).unwrap().into_iter().map(|r| r.unwrap()).collect();
+    let ids: Vec<i64> = session
+        .with_vault(|v| v.import_notes(&notes))
+        .unwrap()
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
     // Pseudo-random vectors, written directly: embedding 10k notes isn't what's measured.
     let mut seed = 0x2545_f491_4f6c_dd1du64;
     let vectors: Vec<(i64, [u8; 32], Vec<f32>)> = ids
@@ -370,5 +489,8 @@ fn related_notes_on_10k_notes_is_fast() {
     let median = times[times.len() / 2];
     let worst = *times.last().unwrap();
     println!("10k x {DIMS}: index load {load:?}, related_notes median {median:?}, worst {worst:?}");
-    assert!(worst < Duration::from_millis(50), "related_notes took {worst:?}");
+    assert!(
+        worst < Duration::from_millis(50),
+        "related_notes took {worst:?}"
+    );
 }

@@ -8,6 +8,7 @@
     errorMessage,
     MODEL_DOWNLOAD_EVENT,
     type DownloadStatus,
+    type GpuStatus,
     type ModelInfo,
     type ModelOverview,
   } from "$lib/api";
@@ -15,6 +16,10 @@
   import { indexText, indexing } from "$lib/indexing";
 
   let overview = $state<ModelOverview | null>(null);
+  let gpu = $state<GpuStatus | null>(null);
+  /** Measured on an RTX 4060 Ti with 3,000-word notes (#105): the switch estimate until
+   * this computer has a rate of its own. */
+  const GPU_RATE = 15;
   let error = $state("");
   let busy = $state(false);
 
@@ -33,6 +38,7 @@
       if (e.payload.state === "done") void load();
     });
     api.modelDownloads().then((all) => all.forEach((d) => (downloads[d.model] = d)), () => {});
+    api.gpuStatus().then((s) => (gpu = s), () => {});
     return () => void unlisten.then((stop) => stop());
   });
 
@@ -103,8 +109,14 @@
 
   async function use(m: ModelInfo) {
     if (!overview) return;
-    const rate = m.rate ?? overview.defaultRate;
-    const measured = m.rate != null ? "measured on this computer" : "an estimate, not yet measured on this computer";
+    const gpuGuess = m.rate == null && m.gpu && gpu?.best != null && gpu.enabled;
+    const rate = m.rate ?? (gpuGuess ? GPU_RATE : overview.defaultRate);
+    const measured =
+      m.rate != null
+        ? "measured on this computer"
+        : gpuGuess
+          ? "measured with long notes on an RTX 4060 Ti, not yet on this computer"
+          : "an estimate, not yet measured on this computer";
     const notes = overview.notes;
     const serving = status?.readyModel
       ? `Until it is done, related notes and tag suggestions keep using ${overview.models.find((x) => x.id === status?.readyModel)?.name ?? status.readyModel}.`
@@ -234,6 +246,16 @@
       {/if}
     </dl>
 
+    {#if gpu?.best && gpu.enabled && current && !current.gpu}
+      {@const gpuModel = overview.models.find((m) => m.gpu)}
+      {#if gpuModel}
+        <p class="muted" role="status">
+          This computer has a separate GPU ({gpu.best.name}). {gpuModel.name} runs on it: on an RTX 4060 Ti it indexed long
+          notes about 36 times faster than the bundled model on the CPU. Switching embeds every note again once.
+        </p>
+      {/if}
+    {/if}
+
     <h3>Models Hush knows</h3>
     <ul class="models">
       {#each overview.models as m (m.id)}
@@ -244,7 +266,7 @@
             <span class="muted mono">{m.id}</span>
           </div>
           <span class="muted" class:unavailable={m.availability.state !== "available" && (m.bundled || m.availability.state !== "missing")}>
-            {availabilityText(m)} · {m.dims} dimensions · {m.licence}{#if m.rate != null}
+            {availabilityText(m)} · {m.dims} dimensions · {m.licence}{#if m.gpu} · made for the GPU{/if}{#if m.rate != null}
               · {m.rate.toFixed(1)} notes/s here{/if}
           </span>
           {#if d?.state === "running"}

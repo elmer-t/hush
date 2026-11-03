@@ -50,7 +50,11 @@ impl Vault {
     /// Applies one metadata edit to every note in `ids`, in one transaction: all or
     /// nothing, so an unknown (or trashed) id changes nothing. Title and folder don't
     /// change, so no other note's links change meaning.
-    pub fn edit_notes_metadata(&mut self, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
+    pub fn edit_notes_metadata(
+        &mut self,
+        ids: &[i64],
+        edit: &MetadataEdit,
+    ) -> Result<MetadataEditReport> {
         let tx = self.conn.transaction()?;
         let report = Self::edit_notes_metadata_in(&tx, ids, edit)?;
         tx.commit()?;
@@ -58,7 +62,11 @@ impl Vault {
     }
 
     /// [`Vault::edit_notes_metadata`] inside the caller's transaction.
-    pub(super) fn edit_notes_metadata_in(tx: &Connection, ids: &[i64], edit: &MetadataEdit) -> Result<MetadataEditReport> {
+    pub(super) fn edit_notes_metadata_in(
+        tx: &Connection,
+        ids: &[i64],
+        edit: &MetadataEdit,
+    ) -> Result<MetadataEditReport> {
         let edit = normalize(edit)?;
         let now = now_ms();
         let mut report = MetadataEditReport::default();
@@ -68,20 +76,32 @@ impl Vault {
                 continue;
             }
             let (folder, title, body): (String, String, String) = tx
-                .query_row("SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL", [id], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-                })
+                .query_row(
+                    "SELECT folder, title, body FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
                 .optional()?
                 .ok_or(Error::NoteNotFound)?;
-            let note = || TitledNote { id, folder: folder.clone(), title: title.clone() };
+            let note = || TitledNote {
+                id,
+                folder: folder.clone(),
+                title: title.clone(),
+            };
 
-            if markdown::split_frontmatter(&body).is_some_and(|(yaml, _)| !markdown::frontmatter_is_valid(yaml)) {
+            if markdown::split_frontmatter(&body)
+                .is_some_and(|(yaml, _)| !markdown::frontmatter_is_valid(yaml))
+            {
                 report.unreadable.push(note());
                 continue;
             }
             let new_body = apply(&body, &edit);
             if let MetadataEdit::RemoveTag(tag) = &edit {
-                if markdown::parse(&new_body).tags.iter().any(|t| same_tag(t, tag)) {
+                if markdown::parse(&new_body)
+                    .tags
+                    .iter()
+                    .any(|t| same_tag(t, tag))
+                {
                     report.still_inline.push(note());
                 }
             }
@@ -90,7 +110,10 @@ impl Vault {
                 continue;
             }
             let before = tags::note_tag_names(&tx, id)?;
-            tx.execute("UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1", params![id, new_body, now])?;
+            tx.execute(
+                "UPDATE notes SET body = ?2, updated_at = ?3 WHERE id = ?1",
+                params![id, new_body, now],
+            )?;
             derive(&tx, id, &new_body)?;
             tags::record_hand_edits(&tx, id, &before, now)?;
             report.changed.push(id);
@@ -108,7 +131,9 @@ fn normalize(edit: &MetadataEdit) -> Result<MetadataEdit> {
         MetadataEdit::RemoveTag(t) => MetadataEdit::RemoveTag(tag(t)?),
         MetadataEdit::SetTopic(v) => MetadataEdit::SetTopic(v.trim().to_string()),
         MetadataEdit::SetAuthor(v) => MetadataEdit::SetAuthor(v.trim().to_string()),
-        MetadataEdit::SetRating(Some(r)) if !(1..=5).contains(r) => return Err(Error::InvalidRating),
+        MetadataEdit::SetRating(Some(r)) if !(1..=5).contains(r) => {
+            return Err(Error::InvalidRating);
+        }
         MetadataEdit::SetRating(r) => MetadataEdit::SetRating(*r),
     })
 }
@@ -120,7 +145,9 @@ pub(super) fn normalize_tag(t: &str) -> Result<String> {
     if t.is_empty() {
         Err(Error::InvalidTag("tag is empty".into()))
     } else if t.contains(|c: char| c == ',' || c.is_whitespace()) {
-        Err(Error::InvalidTag("tag must not contain spaces or commas".into()))
+        Err(Error::InvalidTag(
+            "tag must not contain spaces or commas".into(),
+        ))
     } else {
         Ok(t.to_string())
     }
@@ -142,14 +169,21 @@ fn apply(body: &str, edit: &MetadataEdit) -> String {
             if !parsed.frontmatter_tags.iter().any(|t| same_tag(t, tag)) {
                 return body.to_string();
             }
-            let tags: Vec<String> = parsed.frontmatter_tags.into_iter().filter(|t| !same_tag(t, tag)).collect();
+            let tags: Vec<String> = parsed
+                .frontmatter_tags
+                .into_iter()
+                .filter(|t| !same_tag(t, tag))
+                .collect();
             write_tags(body, &tags)
         }
         MetadataEdit::SetTopic(value) => set_scalar(body, "topic", parsed.topic.as_deref(), value),
-        MetadataEdit::SetAuthor(value) => set_scalar(body, "author", parsed.author.as_deref(), value),
+        MetadataEdit::SetAuthor(value) => {
+            set_scalar(body, "author", parsed.author.as_deref(), value)
+        }
         MetadataEdit::SetRating(rating) => {
             // Setting or clearing also replaces a `rating` value that isn't a valid rating.
-            let has_key = parsed.rating.is_some() || parsed.attributes.iter().any(|(k, _)| k == "rating");
+            let has_key =
+                parsed.rating.is_some() || parsed.attributes.iter().any(|(k, _)| k == "rating");
             if parsed.rating == *rating && (rating.is_some() || !has_key) {
                 return body.to_string();
             }
@@ -170,7 +204,11 @@ fn set_scalar(body: &str, key: &str, current: Option<&str>, value: &str) -> Stri
     if current.unwrap_or("") == value {
         return body.to_string();
     }
-    let values: Vec<String> = if value.is_empty() { Vec::new() } else { vec![value.to_string()] };
+    let values: Vec<String> = if value.is_empty() {
+        Vec::new()
+    } else {
+        vec![value.to_string()]
+    };
     markdown::set_frontmatter_field(body, key, &values)
 }
 

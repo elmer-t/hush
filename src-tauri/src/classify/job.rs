@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::{
-    Config, Example, FOLDS, Head, MIN_NEGATIVES, MIN_POSITIVES, REJECTED_WEIGHT, TRAINING_VERSION, UNTAGGED_WEIGHT,
-    balance, cross_validate, seed_for, train,
+    Config, Example, FOLDS, Head, MIN_NEGATIVES, MIN_POSITIVES, REJECTED_WEIGHT, TRAINING_VERSION,
+    UNTAGGED_WEIGHT, balance, cross_validate, seed_for, train,
 };
 use crate::activity::{Job, count, duration_text};
 use crate::db::{self, StoredHead, new_stored_head};
@@ -79,7 +79,13 @@ pub struct TrainPass {
 /// full one is written), so heads train on full vectors once instead of again when
 /// each partial one is replaced. A queue whose counts haven't moved for
 /// [`STALLED_QUIETS`] times `quiet` (the model can't load, say) no longer holds it back.
-pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, report: impl Fn(&TrainPass)) {
+pub fn run(
+    session: &Session,
+    generation: u64,
+    poll: Duration,
+    quiet: Duration,
+    report: impl Fn(&TrainPass),
+) {
     let activity = session.activity().reporter(generation);
     let mut seen = None;
     // The queue's counts per indexing phase, and since when they have been that: the
@@ -88,11 +94,12 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
     // A pass on unlock, for heads that went stale while locked (or never were trained).
     let mut changed_at = Some(Instant::now() - quiet);
     loop {
-        let (changes, counts) =
-            match session.with_vault_quiet(generation, |v| Ok((v.change_count(), v.embedding_queue_counts()?))) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
+        let (changes, counts) = match session.with_vault_quiet(generation, |v| {
+            Ok((v.change_count(), v.embedding_queue_counts()?))
+        }) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         let queued = counts.total();
         if seen.is_some_and(|s| s != changes) {
             changed_at = Some(Instant::now());
@@ -101,16 +108,23 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
         if queue.is_none_or(|(n, _)| n != counts) {
             queue = Some((counts, Instant::now()));
         }
-        let embedding = queued > 0 && queue.is_some_and(|(_, since)| since.elapsed() < quiet * STALLED_QUIETS);
+        let embedding =
+            queued > 0 && queue.is_some_and(|(_, since)| since.elapsed() < quiet * STALLED_QUIETS);
         // The notes an import brings have no vectors yet: wait until it is over.
         if session.import_running() {
             changed_at = Some(Instant::now());
             activity.wait(Job::Training, "import running");
         } else if embedding {
             changed_at = Some(Instant::now());
-            activity.wait(Job::Training, format!("notes being embedded ({} queued)", count(queued as u64)));
+            activity.wait(
+                Job::Training,
+                format!("notes being embedded ({} queued)", count(queued as u64)),
+            );
         } else if changed_at.is_some_and(|t| t.elapsed() < quiet) {
-            activity.wait(Job::Training, format!("vault changed; trains after {} s of quiet", quiet.as_secs()));
+            activity.wait(
+                Job::Training,
+                format!("vault changed; trains after {} s of quiet", quiet.as_secs()),
+            );
         }
         if changed_at.is_some_and(|t| t.elapsed() >= quiet) {
             changed_at = None;
@@ -146,7 +160,9 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     let activity = session.activity().reporter(generation);
     let mut result = TrainPass::default();
     let Some((model, labels, heads)) = session.with_vault_quiet(generation, |v| {
-        let Some(model) = v.embedding_model_ready()? else { return Ok(None) };
+        let Some(model) = v.embedding_model_ready()? else {
+            return Ok(None);
+        };
         Ok(Some((model, v.training_labels()?, v.tag_heads()?)))
     })?
     else {
@@ -163,14 +179,20 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     corpus.update(model.as_bytes());
     let mut after = 0;
     loop {
-        let page = session.with_vault_quiet(generation, |v| v.training_vectors(&model, after, PAGE))?;
+        let page =
+            session.with_vault_quiet(generation, |v| v.training_vectors(&model, after, PAGE))?;
         for (id, hash, vector) in page.vectors {
             corpus.update(id.to_le_bytes());
             corpus.update(hash);
             ids.push(id);
             vectors.push(vector);
         }
-        activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
+        activity.progress(
+            Job::Training,
+            "reading note vectors",
+            ids.len() as u64,
+            None,
+        );
         match page.next {
             Some(next) => after = next,
             None => break,
@@ -184,8 +206,16 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     let mut keep = Vec::new();
     let mut stale = Vec::new();
     for labels in &labels {
-        let positives: Vec<usize> = labels.positives.iter().filter_map(|id| index.get(id).copied()).collect();
-        let rejected: Vec<usize> = labels.rejected.iter().filter_map(|id| index.get(id).copied()).collect();
+        let positives: Vec<usize> = labels
+            .positives
+            .iter()
+            .filter_map(|id| index.get(id).copied())
+            .collect();
+        let rejected: Vec<usize> = labels
+            .rejected
+            .iter()
+            .filter_map(|id| index.get(id).copied())
+            .collect();
         let negatives = ids.len() - positives.len();
         if positives.len() < MIN_POSITIVES || negatives < MIN_NEGATIVES {
             continue;
@@ -196,7 +226,8 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         inputs.update(labels.tag.as_bytes());
         for set in [&positives, &rejected] {
             inputs.update((set.len() as u64).to_le_bytes());
-            set.iter().for_each(|i| inputs.update(ids[*i].to_le_bytes()));
+            set.iter()
+                .for_each(|i| inputs.update(ids[*i].to_le_bytes()));
         }
         let inputs: [u8; 32] = inputs.finalize().into();
         keep.push(labels.tag.clone());
@@ -208,7 +239,10 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     result.dropped = session.with_vault_quiet(generation, |v| v.retain_tag_heads(&model, &keep))?;
 
     if result.dropped > 0 {
-        activity.log(Job::Training, format!("dropped {} heads", count(result.dropped as u64)));
+        activity.log(
+            Job::Training,
+            format!("dropped {} heads", count(result.dropped as u64)),
+        );
     }
 
     let config = Config::default();
@@ -220,7 +254,11 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         }
         activity.progress(
             Job::Training,
-            format!("training head {tag} ({} positives, {} negatives)", count(positives.len() as u64), count(negatives as u64)),
+            format!(
+                "training head {tag} ({} positives, {} negatives)",
+                count(positives.len() as u64),
+                count(negatives as u64)
+            ),
             i as u64,
             Some(heads_to_train as u64),
         );
@@ -232,30 +270,58 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         let examples: Vec<Example> = vectors
             .iter()
             .enumerate()
-            .map(|(i, x)| Example { x: x.as_slice(), positive: positive[i], weight: weight[i] })
+            .map(|(i, x)| Example {
+                x: x.as_slice(),
+                positive: positive[i],
+                weight: weight[i],
+            })
             .collect();
         // Warm start from the previous head of the same model.
-        let start: Option<Head> =
-            heads.get(tag.as_str()).filter(|h| h.model == model).map(|h| h.head.clone());
+        let start: Option<Head> = heads
+            .get(tag.as_str())
+            .filter(|h| h.model == model)
+            .map(|h| h.head.clone());
         let mut balanced = examples.clone();
         balance(&mut balanced);
         let head = train(&balanced, start.as_ref(), &config).head;
-        let Some(quality) = cross_validate(&examples, FOLDS, seed_for(&tag), Some(&head), &config, &keep_going) else {
+        let Some(quality) = cross_validate(
+            &examples,
+            FOLDS,
+            seed_for(&tag),
+            Some(&head),
+            &config,
+            &keep_going,
+        ) else {
             return Err(TrainError::Locked);
         };
         let elapsed = started.elapsed();
-        let stored = new_stored_head(&tag, &model, head, (positives.len(), negatives), quality, inputs);
+        let stored = new_stored_head(
+            &tag,
+            &model,
+            head,
+            (positives.len(), negatives),
+            quality,
+            inputs,
+        );
         if !session.with_vault_quiet(generation, |v| v.write_tag_head(&stored))? {
             // The ready model changed meanwhile; the next pass starts over with it.
             activity.finish(Job::Training, "stopped: the ready model changed");
             return Ok(result);
         }
-        activity.log(Job::Training, format!("head {tag} trained ({})", duration_text(elapsed)));
+        activity.log(
+            Job::Training,
+            format!("head {tag} trained ({})", duration_text(elapsed)),
+        );
         result.trained.push(tag);
         result.durations.push(elapsed);
     }
     if heads_to_train > 0 {
-        activity.progress(Job::Training, "trained", heads_to_train as u64, Some(heads_to_train as u64));
+        activity.progress(
+            Job::Training,
+            "trained",
+            heads_to_train as u64,
+            Some(heads_to_train as u64),
+        );
     }
     let summary = format!(
         "{} heads trained, {} dropped, {} up to date",

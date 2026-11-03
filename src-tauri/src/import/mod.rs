@@ -200,7 +200,10 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
     fn walk(root: &Path, dir: &Path, scan: &mut Scan, assets: bool) -> std::io::Result<()> {
         let mut entries = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
         entries.sort_by_key(|e| e.file_name());
-        let names: HashSet<String> = entries.iter().map(|e| e.file_name().to_string_lossy().to_lowercase()).collect();
+        let names: HashSet<String> = entries
+            .iter()
+            .map(|e| e.file_name().to_string_lossy().to_lowercase())
+            .collect();
         for entry in &entries {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') {
@@ -214,7 +217,10 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
                 }
                 // Browsers fill `<page>_files` with styles, scripts and images. One that
                 // holds documents is an ordinary folder that happens to have that name.
-                let mut inner = Scan { files: Vec::new(), page_assets: 0 };
+                let mut inner = Scan {
+                    files: Vec::new(),
+                    page_assets: 0,
+                };
                 walk(root, &path, &mut inner, false)?;
                 if inner.files.iter().any(|f| formats::is_document(f)) {
                     scan.files.extend(inner.files);
@@ -225,12 +231,16 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
             } else if assets {
                 scan.page_assets += 1;
             } else {
-                scan.files.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+                scan.files
+                    .push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
             }
         }
         Ok(())
     }
-    let mut scan = Scan { files: Vec::new(), page_assets: 0 };
+    let mut scan = Scan {
+        files: Vec::new(),
+        page_assets: 0,
+    };
     walk(root, root, &mut scan, false)?;
     Ok(scan)
 }
@@ -238,9 +248,13 @@ pub fn scan(root: &Path) -> std::io::Result<Scan> {
 /// `page_files` next to `page.html` (or `.htm`), as browsers save a complete page.
 /// [`scan`] still imports it when it holds documents.
 fn is_page_assets(dir: &str, siblings: &HashSet<String>) -> bool {
-    let Some(page) = dir.strip_suffix("_files") else { return false };
+    let Some(page) = dir.strip_suffix("_files") else {
+        return false;
+    };
     let page = page.to_lowercase();
-    ["html", "htm", "xhtml", "shtml"].iter().any(|ext| siblings.contains(&format!("{page}.{ext}")))
+    ["html", "htm", "xhtml", "shtml"]
+        .iter()
+        .any(|ext| siblings.contains(&format!("{page}.{ext}")))
 }
 
 /// Reads and converts one file. Pure apart from reading the file.
@@ -254,7 +268,9 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
     if meta.len() > MAX_TEXT_BYTES {
         // Only the start, to tell a big text file from a binary one.
         let mut head = Vec::with_capacity(formats::SNIFF_BYTES);
-        (&mut file).take(formats::SNIFF_BYTES as u64).read_to_end(&mut head)?;
+        (&mut file)
+            .take(formats::SNIFF_BYTES as u64)
+            .read_to_end(&mut head)?;
         formats::sniff(rel, &head).ok_or(PrepareError::Unsupported)?;
         return Err(PrepareError::TooLarge(meta.len()));
     }
@@ -283,11 +299,23 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
     };
     let has_frontmatter = matches!(format, Format::Markdown | Format::Text);
 
-    let path = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
-    let folder = markdown::normalize_folder(&rel.parent().map(|p| p.to_string_lossy()).unwrap_or_default());
-    let stem = rel.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let path = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let folder = markdown::normalize_folder(
+        &rel.parent()
+            .map(|p| p.to_string_lossy())
+            .unwrap_or_default(),
+    );
+    let stem = rel
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
 
-    let (yaml, content_start) = match markdown::split_frontmatter(&text).filter(|_| has_frontmatter) {
+    let (yaml, content_start) = match markdown::split_frontmatter(&text).filter(|_| has_frontmatter)
+    {
         Some((yaml, end)) => {
             if !markdown::frontmatter_is_valid(yaml) {
                 warnings.push("frontmatter is not valid YAML; it was kept but not read".into());
@@ -296,10 +324,24 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
         }
         None => ("", 0),
     };
-    let found = rules::apply(rules, &RuleInput { file_name: &stem, frontmatter: yaml, content: &text[content_start..] });
+    let found = rules::apply(
+        rules,
+        &RuleInput {
+            file_name: &stem,
+            frontmatter: yaml,
+            content: &text[content_start..],
+        },
+    );
     warnings.extend(found.warnings.iter().cloned());
 
-    let title = sanitize_title(if found.file_name.is_empty() { &stem } else { &found.file_name }, &mut warnings);
+    let title = sanitize_title(
+        if found.file_name.is_empty() {
+            &stem
+        } else {
+            &found.file_name
+        },
+        &mut warnings,
+    );
     let content = match format {
         Format::Code(lang) => formats::fenced(&found.content, lang),
         _ => {
@@ -311,7 +353,8 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
 
     let mut body = format!("{}{content}", &text[..content_start]);
     let parsed = markdown::parse(&body);
-    let mut set = |key: &str, values: &[String]| body = markdown::set_frontmatter_field(&body, key, values);
+    let mut set =
+        |key: &str, values: &[String]| body = markdown::set_frontmatter_field(&body, key, values);
     if let Some(author) = &found.author {
         set("author", std::slice::from_ref(author));
     }
@@ -320,7 +363,11 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
     }
     let topic = found.topic.clone().or_else(|| match &parsed.topic {
         Some(_) => None,
-        None => folder.split('/').next().filter(|f| !f.is_empty()).map(str::to_string),
+        None => folder
+            .split('/')
+            .next()
+            .filter(|f| !f.is_empty())
+            .map(str::to_string),
     });
     if let Some(topic) = topic {
         set("topic", &[topic]);
@@ -376,9 +423,15 @@ fn sanitize_title(title: &str, warnings: &mut Vec<String>) -> String {
         })
         .collect();
     let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
-    let clean = if clean.is_empty() { "Untitled".to_string() } else { clean };
+    let clean = if clean.is_empty() {
+        "Untitled".to_string()
+    } else {
+        clean
+    };
     if clean != title {
-        warnings.push(format!("title changed to '{clean}': titles can't contain [ ] # | / \\"));
+        warnings.push(format!(
+            "title changed to '{clean}': titles can't contain [ ] # | / \\"
+        ));
     }
     clean
 }
@@ -387,8 +440,16 @@ fn sanitize_title(title: &str, warnings: &mut Vec<String>) -> String {
 /// `D:\Archive\OldVault` goes under `OldVault`. `""` (the vault root) for a drive root.
 /// Splits on both separators, so it gives the same answer on every platform.
 pub fn suggest_target(source: &str) -> String {
-    let name = source.split(['/', '\\']).map(str::trim).rfind(|s| !s.is_empty()).unwrap_or("");
-    if name.ends_with(':') { String::new() } else { name.to_string() }
+    let name = source
+        .split(['/', '\\'])
+        .map(str::trim)
+        .rfind(|s| !s.is_empty())
+        .unwrap_or("");
+    if name.ends_with(':') {
+        String::new()
+    } else {
+        name.to_string()
+    }
 }
 
 /// The vault folder of an imported file: `target` followed by its folder relative to
@@ -419,8 +480,11 @@ pub fn run(
     let scan = scan(source).map_err(ImportError::Source)?;
     let total = scan.files.len();
     let target = markdown::normalize_folder(target);
-    let existing_in_target =
-        if target.is_empty() { 0 } else { on_vault(session, &vault_path, |v| v.count_in_folder(&target))? };
+    let existing_in_target = if target.is_empty() {
+        0
+    } else {
+        on_vault(session, &vault_path, |v| v.count_in_folder(&target))?
+    };
     let mut report = ImportReport {
         dry_run,
         target: target.clone(),
@@ -449,123 +513,161 @@ pub fn run(
     let stop = AtomicBool::new(false);
     let stopped = || cancel.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed);
     let (ready, prepared) = mpsc::sync_channel(QUEUED_BATCHES);
-    let mut write_all = |prepared: mpsc::Receiver<Vec<Result<Prepared, PrepareError>>>| -> Result<(), ImportError> {
-        for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                report.cancelled = true;
-                break;
-            }
-            // The workers only stop early when cancelled.
-            let Ok(results) = prepared.recv() else {
-                report.cancelled = true;
-                break;
-            };
-            let mut batch = Vec::with_capacity(chunk.len());
-            for (rel, result) in chunk.iter().zip(results) {
-                match result {
-                    Ok(mut p) => {
-                        // After `prepare`, so the default topic stays the source-relative top folder.
-                        p.folder = target_folder(&target, &p.folder);
-                        give_unique_title(&mut p, &mut planned);
-                        batch.push(p);
-                    }
-                    Err(PrepareError::Unsupported) => {
-                        let ext = formats::extension(rel);
-                        let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
-                        *unsupported.entry(format).or_default() += 1;
-                    }
-                    Err(e) => skipped.push(false, FileMessage {
-                        path: rel.to_string_lossy().replace('\\', "/"),
-                        message: e.to_string(),
-                    }),
+    let mut write_all =
+        |prepared: mpsc::Receiver<Vec<Result<Prepared, PrepareError>>>| -> Result<(), ImportError> {
+            for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
+                if cancel.load(Ordering::Relaxed) {
+                    report.cancelled = true;
+                    break;
                 }
-            }
-
-            let outcomes: Vec<db::Result<i64>> = if dry_run {
-                on_vault(session, &vault_path, |v| {
-                    let mut outcomes = Vec::with_capacity(batch.len());
-                    for p in &batch {
-                        let taken = v.note_exists(&p.folder, &p.title)?;
-                        outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
-                    }
-                    Ok(outcomes)
-                })?
-            } else {
-                let notes: Vec<NewNote> = batch
-                    .iter()
-                    .map(|p| NewNote {
-                        folder: &p.folder,
-                        title: &p.title,
-                        body: &p.body,
-                        created_at: p.created_at,
-                        updated_at: p.updated_at,
-                    })
-                    .collect();
-                let mut outcomes = Vec::with_capacity(notes.len());
-                while outcomes.len() < notes.len() {
-                    if !outcomes.is_empty() {
-                        std::thread::sleep(WRITE_PAUSE);
-                        if cancel.load(Ordering::Relaxed) {
-                            report.cancelled = true;
-                            break;
+                // The workers only stop early when cancelled.
+                let Ok(results) = prepared.recv() else {
+                    report.cancelled = true;
+                    break;
+                };
+                let mut batch = Vec::with_capacity(chunk.len());
+                for (rel, result) in chunk.iter().zip(results) {
+                    match result {
+                        Ok(mut p) => {
+                            // After `prepare`, so the default topic stays the source-relative top folder.
+                            p.folder = target_folder(&target, &p.folder);
+                            give_unique_title(&mut p, &mut planned);
+                            batch.push(p);
                         }
+                        Err(PrepareError::Unsupported) => {
+                            let ext = formats::extension(rel);
+                            let format = if ext.is_empty() {
+                                "no extension".to_string()
+                            } else {
+                                format!(".{ext}")
+                            };
+                            *unsupported.entry(format).or_default() += 1;
+                        }
+                        Err(e) => skipped.push(
+                            false,
+                            FileMessage {
+                                path: rel.to_string_lossy().replace('\\', "/"),
+                                message: e.to_string(),
+                            },
+                        ),
                     }
-                    let rest = &notes[outcomes.len()..];
-                    outcomes.extend(on_vault(session, &vault_path, |v| v.import_notes_within(rest, INSERT_BUDGET))?);
                 }
-                outcomes
-            };
 
-            // Only the files written: a cancel can stop partway through a batch.
-            for p in &batch[..outcomes.len()] {
-                for w in &p.warnings {
-                    report.warning_count += 1;
-                    if report.warnings.len() < MAX_REPORTED {
-                        report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
+                let outcomes: Vec<db::Result<i64>> = if dry_run {
+                    on_vault(session, &vault_path, |v| {
+                        let mut outcomes = Vec::with_capacity(batch.len());
+                        for p in &batch {
+                            let taken = v.note_exists(&p.folder, &p.title)?;
+                            outcomes.push(if taken {
+                                Err(db::Error::TitleTaken)
+                            } else {
+                                Ok(0)
+                            });
+                        }
+                        Ok(outcomes)
+                    })?
+                } else {
+                    let notes: Vec<NewNote> = batch
+                        .iter()
+                        .map(|p| NewNote {
+                            folder: &p.folder,
+                            title: &p.title,
+                            body: &p.body,
+                            created_at: p.created_at,
+                            updated_at: p.updated_at,
+                        })
+                        .collect();
+                    let mut outcomes = Vec::with_capacity(notes.len());
+                    while outcomes.len() < notes.len() {
+                        if !outcomes.is_empty() {
+                            std::thread::sleep(WRITE_PAUSE);
+                            if cancel.load(Ordering::Relaxed) {
+                                report.cancelled = true;
+                                break;
+                            }
+                        }
+                        let rest = &notes[outcomes.len()..];
+                        outcomes.extend(on_vault(session, &vault_path, |v| {
+                            v.import_notes_within(rest, INSERT_BUDGET)
+                        })?);
                     }
-                }
-            }
-            for (p, outcome) in batch.iter().zip(outcomes) {
-                match outcome {
-                    Ok(id) => {
-                        report.imported += 1;
-                        *folders.entry(p.folder.clone()).or_default() += 1;
-                        imported_ids.push(id);
-                        if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
-                            report.samples.push(Sample {
+                    outcomes
+                };
+
+                // Only the files written: a cancel can stop partway through a batch.
+                for p in &batch[..outcomes.len()] {
+                    for w in &p.warnings {
+                        report.warning_count += 1;
+                        if report.warnings.len() < MAX_REPORTED {
+                            report.warnings.push(FileMessage {
                                 path: p.path.clone(),
-                                folder: p.folder.clone(),
-                                before: truncate(&p.original),
-                                after: truncate(&p.body),
+                                message: w.clone(),
                             });
                         }
                     }
-                    Err(e) => {
-                        let exists = matches!(e, db::Error::TitleTaken);
-                        let message = match e {
-                            db::Error::TitleTaken => {
-                                report.already_exist += 1;
-                                let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
-                                format!("a note titled '{}' already exists in {folder}", p.title)
+                }
+                for (p, outcome) in batch.iter().zip(outcomes) {
+                    match outcome {
+                        Ok(id) => {
+                            report.imported += 1;
+                            *folders.entry(p.folder.clone()).or_default() += 1;
+                            imported_ids.push(id);
+                            if dry_run
+                                && report.samples.len() < SAMPLE_COUNT
+                                && p.body != p.original
+                            {
+                                report.samples.push(Sample {
+                                    path: p.path.clone(),
+                                    folder: p.folder.clone(),
+                                    before: truncate(&p.original),
+                                    after: truncate(&p.body),
+                                });
                             }
-                            e => e.to_string(),
-                        };
-                        skipped.push(exists, FileMessage { path: p.path.clone(), message });
+                        }
+                        Err(e) => {
+                            let exists = matches!(e, db::Error::TitleTaken);
+                            let message = match e {
+                                db::Error::TitleTaken => {
+                                    report.already_exist += 1;
+                                    let folder = if p.folder.is_empty() {
+                                        "the vault root".to_string()
+                                    } else {
+                                        format!("'{}'", p.folder)
+                                    };
+                                    format!(
+                                        "a note titled '{}' already exists in {folder}",
+                                        p.title
+                                    )
+                                }
+                                e => e.to_string(),
+                            };
+                            skipped.push(
+                                exists,
+                                FileMessage {
+                                    path: p.path.clone(),
+                                    message,
+                                },
+                            );
+                        }
                     }
                 }
+                if report.cancelled {
+                    break;
+                }
+                progress(Progress {
+                    done: (n * BATCH_SIZE + chunk.len()).min(total),
+                    total,
+                });
             }
-            if report.cancelled {
-                break;
-            }
-            progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
-        }
-        Ok(())
-    };
+            Ok(())
+        };
     let written = std::thread::scope(|s| {
         s.spawn(|| {
             let ready = ready;
             for chunk in scan.files.chunks(BATCH_SIZE) {
-                let Some(results) = prepare_batch(source, chunk, &rules, threads, &stopped) else { break };
+                let Some(results) = prepare_batch(source, chunk, &rules, threads, &stopped) else {
+                    break;
+                };
                 if ready.send(results).is_err() {
                     break;
                 }
@@ -581,8 +683,10 @@ pub fn run(
     }
     written?;
 
-    let mut unsupported: Vec<FormatCount> =
-        unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
+    let mut unsupported: Vec<FormatCount> = unsupported
+        .into_iter()
+        .map(|(format, count)| FormatCount { format, count })
+        .collect();
     unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
     report.unsupported = unsupported;
     report.skipped_count = skipped.count;
@@ -591,10 +695,11 @@ pub fn run(
     report.folders = largest_folders(folders);
 
     if !dry_run && !imported_ids.is_empty() {
-        report.ambiguous_links = on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
-            .into_iter()
-            .map(|(note, target)| AmbiguousLink { note, target })
-            .collect();
+        report.ambiguous_links =
+            on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
+                .into_iter()
+                .map(|(note, target)| AmbiguousLink { note, target })
+                .collect();
     }
     Ok(report)
 }
@@ -610,7 +715,11 @@ struct Skipped {
 
 impl Skipped {
     fn push(&mut self, exists: bool, message: FileMessage) {
-        let list = if exists { &mut self.exist } else { &mut self.failed };
+        let list = if exists {
+            &mut self.exist
+        } else {
+            &mut self.failed
+        };
         if list.len() < MAX_REPORTED {
             list.push((self.count, message));
         }
@@ -628,7 +737,10 @@ impl Skipped {
 
 /// The [`MAX_REPORTED`] folders with the most notes (ties by name), sorted by name.
 fn largest_folders(folders: BTreeMap<String, usize>) -> Vec<FolderCount> {
-    let mut all: Vec<FolderCount> = folders.into_iter().map(|(folder, count)| FolderCount { folder, count }).collect();
+    let mut all: Vec<FolderCount> = folders
+        .into_iter()
+        .map(|(folder, count)| FolderCount { folder, count })
+        .collect();
     if all.len() > MAX_REPORTED {
         // Stable, so equal counts keep name order.
         all.sort_by(|a, b| b.count.cmp(&a.count));
@@ -662,7 +774,10 @@ fn prepare_batch(
                 })
             })
             .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
     });
     if results.len() < files.len() {
         return None;
@@ -680,14 +795,20 @@ fn give_unique_title(p: &mut Prepared, planned: &mut HashSet<(String, String)>) 
     if planned.insert((folder.clone(), p.title.to_lowercase())) {
         return;
     }
-    let base = if p.extension.is_empty() { p.title.clone() } else { format!("{} ({})", p.title, p.extension) };
+    let base = if p.extension.is_empty() {
+        p.title.clone()
+    } else {
+        format!("{} ({})", p.title, p.extension)
+    };
     let mut title = base.clone();
     let mut n = 2;
     while !planned.insert((folder.clone(), title.to_lowercase())) {
         title = format!("{base} {n}");
         n += 1;
     }
-    p.warnings.push(format!("renamed to '{title}': another file in this folder has the same name"));
+    p.warnings.push(format!(
+        "renamed to '{title}': another file in this folder has the same name"
+    ));
     p.title = title;
 }
 
@@ -720,7 +841,10 @@ mod tests {
     use super::*;
 
     fn message(n: usize) -> FileMessage {
-        FileMessage { path: format!("f{n:05}"), message: String::new() }
+        FileMessage {
+            path: format!("f{n:05}"),
+            message: String::new(),
+        }
     }
 
     #[test]
@@ -733,20 +857,31 @@ mod tests {
         assert_eq!(skipped.count, 10_000);
         let list = skipped.into_list();
         assert_eq!(list.len(), MAX_REPORTED);
-        let failed: Vec<&str> = list.iter().map(|m| m.path.as_str()).filter(|p| p.ends_with("00")).collect();
+        let failed: Vec<&str> = list
+            .iter()
+            .map(|m| m.path.as_str())
+            .filter(|p| p.ends_with("00"))
+            .collect();
         assert_eq!(failed.len(), 100, "every unreadable file is listed");
         assert_eq!(failed.last(), Some(&"f09900"));
-        assert!(list.windows(2).all(|w| w[0].path < w[1].path), "source order");
+        assert!(
+            list.windows(2).all(|w| w[0].path < w[1].path),
+            "source order"
+        );
     }
 
     #[test]
     fn only_the_largest_folders_are_listed_sorted_by_name() {
-        let folders: BTreeMap<String, usize> =
-            (0..MAX_REPORTED + 500).map(|n| (format!("d{n:05}"), if n % 2 == 0 { 2 } else { 1 })).collect();
+        let folders: BTreeMap<String, usize> = (0..MAX_REPORTED + 500)
+            .map(|n| (format!("d{n:05}"), if n % 2 == 0 { 2 } else { 1 }))
+            .collect();
         let listed = largest_folders(folders);
         assert_eq!(listed.len(), MAX_REPORTED);
         // All 1,250 two-note folders, then the one-note folders that come first by name.
-        assert_eq!(listed.iter().filter(|f| f.count == 2).count(), (MAX_REPORTED + 500) / 2);
+        assert_eq!(
+            listed.iter().filter(|f| f.count == 2).count(),
+            (MAX_REPORTED + 500) / 2
+        );
         assert!(listed.iter().any(|f| f.folder == "d00001"));
         assert!(!listed.iter().any(|f| f.folder == "d02499"));
         assert!(listed.windows(2).all(|w| w[0].folder < w[1].folder));

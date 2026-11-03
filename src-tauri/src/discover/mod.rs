@@ -108,7 +108,9 @@ impl From<SessionError> for DiscoverError {
 
 /// `clamp(sqrt(n / 2), 5, 50)`, and never more than `n`.
 pub fn default_groups(notes: usize) -> usize {
-    ((notes as f64 / 2.0).sqrt().round() as usize).clamp(DEFAULT_MIN_GROUPS, DEFAULT_MAX_GROUPS).min(notes)
+    ((notes as f64 / 2.0).sqrt().round() as usize)
+        .clamp(DEFAULT_MIN_GROUPS, DEFAULT_MAX_GROUPS)
+        .min(notes)
 }
 
 /// `count` of `ids` picked at random (all of them when there are no more), from `seed`,
@@ -147,7 +149,8 @@ impl Filling {
     }
 
     fn trim(&mut self) {
-        self.nearest.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        self.nearest
+            .sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         self.nearest.truncate(GROUP_NOTES);
     }
 }
@@ -185,7 +188,13 @@ pub fn run_sampled(
     };
 
     let Some(model) = session.with_vault_quiet(generation, |v| v.embedding_model_ready())? else {
-        return Ok(Discovery { model: None, notes: 0, sampled: 0, k: 0, groups: Vec::new() });
+        return Ok(Discovery {
+            model: None,
+            notes: 0,
+            sampled: 0,
+            k: 0,
+            groups: Vec::new(),
+        });
     };
 
     // The notes in scope, ids only.
@@ -193,7 +202,9 @@ pub fn run_sampled(
     let mut cursor = ScopeCursor::default();
     loop {
         check()?;
-        let (page, next) = session.with_vault_quiet(generation, |v| v.discover_scope(&options.scope, &cursor, SCOPE_PAGE))?;
+        let (page, next) = session.with_vault_quiet(generation, |v| {
+            v.discover_scope(&options.scope, &cursor, SCOPE_PAGE)
+        })?;
         scope.extend(page);
         match next {
             Some(c) => cursor = c,
@@ -211,7 +222,9 @@ pub fn run_sampled(
     let mut dims = 0;
     for page in chosen.chunks(PAGE as usize) {
         check()?;
-        for (id, mut vector) in session.with_vault_quiet(generation, |v| v.discover_vectors(&model, page))? {
+        for (id, mut vector) in
+            session.with_vault_quiet(generation, |v| v.discover_vectors(&model, page))?
+        {
             if dims == 0 {
                 dims = vector.len();
             }
@@ -226,15 +239,27 @@ pub fn run_sampled(
 
     let n = sampled.len();
     if n == 0 {
-        return Ok(Discovery { model: Some(model), notes: 0, sampled: 0, k: 0, groups: Vec::new() });
+        return Ok(Discovery {
+            model: Some(model),
+            notes: 0,
+            sampled: 0,
+            k: 0,
+            groups: Vec::new(),
+        });
     }
-    let k = options.groups.map_or_else(|| default_groups(n), |g| g.clamp(1, MAX_GROUPS).min(n));
-    let clusters = kmeans::kmeans(&points, dims, k, SEED, &stop).ok_or_else(|| check().err().unwrap_or(DiscoverError::Cancelled))?;
+    let k = options
+        .groups
+        .map_or_else(|| default_groups(n), |g| g.clamp(1, MAX_GROUPS).min(n));
+    let clusters = kmeans::kmeans(&points, dims, k, SEED, &stop)
+        .ok_or_else(|| check().err().unwrap_or(DiscoverError::Cancelled))?;
 
     let mut filling: Vec<Filling> = (0..k).map(|_| Filling::default()).collect();
     for (i, &g) in clusters.assignments.iter().enumerate() {
         let centre = &clusters.centroids[g * dims..(g + 1) * dims];
-        filling[g].add(sampled[i], kmeans::dot(&points[i * dims..(i + 1) * dims], centre));
+        filling[g].add(
+            sampled[i],
+            kmeans::dot(&points[i * dims..(i + 1) * dims], centre),
+        );
     }
     drop(points);
 
@@ -245,11 +270,16 @@ pub fn run_sampled(
         let mut after = 0;
         loop {
             check()?;
-            let (page, next) = session.with_vault_quiet(generation, |v| v.discover_vector_page(&model, after, VECTOR_PAGE))?;
+            let (page, next) = session.with_vault_quiet(generation, |v| {
+                v.discover_vector_page(&model, after, VECTOR_PAGE)
+            })?;
             let mut ids = Vec::with_capacity(page.len());
             let mut batch = Vec::with_capacity(page.len() * dims);
             for (id, mut vector) in page {
-                if vector.len() != dims || scope.binary_search(&id).is_err() || chosen.binary_search(&id).is_ok() {
+                if vector.len() != dims
+                    || scope.binary_search(&id).is_err()
+                    || chosen.binary_search(&id).is_ok()
+                {
                     continue;
                 }
                 crate::embed::normalize(&mut vector);
@@ -273,8 +303,11 @@ pub fn run_sampled(
 
     // Word counts per group from the sampled notes' title and body without frontmatter
     // (what was embedded), read a page at a time; the texts are dropped once counted.
-    let group_of: std::collections::HashMap<i64, usize> =
-        sampled.iter().zip(&clusters.assignments).map(|(&id, &g)| (id, g)).collect();
+    let group_of: std::collections::HashMap<i64, usize> = sampled
+        .iter()
+        .zip(&clusters.assignments)
+        .map(|(&id, &g)| (id, g))
+        .collect();
     let mut counts = vec![words::GroupWords::default(); k];
     for page in sampled.chunks(PAGE as usize) {
         check()?;
@@ -303,14 +336,31 @@ pub fn run_sampled(
             .iter()
             .filter_map(|&(score, id)| {
                 let (_, folder, title) = titles.iter().find(|t| t.0 == id)?;
-                Some(GroupNote { id, folder: folder.clone(), title: title.clone(), score })
+                Some(GroupNote {
+                    id,
+                    folder: folder.clone(),
+                    title: title.clone(),
+                    score,
+                })
             })
             .collect();
         f.members.sort_unstable();
-        groups.push(Group { words, size: f.members.len(), notes, members: f.members });
+        groups.push(Group {
+            words,
+            size: f.members.len(),
+            notes,
+            members: f.members,
+        });
     }
-    groups.sort_by(|a: &Group, b: &Group| b.size.cmp(&a.size).then(a.members[0].cmp(&b.members[0])));
-    Ok(Discovery { model: Some(model), notes, sampled: n, k, groups })
+    groups
+        .sort_by(|a: &Group, b: &Group| b.size.cmp(&a.size).then(a.members[0].cmp(&b.members[0])));
+    Ok(Discovery {
+        model: Some(model),
+        notes,
+        sampled: n,
+        k,
+        groups,
+    })
 }
 
 #[cfg(test)]

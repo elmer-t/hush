@@ -1,7 +1,7 @@
 //! Full-text search (FTS5, bm25) combined with metadata filters.
 
-use rusqlite::{OptionalExtension, params, params_from_iter};
 use rusqlite::types::Value;
+use rusqlite::{OptionalExtension, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use super::notes::{NoteSummary, SUMMARY_COLUMNS};
@@ -84,12 +84,18 @@ impl Vault {
     /// With text: ranked by relevance (title matches weigh more), or newest first when
     /// more than [`RANK_LIMIT`] notes match. Without text: most recently updated first.
     pub fn search_page(&self, q: &SearchQuery) -> Result<SearchPage> {
-        Ok(self.search_page_until(q, &|| false)?.expect("never stopped"))
+        Ok(self
+            .search_page_until(q, &|| false)?
+            .expect("never stopped"))
     }
 
     /// [`Vault::search_page`], giving up (`None`) as soon as `stop` says so; it is asked
     /// between the steps of the search, so a superseded search ends early.
-    pub fn search_page_until(&self, q: &SearchQuery, stop: &dyn Fn() -> bool) -> Result<Option<SearchPage>> {
+    pub fn search_page_until(
+        &self,
+        q: &SearchQuery,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Option<SearchPage>> {
         let (filters, mut args) = filters(q);
 
         let min_rating = q.min_rating.filter(|m| *m > 0);
@@ -101,7 +107,11 @@ impl Vault {
             // note's rating, which reads the whole vault when few notes are rated. Most
             // notes are unrated, so reading the rated ones and sorting them is the
             // cheaper bet.
-            let index = if min_rating.is_some() { " INDEXED BY notes_rating" } else { "" };
+            let index = if min_rating.is_some() {
+                " INDEXED BY notes_rating"
+            } else {
+                ""
+            };
             let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM notes n{index} WHERE 1");
             for f in &filters {
                 sql.push_str(" AND ");
@@ -112,9 +122,17 @@ impl Vault {
             args.push(offset.into());
             let mut stmt = self.conn.prepare(&sql)?;
             let hits = stmt
-                .query_map(params_from_iter(args), |r| Ok(SearchHit { note: NoteSummary::from_row(r)?, snippet: None }))?
+                .query_map(params_from_iter(args), |r| {
+                    Ok(SearchHit {
+                        note: NoteSummary::from_row(r)?,
+                        snippet: None,
+                    })
+                })?
                 .collect::<rusqlite::Result<_>>()?;
-            return Ok(Some(SearchPage { hits, newest_first: false }));
+            return Ok(Some(SearchPage {
+                hits,
+                newest_first: false,
+            }));
         };
 
         // Matching ids first, from the full-text index alone where possible: joining
@@ -125,7 +143,9 @@ impl Vault {
              AND notes_fts.rowid NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)"
                 .to_string()
         } else {
-            let mut from = "FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid WHERE notes_fts MATCH ?".to_string();
+            let mut from =
+                "FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid WHERE notes_fts MATCH ?"
+                    .to_string();
             for f in &filters {
                 from.push_str(" AND ");
                 from.push_str(f);
@@ -148,13 +168,19 @@ impl Vault {
             return Ok(None);
         }
         let newest_first = matches as usize > RANK_LIMIT;
-        let order = if newest_first { "notes_fts.rowid DESC" } else { "bm25(notes_fts, 10.0, 1.0)" };
+        let order = if newest_first {
+            "notes_fts.rowid DESC"
+        } else {
+            "bm25(notes_fts, 10.0, 1.0)"
+        };
         let mut page_args = args_with_text;
         page_args.push(limit.into());
         page_args.push(offset.into());
         let ids: Vec<i64> = self
             .conn
-            .prepare(&format!("SELECT notes_fts.rowid {from} ORDER BY {order} LIMIT ? OFFSET ?"))?
+            .prepare(&format!(
+                "SELECT notes_fts.rowid {from} ORDER BY {order} LIMIT ? OFFSET ?"
+            ))?
             .query_map(params_from_iter(page_args), |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
 
@@ -171,8 +197,13 @@ impl Vault {
             if stop() {
                 return Ok(None);
             }
-            let text: Option<String> = snippet.query_row(params![fts, note.id], |r| r.get(0)).optional()?;
-            hits.push(SearchHit { snippet: text.and_then(|s| clean_snippet(&s)), note });
+            let text: Option<String> = snippet
+                .query_row(params![fts, note.id], |r| r.get(0))
+                .optional()?;
+            hits.push(SearchHit {
+                snippet: text.and_then(|s| clean_snippet(&s)),
+                note,
+            });
         }
         Ok(Some(SearchPage { hits, newest_first }))
     }
@@ -202,7 +233,9 @@ impl Vault {
         sql.push_str(" ORDER BY n.id LIMIT ?");
         args.push(i64::from(limit).into());
         let mut stmt = self.conn.prepare(&sql)?;
-        let ids = stmt.query_map(params_from_iter(args), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let ids = stmt
+            .query_map(params_from_iter(args), |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(ids)
     }
 
@@ -210,7 +243,11 @@ impl Vault {
     pub fn count_in_folder(&self, folder: &str) -> Result<usize> {
         let folder = markdown::normalize_folder(folder);
         let count: i64 = if folder.is_empty() {
-            self.conn.query_row("SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL", [], |r| r.get(0))?
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )?
         } else {
             self.conn.query_row(
                 "SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL AND (folder = ?1 OR folder LIKE ?2 ESCAPE '\\')",
@@ -235,12 +272,17 @@ impl Vault {
     }
 
     pub fn attribute_values(&self, key: &str) -> Result<Vec<String>> {
-        self.strings("SELECT DISTINCT value FROM note_attributes WHERE key = ?1 ORDER BY value", [key])
+        self.strings(
+            "SELECT DISTINCT value FROM note_attributes WHERE key = ?1 ORDER BY value",
+            [key],
+        )
     }
 
     fn strings(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare_cached(sql)?;
-        let rows = stmt.query_map(params, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let rows = stmt
+            .query_map(params, |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 }
@@ -323,7 +365,11 @@ fn fts_query(text: &str) -> Option<String> {
             .iter()
             .enumerate()
             .map(|(i, w)| {
-                if i == last && typing && w.chars().count() >= 2 { format!("\"{w}\"*") } else { format!("\"{w}\"") }
+                if i == last && typing && w.chars().count() >= 2 {
+                    format!("\"{w}\"*")
+                } else {
+                    format!("\"{w}\"")
+                }
             })
             .collect::<Vec<_>>()
             .join(" "),
@@ -339,7 +385,9 @@ fn clean_snippet(snippet: &str) -> Option<String> {
 }
 
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 #[cfg(test)]
@@ -353,16 +401,26 @@ mod tests {
             clean_snippet("--- created: 2021 --- Budget \u{2}review\u{3} --- end").as_deref(),
             Some("Budget \u{2}review\u{3} --- end")
         );
-        assert_eq!(clean_snippet("\u{2}a\u{3} b").as_deref(), Some("\u{2}a\u{3} b"));
+        assert_eq!(
+            clean_snippet("\u{2}a\u{3} b").as_deref(),
+            Some("\u{2}a\u{3} b")
+        );
     }
 
     #[test]
     fn fts_query_quotes_words_and_prefixes_last() {
         assert_eq!(fts_query("  "), None);
         assert_eq!(fts_query("foo ba").as_deref(), Some(r#""foo" "ba"*"#));
-        assert_eq!(fts_query("foo b").as_deref(), Some(r#""foo" "b""#), "one letter is a whole word");
+        assert_eq!(
+            fts_query("foo b").as_deref(),
+            Some(r#""foo" "b""#),
+            "one letter is a whole word"
+        );
         assert_eq!(fts_query("é").as_deref(), Some(r#""é""#));
         assert_eq!(fts_query("foo bar ").as_deref(), Some(r#""foo" "bar""#));
-        assert_eq!(fts_query(r#"a"b OR c*"#).as_deref(), Some(r#""ab" "OR" "c*"*"#));
+        assert_eq!(
+            fts_query(r#"a"b OR c*"#).as_deref(),
+            Some(r#""ab" "OR" "c*"*"#)
+        );
     }
 }

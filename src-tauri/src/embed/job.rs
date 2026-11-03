@@ -65,18 +65,29 @@ pub trait EmbedderSource: Send + Sync {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum IndexStatus {
     Idle,
     /// `done` of `total` notes have a vector of their text, `complete` of them from
     /// all of it rather than just the first chunk (see [`pass`]). `eta_secs`: the time
     /// left for the phase running (until `done`, then `complete`, reaches `total`) at
     /// the rate of the last minute, once there are ten seconds of it to go by.
-    Indexing { done: usize, complete: usize, total: usize, eta_secs: Option<u64> },
+    Indexing {
+        done: usize,
+        complete: usize,
+        total: usize,
+        eta_secs: Option<u64>,
+    },
     /// An import is running; indexing carries on when it ends.
     Paused,
     /// The job stopped; the rest of Hush keeps working.
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,7 +138,12 @@ impl Eta {
     /// Records that `done` of `total` are done at `now`; the seconds left, if known.
     pub fn update(&mut self, now: Instant, done: usize, total: usize) -> Option<u64> {
         self.samples.push_back((now, done));
-        while self.samples.len() > 2 && self.samples.get(1).is_some_and(|s| now.duration_since(s.0) >= Self::WINDOW) {
+        while self.samples.len() > 2
+            && self
+                .samples
+                .get(1)
+                .is_some_and(|s| now.duration_since(s.0) >= Self::WINDOW)
+        {
             self.samples.pop_front();
         }
         let &(start, from) = self.samples.front()?;
@@ -182,7 +198,9 @@ pub fn run_with(
             // No note content in the message: only file names and error kinds.
             eprintln!("hush: indexing stopped: {e}");
             activity.fail(Job::Embedding, e.to_string());
-            report(IndexStatus::Failed { message: e.to_string() });
+            report(IndexStatus::Failed {
+                message: e.to_string(),
+            });
         }
     };
     let mut first = true;
@@ -228,7 +246,9 @@ pub fn run_with(
                             scan = next;
                             if scan.is_none() {
                                 if found > 0 {
-                                    eprintln!("hush: safety-net scan queued {found} notes that no write had queued");
+                                    eprintln!(
+                                        "hush: safety-net scan queued {found} notes that no write had queued"
+                                    );
                                 }
                                 activity.finish(
                                     Job::SafetyNet,
@@ -241,7 +261,10 @@ pub fn run_with(
                             } else {
                                 activity.progress(
                                     Job::SafetyNet,
-                                    format!("checking stored hashes, {} queued so far", count(found as u64)),
+                                    format!(
+                                        "checking stored hashes, {} queued so far",
+                                        count(found as u64)
+                                    ),
                                     checked as u64,
                                     None,
                                 );
@@ -295,7 +318,11 @@ pub fn safety_net(session: &Session, generation: u64) -> Result<usize, JobError>
 
 /// One page of the safety-net scan, after note `after`: how many notes it queued, how
 /// many it checked, and where to continue.
-fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(usize, usize, Option<i64>), JobError> {
+fn safety_net_page(
+    session: &Session,
+    generation: u64,
+    after: i64,
+) -> Result<(usize, usize, Option<i64>), JobError> {
     if !session.is_open(generation) {
         return Err(JobError::Locked);
     }
@@ -327,9 +354,17 @@ pub fn pass(
     let activity = session.activity().reporter(generation);
     let started = Instant::now();
     let (model, ready, counts) = session.with_vault_quiet(generation, |v| {
-        Ok((v.embedding_model()?, v.embedding_model_ready()?, v.embedding_queue_counts()?))
+        Ok((
+            v.embedding_model()?,
+            v.embedding_model_ready()?,
+            v.embedding_queue_counts()?,
+        ))
     })?;
-    let phase = if counts.first > 0 || counts.rest == 0 { QueuePhase::First } else { QueuePhase::Rest };
+    let phase = if counts.first > 0 || counts.rest == 0 {
+        QueuePhase::First
+    } else {
+        QueuePhase::Rest
+    };
     source.vault_models(&model, ready.as_deref());
     let loading = !source.is_loaded(&model);
     if loading {
@@ -337,7 +372,13 @@ pub fn pass(
     }
     let embedder = source.embedder(&model)?;
     if loading {
-        activity.log(Job::Embedding, format!("model {model} loaded ({})", duration_text(started.elapsed())));
+        activity.log(
+            Job::Embedding,
+            format!(
+                "model {model} loaded ({})",
+                duration_text(started.elapsed())
+            ),
+        );
     }
     let work = match phase {
         QueuePhase::First => counts.first,
@@ -347,8 +388,14 @@ pub fn pass(
         activity.start(
             Job::Embedding,
             match phase {
-                QueuePhase::First => format!("embedding the first chunk of {} queued notes with {model}", count(work as u64)),
-                QueuePhase::Rest => format!("completing the vectors of {} notes with {model}", count(work as u64)),
+                QueuePhase::First => format!(
+                    "embedding the first chunk of {} queued notes with {model}",
+                    count(work as u64)
+                ),
+                QueuePhase::Rest => format!(
+                    "completing the vectors of {} notes with {model}",
+                    count(work as u64)
+                ),
             },
         );
     }
@@ -356,7 +403,11 @@ pub fn pass(
 
     let show = counts.total() >= PROGRESS_MIN;
     // Counting every note costs a scan of `notes`: only done for the progress line.
-    let total = if show { session.with_vault_quiet(generation, |v| v.count_in_folder(""))? } else { 0 };
+    let total = if show {
+        session.with_vault_quiet(generation, |v| v.count_in_folder(""))?
+    } else {
+        0
+    };
     // Notes with a vector of their text, from the first chunk or all of it; and those
     // with the full vector.
     let mut done = total.saturating_sub(counts.first);
@@ -402,14 +453,29 @@ pub fn pass(
         for (b, batch) in page.stale.chunks(batch_size).enumerate() {
             if show {
                 let (done, complete) = (done.min(total), complete.min(total));
-                let progress = if phase == QueuePhase::First { done } else { complete };
-                report(IndexStatus::Indexing { done, complete, total, eta_secs: eta.update(Instant::now(), progress, total) });
+                let progress = if phase == QueuePhase::First {
+                    done
+                } else {
+                    complete
+                };
+                report(IndexStatus::Indexing {
+                    done,
+                    complete,
+                    total,
+                    eta_secs: eta.update(Instant::now(), progress, total),
+                });
             }
             activity.progress(
                 Job::Embedding,
                 match phase {
-                    QueuePhase::First => format!("first chunks: batch {} of {batches} on queue page {page_number}", b + 1),
-                    QueuePhase::Rest => format!("remaining chunks: note {} of {batches} on queue page {page_number}", b + 1),
+                    QueuePhase::First => format!(
+                        "first chunks: batch {} of {batches} on queue page {page_number}",
+                        b + 1
+                    ),
+                    QueuePhase::Rest => format!(
+                        "remaining chunks: note {} of {batches} on queue page {page_number}",
+                        b + 1
+                    ),
                 },
                 handled as u64,
                 Some(work.max(handled) as u64),
@@ -440,9 +506,15 @@ pub fn pass(
             // One call for the batch: the model may run several notes' chunks together.
             let embedded = match phase {
                 QueuePhase::First => embedder.embed_first_batch(&texts, &stop),
-                QueuePhase::Rest => embedder
-                    .embed_batch(&texts, &stop)
-                    .map(|vectors| vectors.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect()),
+                QueuePhase::Rest => embedder.embed_batch(&texts, &stop).map(|vectors| {
+                    vectors
+                        .into_iter()
+                        .map(|vector| FirstChunk {
+                            vector,
+                            complete: true,
+                        })
+                        .collect()
+                }),
             };
             let embedded = match embedded {
                 Err(EmbedError::Stopped) if session.is_open(generation) => {
@@ -487,46 +559,93 @@ pub fn pass(
     if paused {
         report(IndexStatus::Paused);
         activity.pause(Job::Embedding, "import running");
-        activity.log(Job::Embedding, format!("paused for an import after embedding {} notes", count(stale as u64)));
+        activity.log(
+            Job::Embedding,
+            format!(
+                "paused for an import after embedding {} notes",
+                count(stale as u64)
+            ),
+        );
         // The notes embedded so far still go into the related-notes index.
         let related_changed = related::update(session, generation, &changed)?;
-        return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
+        return Ok(Pass {
+            stale,
+            total,
+            descriptions: 0,
+            related_changed,
+            paused,
+        });
     }
     if preempted {
         activity.log(
             Job::Embedding,
-            format!("completed {} vectors; a saved note goes first", count(stale as u64)),
+            format!(
+                "completed {} vectors; a saved note goes first",
+                count(stale as u64)
+            ),
         );
         let related_changed = related::update(session, generation, &changed)?;
-        return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
+        return Ok(Pass {
+            stale,
+            total,
+            descriptions: 0,
+            related_changed,
+            paused,
+        });
     }
 
     let left = session.with_vault_quiet(generation, |v| v.embedding_queue_counts())?;
     let empty = left.total() == 0;
     if show {
         let complete = if empty { total } else { complete.min(total) };
-        let done = if left.first == 0 { total } else { done.min(total) };
-        report(IndexStatus::Indexing { done, complete, total, eta_secs: empty.then_some(0) });
+        let done = if left.first == 0 {
+            total
+        } else {
+            done.min(total)
+        };
+        report(IndexStatus::Indexing {
+            done,
+            complete,
+            total,
+            eta_secs: empty.then_some(0),
+        });
     }
     let mut ready_now = ready.as_deref() == Some(model.as_str());
     if left.first == 0 && !ready_now {
         session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
         ready_now = true;
         source.vault_models(&model, Some(&model));
-        activity.log(Job::Embedding, format!("every note has a {model} vector: it is now the ready model"));
+        activity.log(
+            Job::Embedding,
+            format!("every note has a {model} vector: it is now the ready model"),
+        );
     }
     // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
-    let descriptions = if ready_now { embed_descriptions(session, generation, &model, embedder.as_ref())? } else { 0 };
+    let descriptions = if ready_now {
+        embed_descriptions(session, generation, &model, embedder.as_ref())?
+    } else {
+        0
+    };
     if descriptions > 0 {
-        activity.log(Job::Embedding, format!("embedded {} tag descriptions", count(descriptions as u64)));
+        activity.log(
+            Job::Embedding,
+            format!("embedded {} tag descriptions", count(descriptions as u64)),
+        );
     }
     // The rate of the first phase is what a switch waits for (until the model is ready).
     if phase == QueuePhase::First && stale >= RATE_MIN {
-        source.measured_rate(&model, stale as f64 / embedding_started.elapsed().as_secs_f64().max(1e-3));
+        source.measured_rate(
+            &model,
+            stale as f64 / embedding_started.elapsed().as_secs_f64().max(1e-3),
+        );
     }
     if stale > 0 || work > 0 {
         let secs = started.elapsed().as_secs_f64();
-        let rate = if stale > 0 && secs > 0.0 { format!(" ({:.1} notes/s)", stale as f64 / secs) } else { String::new() };
+        let rate = if stale > 0 && secs > 0.0 {
+            format!(" ({:.1} notes/s)", stale as f64 / secs)
+        } else {
+            String::new()
+        };
         let summary = match phase {
             QueuePhase::First if partial > 0 => format!(
                 "embedded {} notes{rate}; {} of them from their first chunk, completed next",
@@ -534,7 +653,10 @@ pub fn pass(
                 count(partial as u64)
             ),
             QueuePhase::First => format!("embedded {} notes{rate}", count(stale as u64)),
-            QueuePhase::Rest => format!("completed the vectors of {} notes{rate}", count(stale as u64)),
+            QueuePhase::Rest => format!(
+                "completed the vectors of {} notes{rate}",
+                count(stale as u64)
+            ),
         };
         if stale >= PROGRESS_MIN {
             activity.finish(Job::Embedding, summary);
@@ -549,7 +671,13 @@ pub fn pass(
     // Only the notes this pass touched; a full rebuild when the ready model changed or
     // the index isn't built yet.
     let related_changed = related::update(session, generation, &changed)?;
-    Ok(Pass { stale, total, descriptions, related_changed, paused })
+    Ok(Pass {
+        stale,
+        total,
+        descriptions,
+        related_changed,
+        paused,
+    })
 }
 
 /// Embeds the tag descriptions that have no `model` vector yet. Only called while
@@ -571,7 +699,9 @@ fn embed_descriptions(
         vectors.push((tag, description, vector));
     }
     if !vectors.is_empty() {
-        session.with_vault_quiet(generation, |v| v.write_tag_description_vectors(model, &vectors))?;
+        session.with_vault_quiet(generation, |v| {
+            v.write_tag_description_vectors(model, &vectors)
+        })?;
     }
     Ok(vectors.len())
 }
@@ -600,7 +730,11 @@ mod tests {
         let at = |s: u64| start + Duration::from_secs(s);
         let mut eta = Eta::default();
         assert_eq!(eta.update(at(0), 0, 1_000), None);
-        assert_eq!(eta.update(at(5), 50, 1_000), None, "under ten seconds of rate");
+        assert_eq!(
+            eta.update(at(5), 50, 1_000),
+            None,
+            "under ten seconds of rate"
+        );
         // 10 notes/s: 900 left is 90 s.
         assert_eq!(eta.update(at(10), 100, 1_000), Some(90));
         // It slows to 1 note/s; after a minute only the slow rate counts.

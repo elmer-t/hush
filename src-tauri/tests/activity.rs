@@ -28,7 +28,9 @@ impl Embedder for Fake {
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
         let mut v = vec![0.0; 8];
         for word in text.split_whitespace() {
-            let h = word.bytes().fold(2166136261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16777619));
+            let h = word.bytes().fold(2166136261u32, |h, b| {
+                (h ^ u32::from(b)).wrapping_mul(16777619)
+            });
             v[h as usize % 8] += 1.0;
         }
         v[0] += 0.01;
@@ -82,21 +84,42 @@ fn the_jobs_report_their_runs_and_lock_clears_them() {
         let embedding = activity.status(Job::Embedding);
         assert_eq!(embedding.state, State::Idle);
         assert_eq!(embedding.reason.as_deref(), Some("nothing queued"));
-        assert!(embedding.last_run.unwrap().summary.starts_with("embedded 40 notes"));
+        assert!(
+            embedding
+                .last_run
+                .unwrap()
+                .summary
+                .starts_with("embedded 40 notes")
+        );
         let related = activity.status(Job::Related);
-        assert!(related.last_run.unwrap().summary.starts_with("rebuilt index: 40 vectors"));
+        assert!(
+            related
+                .last_run
+                .unwrap()
+                .summary
+                .starts_with("rebuilt index: 40 vectors")
+        );
         let net = activity.status(Job::SafetyNet).last_run.unwrap();
-        assert_eq!(net.summary, "checked 40 notes, queued 0 that no write had queued");
+        assert_eq!(
+            net.summary,
+            "checked 40 notes, queued 0 that no write had queued"
+        );
 
         let log = activity.snapshot().log;
-        assert!(log.iter().any(|e| e.job == Job::Embedding && e.message.contains("is now the ready model")));
+        assert!(
+            log.iter()
+                .any(|e| e.job == Job::Embedding && e.message.contains("is now the ready model"))
+        );
         // Newest first.
         assert!(log.windows(2).all(|w| w[0].seq > w[1].seq));
 
         // While an import runs the job says why it waits.
         let import = session.begin_import();
         wait_for(|| activity.status(Job::Embedding).state == State::Paused);
-        assert_eq!(activity.status(Job::Embedding).reason.as_deref(), Some("import running"));
+        assert_eq!(
+            activity.status(Job::Embedding).reason.as_deref(),
+            Some("import running")
+        );
         drop(import);
 
         session.lock();
@@ -112,10 +135,18 @@ fn training_reports_each_head() {
     session
         .with_vault(|v| {
             for i in 0..12 {
-                v.create_note("", &format!("Dream {i}"), &format!("#dream flying falling night {i}"))?;
+                v.create_note(
+                    "",
+                    &format!("Dream {i}"),
+                    &format!("#dream flying falling night {i}"),
+                )?;
             }
             for i in 0..30 {
-                v.create_note("", &format!("Other {i}"), &format!("groceries list milk bread {i}"))?;
+                v.create_note(
+                    "",
+                    &format!("Other {i}"),
+                    &format!("groceries list milk bread {i}"),
+                )?;
             }
             Ok(())
         })
@@ -125,9 +156,15 @@ fn training_reports_each_head() {
     assert_eq!(pass.trained, ["dream"]);
     let status = session.activity().status(Job::Training);
     assert_eq!(status.state, State::Idle);
-    assert_eq!(status.last_run.unwrap().summary, "1 heads trained, 0 dropped, 0 up to date");
+    assert_eq!(
+        status.last_run.unwrap().summary,
+        "1 heads trained, 0 dropped, 0 up to date"
+    );
     let log = session.activity().snapshot().log;
-    assert!(log.iter().any(|e| e.job == Job::Training && e.message.starts_with("head dream trained (")));
+    assert!(
+        log.iter()
+            .any(|e| e.job == Job::Training && e.message.starts_with("head dream trained ("))
+    );
 }
 
 #[test]
@@ -135,7 +172,11 @@ fn a_notes_internals() {
     let (_dir, _path, session, g) = session();
     let (a, b) = session
         .with_vault(|v| {
-            let a = v.create_note("work", "Alpha", "---\ntopic: x\n---\nOne two three #manual [[Beta]]")?;
+            let a = v.create_note(
+                "work",
+                "Alpha",
+                "---\ntopic: x\n---\nOne two three #manual [[Beta]]",
+            )?;
             let b = v.create_note("", "Beta", "Links back to [[Alpha]] and [[Gamma]]")?;
             Ok((a, b))
         })
@@ -150,12 +191,24 @@ fn a_notes_internals() {
     assert_eq!(before.model, MODEL);
 
     while job::pass(&session, g, &Source, &mut |_| {}).unwrap().stale > 0 {}
-    session.with_vault(|v| v.accept_tag_suggestion(a, "suggested")).unwrap();
+    session
+        .with_vault(|v| v.accept_tag_suggestion(a, "suggested"))
+        .unwrap();
     let after = session.with_vault(|v| v.note_internals(a)).unwrap();
     assert_eq!(after.vectors.len(), 1);
     assert_eq!(after.vectors[0].model, MODEL);
-    let tags: Vec<(&str, TagSource)> = after.tags.iter().map(|t| (t.tag.as_str(), t.source)).collect();
-    assert_eq!(tags, [("manual", TagSource::Manual), ("suggested", TagSource::Suggestion)]);
+    let tags: Vec<(&str, TagSource)> = after
+        .tags
+        .iter()
+        .map(|t| (t.tag.as_str(), t.source))
+        .collect();
+    assert_eq!(
+        tags,
+        [
+            ("manual", TagSource::Manual),
+            ("suggested", TagSource::Suggestion)
+        ]
+    );
 
     let beta = session.with_vault(|v| v.note_internals(b)).unwrap();
     assert!(!beta.queued);

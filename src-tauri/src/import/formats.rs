@@ -59,10 +59,11 @@ const CODE: &[(&str, &str)] = &[
 
 /// Formats that are never text, so they are not even opened.
 const BINARY: &[&str] = &[
-    "pdf", "doc", "docx", "dot", "dotx", "docm", "odt", "ott", "wpd", "wps", "pages", "xls", "xlsx", "xlsm", "ods",
-    "numbers", "ppt", "pptx", "odp", "key", "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "ico",
-    "svg", "psd", "mp3", "wav", "ogg", "flac", "m4a", "wma", "mp4", "mov", "avi", "mkv", "wmv", "webm", "zip", "rar",
-    "7z", "gz", "tgz", "bz2", "tar", "exe", "dll", "msi", "iso", "epub", "mobi", "azw", "db", "sqlite", "mdb", "accdb",
+    "pdf", "doc", "docx", "dot", "dotx", "docm", "odt", "ott", "wpd", "wps", "pages", "xls",
+    "xlsx", "xlsm", "ods", "numbers", "ppt", "pptx", "odp", "key", "png", "jpg", "jpeg", "gif",
+    "bmp", "tif", "tiff", "webp", "heic", "ico", "svg", "psd", "mp3", "wav", "ogg", "flac", "m4a",
+    "wma", "mp4", "mov", "avi", "mkv", "wmv", "webm", "zip", "rar", "7z", "gz", "tgz", "bz2",
+    "tar", "exe", "dll", "msi", "iso", "epub", "mobi", "azw", "db", "sqlite", "mdb", "accdb",
     "ttf", "otf", "woff", "woff2", "eot", "swf", "class", "jar", "pst", "msg",
 ];
 
@@ -82,13 +83,17 @@ pub const SNIFF_BYTES: usize = 8192;
 
 /// The lowercased extension, or `""`.
 pub fn extension(path: &Path) -> String {
-    path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Whether the extension is one people write notes in: Markdown, text, HTML or RTF.
 pub fn is_document(path: &Path) -> bool {
     let ext = extension(path);
-    [MARKDOWN, TEXT, HTML, &["rtf"]].iter().any(|list| list.contains(&ext.as_str()))
+    [MARKDOWN, TEXT, HTML, &["rtf"]]
+        .iter()
+        .any(|list| list.contains(&ext.as_str()))
 }
 
 /// Sniffs a file. `None` means it is not text (or not a format we can read yet).
@@ -97,7 +102,9 @@ pub fn detect(path: &Path) -> std::io::Result<Option<Format>> {
         return Ok(None);
     }
     let mut head = Vec::with_capacity(SNIFF_BYTES);
-    File::open(path)?.take(SNIFF_BYTES as u64).read_to_end(&mut head)?;
+    File::open(path)?
+        .take(SNIFF_BYTES as u64)
+        .read_to_end(&mut head)?;
     Ok(sniff(path, &head))
 }
 
@@ -131,7 +138,10 @@ pub fn sniff(path: &Path, bytes: &[u8]) -> Option<Format> {
 }
 
 fn sniff_content(head: &[u8]) -> Format {
-    let start = String::from_utf8_lossy(&head[..head.len().min(512)]).trim_start_matches('\u{feff}').trim_start().to_lowercase();
+    let start = String::from_utf8_lossy(&head[..head.len().min(512)])
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .to_lowercase();
     if start.starts_with("{\\rtf") {
         Format::Rtf
     } else if start.starts_with("<!doctype html") || start.starts_with("<html") {
@@ -149,7 +159,10 @@ fn looks_like_text(head: &[u8]) -> bool {
         return false;
     }
     // Control characters other than whitespace (and the odd form feed or escape) mean binary.
-    let control = head.iter().filter(|&&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0C | 0x1B)).count();
+    let control = head
+        .iter()
+        .filter(|&&b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0C | 0x1B))
+        .count();
     control * 100 <= head.len()
 }
 
@@ -175,14 +188,17 @@ pub fn decode(bytes: Vec<u8>) -> (String, Option<String>) {
 
 fn utf16(bytes: &[u8], word: fn([u8; 2]) -> u16) -> String {
     let words = bytes.as_chunks::<2>().0.iter().map(|&c| word(c));
-    char::decode_utf16(words).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
+    char::decode_utf16(words)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
 }
 
 /// A Windows-1252 byte as a char. Bytes that 1252 leaves undefined map like Latin-1.
 pub fn cp1252(b: u8) -> char {
     const HIGH: [char; 32] = [
-        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘',
-        '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž',
+        '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}',
+        'ž', 'Ÿ',
     ];
     match b {
         0x80..=0x9F => HIGH[(b - 0x80) as usize],
@@ -204,7 +220,10 @@ mod tests {
 
     #[test]
     fn decoding() {
-        assert_eq!(decode(b"caf\xc3\xa9\r\nx".to_vec()), ("café\nx".into(), None));
+        assert_eq!(
+            decode(b"caf\xc3\xa9\r\nx".to_vec()),
+            ("café\nx".into(), None)
+        );
         let (text, warning) = decode(b"\x93caf\xe9\x94".to_vec());
         assert_eq!(text, "“café”");
         assert!(warning.is_some());

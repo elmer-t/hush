@@ -44,7 +44,11 @@ pub fn recent_vaults(config: State<'_, Config>) -> Vec<RecentVault> {
         .get()
         .recent_vaults
         .iter()
-        .map(|p| RecentVault { path: p.clone(), name: session::vault_name(p), exists: p.is_file() })
+        .map(|p| RecentVault {
+            path: p.clone(),
+            name: session::vault_name(p),
+            exists: p.is_file(),
+        })
         .collect()
 }
 
@@ -91,13 +95,22 @@ pub async fn open_vault(
         session.activity().reporter(session.generation()).record(
             Job::Migration,
             opened,
-            format!("upgraded the vault, rebuilding the search index for {} notes", count(upgrade.total as u64)),
+            format!(
+                "upgraded the vault, rebuilding the search index for {} notes",
+                count(upgrade.total as u64)
+            ),
         );
     }
     Ok(info)
 }
 
-fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
+fn unlock(
+    app: &AppHandle,
+    session: &Session,
+    config: &Config,
+    vault: Vault,
+    path: PathBuf,
+) -> Result<VaultInfo> {
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
     training::start(app, generation);
@@ -135,7 +148,11 @@ pub fn set_auto_lock_minutes(session: State<'_, Session>, minutes: u32) -> Resul
 }
 
 #[tauri::command]
-pub async fn change_passphrase(session: State<'_, Session>, current: String, new: String) -> Result<()> {
+pub async fn change_passphrase(
+    session: State<'_, Session>,
+    current: String,
+    new: String,
+) -> Result<()> {
     let current = Zeroizing::new(current);
     let new = Zeroizing::new(new);
     Ok(session.with_vault(|v| {

@@ -10,11 +10,26 @@ fn resolution_by_title_and_path() {
     let u = vault.create_note("misc", "Unique", "").unwrap();
 
     assert_eq!(vault.resolve_link("unique").unwrap(), Resolution::Unique(u));
-    assert_eq!(vault.resolve_link("Index").unwrap(), Resolution::Ambiguous(vec![a, b]));
-    assert_eq!(vault.resolve_link("2019/Index").unwrap(), Resolution::Unique(a));
-    assert_eq!(vault.resolve_link("archive/2019/Index.md").unwrap(), Resolution::Unique(a));
-    assert_eq!(vault.resolve_link("misc/Index").unwrap(), Resolution::Unique(b));
-    assert_eq!(vault.resolve_link("nowhere/Index").unwrap(), Resolution::Missing);
+    assert_eq!(
+        vault.resolve_link("Index").unwrap(),
+        Resolution::Ambiguous(vec![a, b])
+    );
+    assert_eq!(
+        vault.resolve_link("2019/Index").unwrap(),
+        Resolution::Unique(a)
+    );
+    assert_eq!(
+        vault.resolve_link("archive/2019/Index.md").unwrap(),
+        Resolution::Unique(a)
+    );
+    assert_eq!(
+        vault.resolve_link("misc/Index").unwrap(),
+        Resolution::Unique(b)
+    );
+    assert_eq!(
+        vault.resolve_link("nowhere/Index").unwrap(),
+        Resolution::Missing
+    );
     assert_eq!(vault.resolve_link("Nope").unwrap(), Resolution::Missing);
     assert_eq!(vault.link_text(a).unwrap(), "2019/Index");
     assert_eq!(vault.link_text(u).unwrap(), "Unique");
@@ -35,15 +50,37 @@ fn exact_folder_wins_over_suffix() {
 fn backlinks_and_outgoing() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("p", "Target", "").unwrap();
-    let s1 = vault.create_note("", "One", "see [[Target]] and [[target#h|again]]").unwrap();
-    let s2 = vault.create_note("", "Two", "[[p/Target]] [[Missing]]").unwrap();
-    vault.create_note("", "Three", "`[[Target]]` in code").unwrap();
+    let s1 = vault
+        .create_note("", "One", "see [[Target]] and [[target#h|again]]")
+        .unwrap();
+    let s2 = vault
+        .create_note("", "Two", "[[p/Target]] [[Missing]]")
+        .unwrap();
+    vault
+        .create_note("", "Three", "`[[Target]]` in code")
+        .unwrap();
 
-    let back: Vec<_> = vault.backlinks(target).unwrap().into_iter().map(|b| (b.note.id, b.ambiguous)).collect();
+    let back: Vec<_> = vault
+        .backlinks(target)
+        .unwrap()
+        .into_iter()
+        .map(|b| (b.note.id, b.ambiguous))
+        .collect();
     assert_eq!(back, vec![(s1, false), (s2, false)]);
 
-    let out: Vec<_> = vault.outgoing_links(s2).unwrap().into_iter().map(|l| (l.target, l.resolution)).collect();
-    assert_eq!(out, vec![("Missing".into(), Resolution::Missing), ("p/Target".into(), Resolution::Unique(target))]);
+    let out: Vec<_> = vault
+        .outgoing_links(s2)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.target, l.resolution))
+        .collect();
+    assert_eq!(
+        out,
+        vec![
+            ("Missing".into(), Resolution::Missing),
+            ("p/Target".into(), Resolution::Unique(target))
+        ]
+    );
 }
 
 #[test]
@@ -64,9 +101,14 @@ fn ambiguous_backlinks_are_flagged() {
 fn rename_rewrites_links_keeping_heading_and_alias() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("", "Old", "").unwrap();
-    let src = vault.create_note("", "Src", "a [[Old]] b [[old#Part|label]] c [[Other]]").unwrap();
+    let src = vault
+        .create_note("", "Src", "a [[Old]] b [[old#Part|label]] c [[Other]]")
+        .unwrap();
     vault.rename_note(target, "", "New").unwrap();
-    assert_eq!(vault.note(src).unwrap().body, "a [[New]] b [[New#Part|label]] c [[Other]]");
+    assert_eq!(
+        vault.note(src).unwrap().body,
+        "a [[New]] b [[New#Part|label]] c [[Other]]"
+    );
     assert_eq!(vault.backlinks(target).unwrap().len(), 1);
 }
 
@@ -78,7 +120,10 @@ fn rename_into_collision_uses_shortest_unique_path() {
     let src = vault.create_note("", "Src", "[[Old]]").unwrap();
     vault.rename_note(target, "y", "Name").unwrap();
     assert_eq!(vault.note(src).unwrap().body, "[[y/Name]]");
-    assert_eq!(vault.resolve_link("y/Name").unwrap(), Resolution::Unique(target));
+    assert_eq!(
+        vault.resolve_link("y/Name").unwrap(),
+        Resolution::Unique(target)
+    );
 }
 
 #[test]
@@ -115,7 +160,9 @@ fn move_notes_keeps_links_pointing_at_the_same_notes() {
     let (_dir, mut vault) = common::vault();
     let a = vault.create_note("inbox", "Alpha", "").unwrap();
     let b = vault.create_note("drafts", "Beta", "").unwrap();
-    let src = vault.create_note("", "Src", "[[Alpha]] [[drafts/Beta|b]]").unwrap();
+    let src = vault
+        .create_note("", "Src", "[[Alpha]] [[drafts/Beta|b]]")
+        .unwrap();
 
     vault.move_notes(&[a, b], "archive/2020").unwrap();
     assert_eq!(vault.note(a).unwrap().folder, "archive/2020");
@@ -132,14 +179,32 @@ fn move_folder_keeps_links_pointing_at_the_same_notes() {
     let a = vault.create_note("work/inbox", "Alpha", "").unwrap();
     let b = vault.create_note("work/inbox/old", "Beta", "").unwrap();
     let other = vault.create_note("home/inbox", "Alpha", "").unwrap();
-    let src = vault.create_note("", "Src", "[[work/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]").unwrap();
+    let src = vault
+        .create_note(
+            "",
+            "Src",
+            "[[work/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]",
+        )
+        .unwrap();
 
-    assert_eq!(vault.move_folder("work/inbox", "archive").unwrap(), "archive/inbox");
+    assert_eq!(
+        vault.move_folder("work/inbox", "archive").unwrap(),
+        "archive/inbox"
+    );
     assert_eq!(vault.note(b).unwrap().folder, "archive/inbox/old");
     // `inbox/old/Beta` still matches by suffix and `Beta` by title; the full path changed.
-    assert_eq!(vault.note(src).unwrap().body, "[[archive/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]");
-    assert_eq!(vault.resolve_link("archive/inbox/Alpha").unwrap(), Resolution::Unique(a));
-    assert_eq!(vault.resolve_link("home/inbox/Alpha").unwrap(), Resolution::Unique(other));
+    assert_eq!(
+        vault.note(src).unwrap().body,
+        "[[archive/inbox/Alpha]] [[inbox/old/Beta|b]] [[Beta]]"
+    );
+    assert_eq!(
+        vault.resolve_link("archive/inbox/Alpha").unwrap(),
+        Resolution::Unique(a)
+    );
+    assert_eq!(
+        vault.resolve_link("home/inbox/Alpha").unwrap(),
+        Resolution::Unique(other)
+    );
 }
 
 #[test]
@@ -148,7 +213,9 @@ fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
     // Bystanders reached through a folder suffix: `[[T/N]]` → q/T/N, `[[T/M]]` → q/T/M.
     let n = vault.create_note("q/T", "N", "").unwrap();
     let m = vault.create_note("q/T", "M", "").unwrap();
-    let src = vault.create_note("", "Src", "[[T/N]] and [[T/M#h]]").unwrap();
+    let src = vault
+        .create_note("", "Src", "[[T/N]] and [[T/M#h]]")
+        .unwrap();
     let x = vault.create_note("x", "N", "").unwrap();
     let y = vault.create_note("y", "M", "").unwrap();
     let before = vault.note(src).unwrap().updated_at;
@@ -156,7 +223,10 @@ fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
     // Moving both into `T` would make `T/N` and `T/M` mean the moved notes (exact folder wins).
     vault.move_notes(&[x, y], "T").unwrap();
     let body = vault.note(src).unwrap().body;
-    assert_eq!(body, "[[q/T/N]] and [[q/T/M#h]]", "both links rewritten in one pass");
+    assert_eq!(
+        body, "[[q/T/N]] and [[q/T/M#h]]",
+        "both links rewritten in one pass"
+    );
     assert_eq!(vault.resolve_link("q/T/N").unwrap(), Resolution::Unique(n));
     assert_eq!(vault.resolve_link("q/T/M").unwrap(), Resolution::Unique(m));
     assert!(vault.note(src).unwrap().updated_at >= before);
@@ -166,14 +236,38 @@ fn move_notes_rewrites_each_changed_link_once_against_the_final_state() {
 fn backlinks_carry_the_line_around_the_link() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("", "Target", "").unwrap();
-    let long = format!("{} then [[Target]] and {}", "a".repeat(200), "b".repeat(200));
-    vault.create_note("", "Short", "---\nx: 1\n---\nfirst line\n  see [[Other]] and [[target|it]] here  \nlast").unwrap();
+    let long = format!(
+        "{} then [[Target]] and {}",
+        "a".repeat(200),
+        "b".repeat(200)
+    );
+    vault
+        .create_note(
+            "",
+            "Short",
+            "---\nx: 1\n---\nfirst line\n  see [[Other]] and [[target|it]] here  \nlast",
+        )
+        .unwrap();
     vault.create_note("", "Long", &long).unwrap();
-    let back: Vec<_> = vault.backlinks(target).unwrap().into_iter().map(|b| (b.note.title, b.snippet)).collect();
-    assert_eq!(back[1], ("Short".into(), "see [[Other]] and [[target|it]] here".into()));
+    let back: Vec<_> = vault
+        .backlinks(target)
+        .unwrap()
+        .into_iter()
+        .map(|b| (b.note.title, b.snippet))
+        .collect();
+    assert_eq!(
+        back[1],
+        (
+            "Short".into(),
+            "see [[Other]] and [[target|it]] here".into()
+        )
+    );
     let (title, snippet) = &back[0];
     assert_eq!(title, "Long");
-    assert!(snippet.starts_with('…') && snippet.ends_with('…'), "{snippet}");
+    assert!(
+        snippet.starts_with('…') && snippet.ends_with('…'),
+        "{snippet}"
+    );
     assert!(snippet.contains("then [[Target]] and"), "{snippet}");
     assert!(snippet.chars().count() <= hush_lib::db::SNIPPET_CHARS + 2);
 }
@@ -184,11 +278,24 @@ fn outgoing_and_resolved_links_name_their_notes() {
     let a = vault.create_note("a", "Dup", "").unwrap();
     let src = vault.create_note("", "Src", "").unwrap();
     let b = vault.create_note("b", "Dup", "").unwrap();
-    vault.update_body(src, "[[Dup]] [[a/Dup]] [[Nope]]").unwrap();
-    let mut out: Vec<_> =
-        vault.outgoing_links(src).unwrap().into_iter().map(|l| (l.target, l.notes.iter().map(|n| n.id).collect::<Vec<_>>())).collect();
+    vault
+        .update_body(src, "[[Dup]] [[a/Dup]] [[Nope]]")
+        .unwrap();
+    let mut out: Vec<_> = vault
+        .outgoing_links(src)
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.target, l.notes.iter().map(|n| n.id).collect::<Vec<_>>()))
+        .collect();
     out.sort();
-    assert_eq!(out, vec![("Dup".into(), vec![a, b]), ("Nope".into(), vec![]), ("a/Dup".into(), vec![a])]);
+    assert_eq!(
+        out,
+        vec![
+            ("Dup".into(), vec![a, b]),
+            ("Nope".into(), vec![]),
+            ("a/Dup".into(), vec![a])
+        ]
+    );
     let resolved = vault.resolve_link_notes("b/Dup.md").unwrap();
     assert_eq!(resolved.resolution, Resolution::Unique(b));
     assert_eq!(resolved.notes[0].folder, "b");
@@ -201,15 +308,26 @@ fn reasons_report_direct_and_two_step_links_tags_and_shared_fields() {
     let mid = vault.create_note("", "Mid", "").unwrap();
     let fan = vault.create_note("", "Fan", "").unwrap();
     let open = vault
-        .create_note("work", "Open", "---\nauthor: Ann\ntopic: Plans\ntags: [shared, mine]\n---\n[[Hub]] [[Mid]] [[B]]")
+        .create_note(
+            "work",
+            "Open",
+            "---\nauthor: Ann\ntopic: Plans\ntags: [shared, mine]\n---\n[[Hub]] [[Mid]] [[B]]",
+        )
         .unwrap();
-    let b = vault.create_note("work", "B", "---\nauthor: ann\ntags: [shared]\n---\n#theirs [[Hub]] [[Open]]").unwrap();
+    let b = vault
+        .create_note(
+            "work",
+            "B",
+            "---\nauthor: ann\ntags: [shared]\n---\n#theirs [[Hub]] [[Open]]",
+        )
+        .unwrap();
     let c = vault.create_note("else", "C", "nothing in common").unwrap();
     vault.update_body(mid, "[[C]]").unwrap();
     vault.update_body(fan, "[[Open]] [[B]] [[C]]").unwrap();
 
     let reasons = vault.relation_reasons(open, &[b, c, 999]).unwrap();
-    let titles = |v: &[hush_lib::db::TitledNote]| v.iter().map(|n| n.title.clone()).collect::<Vec<_>>();
+    let titles =
+        |v: &[hush_lib::db::TitledNote]| v.iter().map(|n| n.title.clone()).collect::<Vec<_>>();
 
     let rb = &reasons[0];
     assert!(rb.links_to && rb.linked_from);
@@ -222,9 +340,17 @@ fn reasons_report_direct_and_two_step_links_tags_and_shared_fields() {
 
     let rc = &reasons[1];
     assert!(!rc.links_to && !rc.linked_from);
-    assert_eq!(titles(&rc.via), vec!["Mid"], "Open links to Mid, which links to C");
+    assert_eq!(
+        titles(&rc.via),
+        vec!["Mid"],
+        "Open links to Mid, which links to C"
+    );
     assert_eq!(titles(&rc.both_linked_from), vec!["Fan"]);
     assert!(rc.shared_tags.is_empty() && !rc.same_folder);
 
-    assert_eq!(reasons[2], hush_lib::db::Reasons::default(), "an unknown note has no reasons");
+    assert_eq!(
+        reasons[2],
+        hush_lib::db::Reasons::default(),
+        "an unknown note has no reasons"
+    );
 }

@@ -53,7 +53,14 @@ pub struct GraphOptions {
 
 impl Default for GraphOptions {
     fn default() -> Self {
-        Self { meaning: false, tags: false, ghosts: false, threshold: 0.7, neighbours: 5, cap: DEFAULT_CAP }
+        Self {
+            meaning: false,
+            tags: false,
+            ghosts: false,
+            threshold: 0.7,
+            neighbours: 5,
+            cap: DEFAULT_CAP,
+        }
     }
 }
 
@@ -121,11 +128,21 @@ pub fn note_key(id: i64) -> String {
 
 /// Builds the graph for `scope`. Only the scope's own queries take the vault, a page
 /// at a time; it counts as activity, being the user's request.
-pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> Result<Graph, SessionError> {
+pub fn build(
+    session: &Session,
+    scope: &GraphScope,
+    options: &GraphOptions,
+) -> Result<Graph, SessionError> {
     let cap = options.cap.clamp(1, MAX_CAP);
     let mut resolver = Resolver::default();
     let (mut ids, mut depths, total, capped) = match scope {
-        GraphScope::Local { id, depth } => local(session, *id, (*depth).clamp(1, MAX_DEPTH), cap, &mut resolver)?,
+        GraphScope::Local { id, depth } => local(
+            session,
+            *id,
+            (*depth).clamp(1, MAX_DEPTH),
+            cap,
+            &mut resolver,
+        )?,
         GraphScope::Global { scope } => {
             let (ids, total, capped) = global(session, scope, cap)?;
             (ids, HashMap::new(), total, capped)
@@ -183,12 +200,25 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
     for (from, to) in links {
         match to {
             LinkTarget::Note(to) if present.contains(&to) && to != from => {
-                edges.push(GraphEdge { source: note_key(from), target: note_key(to), kind: EdgeKind::Link, score: None });
+                edges.push(GraphEdge {
+                    source: note_key(from),
+                    target: note_key(to),
+                    kind: EdgeKind::Link,
+                    score: None,
+                });
             }
-            LinkTarget::Missing(target) if options.ghosts && (ghosts.len() < cap || ghosts.contains_key(&target.to_lowercase())) => {
+            LinkTarget::Missing(target)
+                if options.ghosts
+                    && (ghosts.len() < cap || ghosts.contains_key(&target.to_lowercase())) =>
+            {
                 let key = format!("g:{}", target.to_lowercase());
                 ghosts.entry(target.to_lowercase()).or_insert(target);
-                edges.push(GraphEdge { source: note_key(from), target: key, kind: EdgeKind::Link, score: None });
+                edges.push(GraphEdge {
+                    source: note_key(from),
+                    target: key,
+                    kind: EdgeKind::Link,
+                    score: None,
+                });
             }
             _ => {}
         }
@@ -214,7 +244,12 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
             }
             for tag in list {
                 tag_nodes.insert(tag, ());
-                edges.push(GraphEdge { source: note_key(*id), target: format!("t:{tag}"), kind: EdgeKind::Tag, score: None });
+                edges.push(GraphEdge {
+                    source: note_key(*id),
+                    target: format!("t:{tag}"),
+                    kind: EdgeKind::Tag,
+                    score: None,
+                });
             }
         }
         for tag in tag_nodes.keys() {
@@ -252,14 +287,26 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
             None => meaning_unavailable = true,
         }
     }
-    Ok(Graph { nodes, edges, total, capped, meaning_unavailable })
+    Ok(Graph {
+        nodes,
+        edges,
+        total,
+        capped,
+        meaning_unavailable,
+    })
 }
 
 type Scoped = (Vec<i64>, HashMap<i64, u8>, usize, bool);
 
 /// Breadth first over links in both directions, closest notes first. It stops as soon
 /// as the cap is reached, so `total` is then a lower bound (the notes found so far).
-fn local(session: &Session, id: i64, depth: u8, cap: usize, resolver: &mut Resolver) -> Result<Scoped, SessionError> {
+fn local(
+    session: &Session,
+    id: i64,
+    depth: u8,
+    cap: usize,
+    resolver: &mut Resolver,
+) -> Result<Scoped, SessionError> {
     let mut depths = HashMap::from([(id, 0u8)]);
     let mut ids = vec![id];
     let mut frontier = vec![id];
@@ -305,7 +352,11 @@ fn local(session: &Session, id: i64, depth: u8, cap: usize, resolver: &mut Resol
 }
 
 /// Every note of `scope`, or the `cap` most linked when it has more (ties by id).
-fn global(session: &Session, scope: &GraphScopeNotes, cap: usize) -> Result<(Vec<i64>, usize, bool), SessionError> {
+fn global(
+    session: &Session,
+    scope: &GraphScopeNotes,
+    cap: usize,
+) -> Result<(Vec<i64>, usize, bool), SessionError> {
     let mut ids = Vec::new();
     let mut after = 0;
     loop {
@@ -338,12 +389,16 @@ fn meaning_edges(
     ids: &[i64],
     options: &GraphOptions,
 ) -> Result<Option<BTreeMap<(i64, i64), f32>>, SessionError> {
-    let Some(model) = session.with_vault(|v| v.embedding_model_ready())? else { return Ok(None) };
+    let Some(model) = session.with_vault(|v| v.embedding_model_ready())? else {
+        return Ok(None);
+    };
     let mut vectors = Vec::with_capacity(ids.len());
     for page in ids.chunks(PAGE) {
         vectors.extend(session.with_vault(|v| v.embedding_vectors(&model, page))?);
     }
-    let Some(dims) = vectors.first().map(|v| v.vector.len()) else { return Ok(Some(BTreeMap::new())) };
+    let Some(dims) = vectors.first().map(|v| v.vector.len()) else {
+        return Ok(Some(BTreeMap::new()));
+    };
     vectors.retain(|v| v.vector.len() == dims);
     let n = vectors.len();
     let mut units = Zeroizing::new(Vec::with_capacity(n * dims));
@@ -373,15 +428,22 @@ fn meaning_edges(
         }
         top
     };
-    let threads =
-        std::thread::available_parallelism().map_or(1, |c| (c.get() / 2).max(1)).min(n.div_ceil(MIN_ROWS_PER_THREAD)).max(1);
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |c| (c.get() / 2).max(1))
+        .min(n.div_ceil(MIN_ROWS_PER_THREAD))
+        .max(1);
     let per = n.div_ceil(threads).max(1);
     let rows: Vec<Vec<(usize, f32)>> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..n)
             .step_by(per)
-            .map(|start| s.spawn(move || (start..(start + per).min(n)).map(best).collect::<Vec<_>>()))
+            .map(|start| {
+                s.spawn(move || (start..(start + per).min(n)).map(best).collect::<Vec<_>>())
+            })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().expect("meaning edges panicked")).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("meaning edges panicked"))
+            .collect()
     });
     let mut pairs = BTreeMap::new();
     for (i, top) in rows.into_iter().enumerate() {

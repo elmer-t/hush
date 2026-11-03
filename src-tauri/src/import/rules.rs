@@ -54,7 +54,14 @@ impl Source {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        [Self::FileName, Self::Frontmatter, Self::FirstLines, Self::Body].into_iter().find(|v| v.as_str() == s)
+        [
+            Self::FileName,
+            Self::Frontmatter,
+            Self::FirstLines,
+            Self::Body,
+        ]
+        .into_iter()
+        .find(|v| v.as_str() == s)
     }
 }
 
@@ -120,7 +127,10 @@ impl Rule {
             lines,
             pattern: pattern.into(),
             target,
-            map: map.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            map: map
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
             strip: true,
         };
         vec![
@@ -140,7 +150,14 @@ impl Rule {
                 Target::AuthorEmail,
                 &[],
             ),
-            rule("Date from Date: line", Source::FirstLines, 10, r"^Date:[ \t]*(.+)$", Target::CreatedAt, &[]),
+            rule(
+                "Date from Date: line",
+                Source::FirstLines,
+                10,
+                r"^Date:[ \t]*(.+)$",
+                Target::CreatedAt,
+                &[],
+            ),
             rule(
                 "Subject from Subject: line",
                 Source::FirstLines,
@@ -163,7 +180,11 @@ impl Rule {
     /// Checks the rule and compiles its pattern. Patterns are Rust `regex` syntax and
     /// run in linear time; `^`/`$` match at line ends.
     pub fn compile(&self) -> Result<CompiledRule, String> {
-        let name = if self.name.trim().is_empty() { "unnamed rule" } else { self.name.trim() };
+        let name = if self.name.trim().is_empty() {
+            "unnamed rule"
+        } else {
+            self.name.trim()
+        };
         let fail = |msg: String| Err(format!("rule '{name}': {msg}"));
         if self.pattern.is_empty() {
             return fail("the pattern is empty".into());
@@ -174,17 +195,29 @@ impl Rule {
         if let Target::Attribute(key) = &self.target
             && !valid_key(key)
         {
-            return fail(format!("attribute name '{key}' may only contain letters, digits, - and _"));
+            return fail(format!(
+                "attribute name '{key}' may only contain letters, digits, - and _"
+            ));
         }
-        match RegexBuilder::new(&self.pattern).multi_line(true).size_limit(REGEX_SIZE_LIMIT).build() {
-            Ok(regex) => Ok(CompiledRule { rule: self.clone(), regex }),
+        match RegexBuilder::new(&self.pattern)
+            .multi_line(true)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .build()
+        {
+            Ok(regex) => Ok(CompiledRule {
+                rule: self.clone(),
+                regex,
+            }),
             Err(e) => fail(format!("invalid pattern: {e}")),
         }
     }
 }
 
 fn valid_key(key: &str) -> bool {
-    !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 /// The texts rules look at.
@@ -235,7 +268,10 @@ pub fn apply(rules: &[CompiledRule], input: &RuleInput) -> RuleOutput {
                 Target::Tag => {
                     let tags = tags_of(&value);
                     if tags.is_empty() {
-                        out.warnings.push(format!("rule '{}': '{value}' is not a valid tag", rule.name));
+                        out.warnings.push(format!(
+                            "rule '{}': '{value}' is not a valid tag",
+                            rule.name
+                        ));
                     }
                     for tag in tags {
                         if !out.tags.contains(&tag) {
@@ -250,7 +286,8 @@ pub fn apply(rules: &[CompiledRule], input: &RuleInput) -> RuleOutput {
                 Target::CreatedAt => match parse_loose_date(&value) {
                     Some(ms) => set_once(&mut out.created_at, ms),
                     None => {
-                        out.warnings.push(format!("rule '{}': '{value}' is not a date", rule.name));
+                        out.warnings
+                            .push(format!("rule '{}': '{value}' is not a date", rule.name));
                         false
                     }
                 },
@@ -291,7 +328,10 @@ fn first_lines(text: &str, n: usize) -> &str {
 fn map_value(map: &[(String, String)], value: &str) -> String {
     map.iter()
         .find(|(from, _)| from.trim() == value)
-        .or_else(|| map.iter().find(|(from, _)| from.trim().to_lowercase() == value.to_lowercase()))
+        .or_else(|| {
+            map.iter()
+                .find(|(from, _)| from.trim().to_lowercase() == value.to_lowercase())
+        })
         .map_or(value, |(_, to)| to.trim())
         .to_string()
 }
@@ -305,7 +345,13 @@ fn tags_of(value: &str) -> Vec<String> {
                 .trim()
                 .trim_start_matches('#')
                 .chars()
-                .map(|c| if c.is_alphanumeric() || matches!(c, '_' | '-' | '/') { c } else { '-' })
+                .map(|c| {
+                    if c.is_alphanumeric() || matches!(c, '_' | '-' | '/') {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
                 .collect();
             t.trim_matches(['-', '/']).to_string()
         })
@@ -322,7 +368,10 @@ fn set_once<T>(slot: &mut Option<T>, value: T) -> bool {
 }
 
 fn push_unique(list: &mut Vec<String>, value: String) {
-    if !list.iter().any(|v| v.to_lowercase() == value.to_lowercase()) {
+    if !list
+        .iter()
+        .any(|v| v.to_lowercase() == value.to_lowercase())
+    {
         list.push(value);
     }
 }
@@ -334,7 +383,9 @@ fn remove_ranges(text: &str, mut ranges: Vec<Range<usize>>, whole_lines: bool) -
         for r in &mut ranges {
             let line_start = text[..r.start].rfind('\n').map_or(0, |i| i + 1);
             let line_end = text[r.end..].find('\n').map_or(text.len(), |i| r.end + i);
-            if text[line_start..r.start].trim().is_empty() && text[r.end..line_end].trim().is_empty() {
+            if text[line_start..r.start].trim().is_empty()
+                && text[r.end..line_end].trim().is_empty()
+            {
                 *r = line_start..(line_end + 1).min(text.len());
             }
         }
@@ -354,7 +405,11 @@ fn remove_ranges(text: &str, mut ranges: Vec<Range<usize>>, whole_lines: bool) -
 
 /// Collapses runs of whitespace and trims, for titles left over after stripping.
 fn squeeze(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").trim_matches(['-', '_', ' ']).to_string()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(['-', '_', ' '])
+        .to_string()
 }
 
 #[cfg(test)]
@@ -376,7 +431,14 @@ mod tests {
 
     fn run(rules: &[Rule], file_name: &str, frontmatter: &str, content: &str) -> RuleOutput {
         let compiled: Vec<_> = rules.iter().map(|r| r.compile().unwrap()).collect();
-        apply(&compiled, &RuleInput { file_name, frontmatter, content })
+        apply(
+            &compiled,
+            &RuleInput {
+                file_name,
+                frontmatter,
+                content,
+            },
+        )
     }
 
     #[test]
@@ -390,10 +452,26 @@ mod tests {
 
     #[test]
     fn invalid_rules_are_rejected() {
-        assert!(rule(Source::Body, "(", Target::Tag).compile().unwrap_err().contains("invalid pattern"));
+        assert!(
+            rule(Source::Body, "(", Target::Tag)
+                .compile()
+                .unwrap_err()
+                .contains("invalid pattern")
+        );
         assert!(rule(Source::Body, "", Target::Tag).compile().is_err());
-        assert!(rule(Source::Body, "x", Target::Attribute("a b".into())).compile().is_err());
-        assert!(Rule { lines: 0, ..rule(Source::FirstLines, "x", Target::Tag) }.compile().is_err());
+        assert!(
+            rule(Source::Body, "x", Target::Attribute("a b".into()))
+                .compile()
+                .is_err()
+        );
+        assert!(
+            Rule {
+                lines: 0,
+                ..rule(Source::FirstLines, "x", Target::Tag)
+            }
+            .compile()
+            .is_err()
+        );
         assert!(serde_json::from_str::<Target>("\"nope\"").is_err());
     }
 
@@ -412,50 +490,111 @@ mod tests {
     #[test]
     fn map_prefers_an_exact_case_match() {
         let r = Rule {
-            map: vec![("jr".into(), "journal".into()), ("Jr".into(), "junior".into()), ("jR".into(), "jury".into())],
+            map: vec![
+                ("jr".into(), "journal".into()),
+                ("Jr".into(), "junior".into()),
+                ("jR".into(), "jury".into()),
+            ],
             ..rule(Source::Body, r"\b(jr|Jr|jR)\b", Target::Tag)
         };
-        assert_eq!(run(&[r], "", "", "jR Jr jr JR").tags, ["jury", "junior", "journal"]);
+        assert_eq!(
+            run(&[r], "", "", "jR Jr jr JR").tags,
+            ["jury", "junior", "journal"]
+        );
     }
 
     #[test]
     fn first_lines_only_sees_its_lines_and_strips_whole_lines() {
-        let r = Rule { strip: true, ..rule(Source::FirstLines, r"^Author: (.+)$", Target::Author) };
-        let out = run(std::slice::from_ref(&r), "", "", "Author: Ada\nAuthor: Bob\nbody");
+        let r = Rule {
+            strip: true,
+            ..rule(Source::FirstLines, r"^Author: (.+)$", Target::Author)
+        };
+        let out = run(
+            std::slice::from_ref(&r),
+            "",
+            "",
+            "Author: Ada\nAuthor: Bob\nbody",
+        );
         assert_eq!(out.author.as_deref(), Some("Ada"));
-        assert_eq!(out.content, "Author: Bob\nbody", "single-valued targets use the first match only");
+        assert_eq!(
+            out.content, "Author: Bob\nbody",
+            "single-valued targets use the first match only"
+        );
         let out = run(&[r], "", "", "a\nb\nAuthor: Late");
         assert_eq!(out.author, None);
     }
 
     #[test]
     fn strip_inside_a_line_keeps_the_rest() {
-        let r = Rule { strip: true, ..rule(Source::Body, r"\[mood: (\w+)\]", Target::Attribute("Mood".into())) };
-        let out = run(&[r], "", "", "Fine day [mood: calm] and [mood: tired]\n[mood: calm]\nend");
-        assert_eq!(out.attributes, [("mood".to_string(), vec!["calm".to_string(), "tired".to_string()])]);
+        let r = Rule {
+            strip: true,
+            ..rule(
+                Source::Body,
+                r"\[mood: (\w+)\]",
+                Target::Attribute("Mood".into()),
+            )
+        };
+        let out = run(
+            &[r],
+            "",
+            "",
+            "Fine day [mood: calm] and [mood: tired]\n[mood: calm]\nend",
+        );
+        assert_eq!(
+            out.attributes,
+            [(
+                "mood".to_string(),
+                vec!["calm".to_string(), "tired".to_string()]
+            )]
+        );
         assert_eq!(out.content, "Fine day  and \nend");
     }
 
     #[test]
     fn dates_and_bad_values_warn() {
         let date = rule(Source::Frontmatter, r"(?m)^when: (.+)$", Target::CreatedAt);
-        let out = run(std::slice::from_ref(&date), "", "when: yesterday\nwhen: 2004-03-12", "");
-        assert_eq!(out.created_at, None, "the first match is used even when it fails");
+        let out = run(
+            std::slice::from_ref(&date),
+            "",
+            "when: yesterday\nwhen: 2004-03-12",
+            "",
+        );
+        assert_eq!(
+            out.created_at, None,
+            "the first match is used even when it fails"
+        );
         assert_eq!(out.warnings, ["rule 'r': 'yesterday' is not a date"]);
         let out = run(&[date], "", "when: Fri, 12 Mar 2004 07:45:00 +0100", "");
         assert_eq!(out.created_at, Some(1_079_073_900_000));
         let tag = rule(Source::Body, r"tags: (.+)", Target::Tag);
-        assert_eq!(run(std::slice::from_ref(&tag), "", "", "tags: a, #b c/d").tags, ["a", "b", "c/d"]);
-        assert_eq!(run(&[tag], "", "", "tags: !!").warnings, ["rule 'r': '!!' is not a valid tag"]);
+        assert_eq!(
+            run(std::slice::from_ref(&tag), "", "", "tags: a, #b c/d").tags,
+            ["a", "b", "c/d"]
+        );
+        assert_eq!(
+            run(&[tag], "", "", "tags: !!").warnings,
+            ["rule 'r': '!!' is not a valid tag"]
+        );
     }
 
     #[test]
     fn earlier_rules_win_and_disabled_rules_are_skipped() {
         let a = rule(Source::Body, r"A: (\w+)", Target::Topic);
         let b = rule(Source::Body, r"B: (\w+)", Target::Topic);
-        assert_eq!(run(&[a.clone(), b.clone()], "", "", "B: two A: one").topic.as_deref(), Some("one"));
-        let a = Rule { enabled: false, ..a };
-        assert_eq!(run(&[a, b], "", "", "B: two A: one").topic.as_deref(), Some("two"));
+        assert_eq!(
+            run(&[a.clone(), b.clone()], "", "", "B: two A: one")
+                .topic
+                .as_deref(),
+            Some("one")
+        );
+        let a = Rule {
+            enabled: false,
+            ..a
+        };
+        assert_eq!(
+            run(&[a, b], "", "", "B: two A: one").topic.as_deref(),
+            Some("two")
+        );
     }
 
     #[test]
@@ -469,11 +608,17 @@ mod tests {
         );
         assert_eq!(out.author.as_deref(), Some("Jan de Vries"));
         assert_eq!(out.author_email.as_deref(), Some("jan@example.org"));
-        assert_eq!(out.attributes, [("subject".to_string(), vec!["Walk".to_string()])]);
+        assert_eq!(
+            out.attributes,
+            [("subject".to_string(), vec!["Walk".to_string()])]
+        );
         assert_eq!(out.tags, ["journal"]);
         assert_eq!(out.file_name, "2004-03-12 Walk");
         assert_eq!(out.content, "\nBody\n");
         let bare = run(&rules, "x", "", "From: jan@example.org\n");
-        assert_eq!((bare.author, bare.author_email.as_deref()), (None, Some("jan@example.org")));
+        assert_eq!(
+            (bare.author, bare.author_email.as_deref()),
+            (None, Some("jan@example.org"))
+        );
     }
 }

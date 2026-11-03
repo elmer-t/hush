@@ -21,16 +21,24 @@ pub fn parse_loose_date(s: &str) -> Option<i64> {
     if let Ok(dt) = DateTime::parse_from_rfc2822(s) {
         return Some(dt.timestamp_millis());
     }
-    for fmt in ["%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%d-%m-%Y %H:%M", "%d/%m/%Y %H:%M"] {
+    for fmt in [
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%d/%m/%Y %H:%M",
+    ] {
         if let Ok(dt) = NaiveDateTime::parse_from_str(s, fmt) {
             return Some(dt.and_utc().timestamp_millis());
         }
     }
     let s = s.replace(',', "");
-    ["%Y/%m/%d", "%Y.%m.%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y"]
-        .iter()
-        .find_map(|fmt| NaiveDate::parse_from_str(&s, fmt).ok())
-        .map(midnight)
+    [
+        "%Y/%m/%d", "%Y.%m.%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d %B %Y", "%d %b %Y",
+        "%B %d %Y", "%b %d %Y",
+    ]
+    .iter()
+    .find_map(|fmt| NaiveDate::parse_from_str(&s, fmt).ok())
+    .map(midnight)
 }
 
 /// A `YYYY-MM-DD` or `YYYYMMDD` date in a file name.
@@ -43,7 +51,9 @@ pub fn date_in_name(name: &str) -> Option<i64> {
 
 /// For frontmatter: `2004-03-12` at midnight UTC, RFC 3339 otherwise.
 pub fn format_date(ms: i64) -> String {
-    let Some(dt) = DateTime::<Utc>::from_timestamp_millis(ms) else { return String::new() };
+    let Some(dt) = DateTime::<Utc>::from_timestamp_millis(ms) else {
+        return String::new();
+    };
     if ms.rem_euclid(86_400_000) == 0 {
         dt.format("%Y-%m-%d").to_string()
     } else {
@@ -62,10 +72,22 @@ mod tests {
     #[test]
     fn loose_dates() {
         let day = parse_date("2005-01-02");
-        for s in ["2005-01-02", "2005/01/02", "2005.01.02", "02-01-2005", "02/01/2005", "2 January 2005", "January 2, 2005", "2 Jan 2005"] {
+        for s in [
+            "2005-01-02",
+            "2005/01/02",
+            "2005.01.02",
+            "02-01-2005",
+            "02/01/2005",
+            "2 January 2005",
+            "January 2, 2005",
+            "2 Jan 2005",
+        ] {
             assert_eq!(parse_loose_date(s), day, "{s}");
         }
-        assert_eq!(parse_loose_date("Fri, 12 Mar 2004 07:45:00 +0100"), parse_date("2004-03-12T06:45:00Z"));
+        assert_eq!(
+            parse_loose_date("Fri, 12 Mar 2004 07:45:00 +0100"),
+            parse_date("2004-03-12T06:45:00Z")
+        );
         assert_eq!(parse_loose_date("someday"), None);
     }
 
@@ -80,7 +102,13 @@ mod tests {
     #[test]
     fn formatting() {
         assert_eq!(format_date(parse_date("2004-03-12").unwrap()), "2004-03-12");
-        assert_eq!(format_date(parse_date("2004-03-12T06:45:00Z").unwrap()), "2004-03-12T06:45:00Z");
-        assert_eq!(parse_date(&format_date(1_079_073_900_000)), Some(1_079_073_900_000));
+        assert_eq!(
+            format_date(parse_date("2004-03-12T06:45:00Z").unwrap()),
+            "2004-03-12T06:45:00Z"
+        );
+        assert_eq!(
+            parse_date(&format_date(1_079_073_900_000)),
+            Some(1_079_073_900_000)
+        );
     }
 }
