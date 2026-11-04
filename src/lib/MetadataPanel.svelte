@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { api, errorMessage, type NoteMeta, type NoteSummary, type TagSuggestion } from "$lib/api";
+  import { api, errorMessage, type NoteMeta, type NoteSummary, type ReadStatus, type TagSuggestion } from "$lib/api";
   import { longDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
   import ModelNotice from "$lib/ModelNotice.svelte";
+  import { markRead, READ_STATUSES, readStatusOf } from "$lib/readStatus.svelte";
   import StarRating from "$lib/StarRating.svelte";
 
   type Props = {
@@ -67,6 +68,19 @@
       suggestionError = errorMessage(e);
     } finally {
       deciding = false;
+    }
+  }
+
+  // Kept in the vault, not the frontmatter, so marking doesn't save the note.
+  const readStatus = $derived(readStatusOf(summary));
+  let readError = $state("");
+
+  async function setReadStatus(status: ReadStatus) {
+    readError = "";
+    try {
+      await markRead([summary.id], status);
+    } catch (e) {
+      readError = errorMessage(e);
     }
   }
 
@@ -135,6 +149,15 @@
     <div class="rating">
       <span>Rating</span>
       <StarRating value={meta.rating} onchange={(r) => onset("rating", r === null ? [] : [String(r)])} />
+    </div>
+    <div class="read">
+      <span title="Kept in the vault, not in the note's frontmatter">Read status</span>
+      <div class="segmented" role="group" aria-label="Read status">
+        {#each READ_STATUSES as s (s.value)}
+          <button aria-pressed={readStatus === s.value} onclick={() => void setReadStatus(s.value)}>{s.label}</button>
+        {/each}
+      </div>
+      {#if readError}<span class="error" role="alert">{readError}</span>{/if}
     </div>
     <div class="date">
       Created
@@ -251,7 +274,8 @@
     min-height: 30px;
   }
 
-  .rating {
+  .rating,
+  .read {
     grid-column: 1 / -1;
     display: flex;
     flex-direction: column;

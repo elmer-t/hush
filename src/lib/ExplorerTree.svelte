@@ -3,6 +3,8 @@
   import type { NoteSummary } from "$lib/api";
   import { ensureNote, expanded, expandTo, findNote, key, loaded, loadFolder, loadMore } from "$lib/explorer.svelte";
   import Icon from "$lib/Icon.svelte";
+  import { readStatusOf } from "$lib/readStatus.svelte";
+  import ReadMark from "$lib/ReadMark.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import { selectionKeys } from "$lib/selection";
 
@@ -483,6 +485,7 @@
           <span class="glyph note-glyph"><Icon name="note" /></span>
           <span class="name">{row.note.title}</span>
           {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
+          <ReadMark status={readStatusOf(row.note)} />
         </div>
       {:else}
         <div
@@ -627,7 +630,9 @@
   }
 
   .row.selected .rating,
-  .row.picked .rating {
+  .row.picked .rating,
+  .row.selected :global(.read-mark),
+  .row.picked :global(.read-mark) {
     color: inherit;
   }
 

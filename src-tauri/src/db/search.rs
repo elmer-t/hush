@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, params, params_from_iter};
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 
-use super::notes::{NoteSummary, SUMMARY_COLUMNS};
+use super::notes::{NoteSummary, ReadStatus, SUMMARY_COLUMNS};
 use super::{Result, Vault};
 use crate::markdown;
 
@@ -19,6 +19,16 @@ pub enum DateField {
     #[default]
     Created,
     Updated,
+}
+
+/// The search's read status filter. `NotFinished` is unread or partly read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadFilter {
+    Unread,
+    PartlyRead,
+    Read,
+    NotFinished,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -39,6 +49,8 @@ pub struct SearchQuery {
     pub attributes: Vec<(String, String)>,
     /// Notes rated this many stars or more; unrated notes never match.
     pub min_rating: Option<u8>,
+    /// `None` for any read status.
+    pub read_status: Option<ReadFilter>,
     pub limit: Option<u32>,
     pub offset: u32,
 }
@@ -92,22 +104,10 @@ impl Vault {
     pub fn search_page_until(&self, q: &SearchQuery, stop: &dyn Fn() -> bool) -> Result<Option<SearchPage>> {
         let (filters, mut args) = filters(q);
 
-        let min_rating = q.min_rating.filter(|m| *m > 0);
-
         let limit = i64::from(q.limit.unwrap_or(200));
         let offset = i64::from(q.offset);
         let Some(fts) = fts_query(&q.text) else {
-            // Left to itself SQLite walks `notes_updated` newest first and checks each
-            // note's rating, which reads the whole vault when few notes are rated. Most
-            // notes are unrated, so reading the rated ones and sorting them is the
-            // cheaper bet.
-            let index = if min_rating.is_some() { " INDEXED BY notes_rating" } else { "" };
-            let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM notes n{index} WHERE 1");
-            for f in &filters {
-                sql.push_str(" AND ");
-                sql.push_str(f);
-            }
-            sql.push_str(" ORDER BY n.updated_at DESC, n.id DESC LIMIT ? OFFSET ?");
+            let sql = browse_sql(q, &filters);
             args.push(limit.into());
             args.push(offset.into());
             let mut stmt = self.conn.prepare(&sql)?;
@@ -264,6 +264,30 @@ impl Vault {
     }
 }
 
+/// A search without text: the notes matching `filters` (from [`filters`]), most recently
+/// updated first, with the limit and offset as the last two parameters.
+fn browse_sql(q: &SearchQuery, filters: &[String]) -> String {
+    // Left to itself SQLite walks `notes_updated` newest first and checks each note's
+    // rating, which reads the whole vault when few notes are rated. Most notes are
+    // unrated, so reading the rated ones and sorting them is the cheaper bet. The same
+    // goes for notes marked partly read or read; unread is nearly every note, so that
+    // filter walks `notes_updated` as before.
+    let index = if q.min_rating.is_some_and(|m| m > 0) {
+        " INDEXED BY notes_rating"
+    } else if matches!(q.read_status, Some(ReadFilter::PartlyRead | ReadFilter::Read)) {
+        " INDEXED BY notes_read"
+    } else {
+        ""
+    };
+    let mut sql = format!("SELECT {SUMMARY_COLUMNS} FROM notes n{index} WHERE 1");
+    for f in filters {
+        sql.push_str(" AND ");
+        sql.push_str(f);
+    }
+    sql.push_str(" ORDER BY n.updated_at DESC, n.id DESC LIMIT ? OFFSET ?");
+    sql
+}
+
 /// The WHERE conditions of `q`'s filters (on `notes n`, live notes only) and their
 /// arguments, in order.
 fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
@@ -321,6 +345,18 @@ fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
         // Implies `rating IS NOT NULL`, so the partial index on rating applies.
         filters.push("n.rating >= ?".into());
         args.push(i64::from(min).into());
+    }
+    match q.read_status {
+        None => {}
+        Some(ReadFilter::Unread) => filters.push("n.read_status = 0".into()),
+        Some(ReadFilter::NotFinished) => filters.push("n.read_status < 2".into()),
+        Some(f @ (ReadFilter::PartlyRead | ReadFilter::Read)) => {
+            // `read_status > 0` is the partial index's condition, spelled out so SQLite
+            // can use it.
+            filters.push("n.read_status > 0 AND n.read_status = ?".into());
+            let status = if f == ReadFilter::Read { ReadStatus::Read } else { ReadStatus::PartlyRead };
+            args.push(status.code().into());
+        }
     }
     (filters, args)
 }
@@ -397,7 +433,48 @@ fn escape_like(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_snippet, fts_query, phrase_query};
+    use super::{ReadFilter, SearchQuery, browse_sql, clean_snippet, filters, fts_query, phrase_query};
+    use crate::db::Vault;
+
+    /// The query plan of a search without text, as `search_page` runs it.
+    fn browse_plan(vault: &Vault, q: &SearchQuery) -> String {
+        let sql = browse_sql(q, &filters(q).0);
+        let mut stmt = vault.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        // Unbound parameters are NULL, which doesn't change the plan.
+        let mut rows = stmt.raw_query();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().unwrap() {
+            out.push(r.get::<_, String>(3).unwrap());
+        }
+        out.join("\n")
+    }
+
+    /// Without text, "Unread" and "Not finished" walk the vault newest first like no
+    /// filter does (most notes are unread, so a page fills quickly); "Partly read" and
+    /// "Read" read only the marked notes, already in order, from the partial index.
+    #[test]
+    fn read_status_filters_use_the_right_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let q = |f: Option<ReadFilter>, folder: Option<&str>| SearchQuery {
+            read_status: f,
+            folder: folder.map(Into::into),
+            ..Default::default()
+        };
+        let none = browse_plan(&vault, &q(None, None));
+        assert!(none.contains("notes_updated"), "{none}");
+        for f in [ReadFilter::Unread, ReadFilter::NotFinished] {
+            assert_eq!(browse_plan(&vault, &q(Some(f), None)), none, "{f:?}");
+            assert_eq!(browse_plan(&vault, &q(Some(f), Some("a"))), browse_plan(&vault, &q(None, Some("a"))), "{f:?} in a folder");
+        }
+        for f in [ReadFilter::PartlyRead, ReadFilter::Read] {
+            for folder in [None, Some("a")] {
+                let plan = browse_plan(&vault, &q(Some(f), folder));
+                assert!(plan.contains("USING INDEX notes_read"), "{f:?}: {plan}");
+                assert!(!plan.contains("TEMP B-TREE"), "{f:?}: already in order: {plan}");
+            }
+        }
+    }
 
     #[test]
     fn snippets_need_a_match_and_skip_frontmatter() {

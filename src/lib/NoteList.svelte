@@ -2,6 +2,8 @@
   import type { SearchHit } from "$lib/api";
   import { shortDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
+  import { readStatusOf } from "$lib/readStatus.svelte";
+  import ReadMark from "$lib/ReadMark.svelte";
   import { highlightParts } from "$lib/search";
   import { selectionKeys } from "$lib/selection";
 
@@ -67,6 +69,7 @@
           <span class="head">
             <span class="title">{note.title}</span>
             {#if note.rating}<span class="rating" aria-label="{note.rating} of 5 stars">★{note.rating}</span>{/if}
+            <ReadMark status={readStatusOf(note)} />
             <span class="date">{shortDate(note.updatedAt)}</span>
           </span>
           <span class="folder">{note.folder || "vault root"}</span>

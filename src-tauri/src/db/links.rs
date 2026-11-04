@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
-use super::notes::{NoteSummary, SUMMARY_COLUMNS, derive};
+use super::notes::{NoteSummary, SUMMARY_COLUMN_COUNT, SUMMARY_COLUMNS, derive};
 use super::{Result, Vault, now_ms};
 use crate::markdown;
 
@@ -93,7 +93,7 @@ impl Vault {
         let mut backlinks = sources
             .into_iter()
             .map(|(from, ambiguous)| {
-                let (note, body) = stmt.query_row([from], |r| Ok((NoteSummary::from_row(r)?, r.get::<_, String>(8)?)))?;
+                let (note, body) = stmt.query_row([from], |r| Ok((NoteSummary::from_row(r)?, r.get::<_, String>(SUMMARY_COLUMN_COUNT)?)))?;
                 let snippet = self.link_snippet(&body, id, &title)?;
                 Ok(Backlink { note, ambiguous, snippet })
             })

@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, TrashEntry, Vault};
+use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, ReadStatus, TrashEntry, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -217,6 +217,13 @@ pub fn trash_notes(session: State<'_, Session>, ids: Vec<i64>) -> Result<()> {
 #[tauri::command]
 pub fn edit_notes_metadata(session: State<'_, Session>, ids: Vec<i64>, edit: MetadataEdit) -> Result<MetadataEditReport> {
     Ok(session.with_vault(|v| v.edit_notes_metadata(&ids, &edit))?)
+}
+
+/// Marks notes unread, partly read or read. Kept in the vault, not the note's text, so
+/// it doesn't change the body or `updated_at`. Returns the ids whose status changed.
+#[tauri::command]
+pub fn set_read_status(session: State<'_, Session>, ids: Vec<i64>, status: ReadStatus) -> Result<Vec<i64>> {
+    Ok(session.with_vault(|v| v.set_read_status(&ids, status))?)
 }
 
 /// Deletes a note for good, whether live or in the trash.

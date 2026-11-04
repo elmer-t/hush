@@ -3,8 +3,9 @@
 
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
-use serde::Serialize;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, ToSql, params};
+use serde::{Deserialize, Serialize};
 
 use super::{Error, Result, Vault, links, now_ms, tags};
 use crate::markdown;
@@ -27,6 +28,7 @@ pub struct Note {
     pub topic: Option<String>,
     /// 1–5 stars, from frontmatter `rating`.
     pub rating: Option<u8>,
+    pub read_status: ReadStatus,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -41,8 +43,48 @@ pub struct NoteSummary {
     pub author: Option<String>,
     pub topic: Option<String>,
     pub rating: Option<u8>,
+    pub read_status: ReadStatus,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// How far the reader got through a note, marked by hand. Stored in the vault, not in
+/// the note's text; notes never marked are unread.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadStatus {
+    #[default]
+    Unread,
+    PartlyRead,
+    Read,
+}
+
+impl ReadStatus {
+    /// The value of the `notes.read_status` column.
+    pub(super) fn code(self) -> i64 {
+        match self {
+            Self::Unread => 0,
+            Self::PartlyRead => 1,
+            Self::Read => 2,
+        }
+    }
+}
+
+impl ToSql for ReadStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.code().into())
+    }
+}
+
+impl FromSql for ReadStatus {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value.as_i64()? {
+            0 => Ok(Self::Unread),
+            1 => Ok(Self::PartlyRead),
+            2 => Ok(Self::Read),
+            n => Err(FromSqlError::OutOfRange(n)),
+        }
+    }
 }
 
 impl Note {
@@ -54,6 +96,7 @@ impl Note {
             author: self.author.clone(),
             topic: self.topic.clone(),
             rating: self.rating,
+            read_status: self.read_status,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -71,7 +114,10 @@ pub struct NewNote<'a> {
 }
 
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
-pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at, n.rating";
+pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at, n.rating, n.read_status";
+/// How many columns [`SUMMARY_COLUMNS`] has: a query that selects more after them reads
+/// those from this index on.
+pub(super) const SUMMARY_COLUMN_COUNT: usize = 9;
 
 impl NoteSummary {
     pub(super) fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -84,6 +130,7 @@ impl NoteSummary {
             created_at: r.get(5)?,
             updated_at: r.get(6)?,
             rating: r.get(7)?,
+            read_status: r.get(SUMMARY_COLUMN_COUNT - 1)?,
         })
     }
 }
@@ -124,7 +171,7 @@ impl Vault {
         let mut note = self
             .conn
             .query_row(
-                "SELECT id, folder, title, body, author, topic, created_at, updated_at, rating FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+                "SELECT id, folder, title, body, author, topic, created_at, updated_at, rating, read_status FROM notes WHERE id = ?1 AND deleted_at IS NULL",
                 [id],
                 |r| {
                     Ok(Note {
@@ -135,6 +182,7 @@ impl Vault {
                         author: r.get(4)?,
                         topic: r.get(5)?,
                         rating: r.get(8)?,
+                        read_status: r.get(9)?,
                         tags: Vec::new(),
                         created_at: r.get(6)?,
                         updated_at: r.get(7)?,
@@ -430,6 +478,26 @@ impl Vault {
         Ok(notes)
     }
 
+    /// Marks live notes among `ids` as `status`; returns those whose status changed, in
+    /// the order given. Only the status column is written: the body, the dates, the
+    /// full-text index and the embedding queue stay as they are.
+    pub fn set_read_status(&mut self, ids: &[i64], status: ReadStatus) -> Result<Vec<i64>> {
+        let tx = self.conn.transaction()?;
+        let mut changed = Vec::new();
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE notes SET read_status = ?2 WHERE id = ?1 AND deleted_at IS NULL AND read_status <> ?2",
+            )?;
+            for &id in ids {
+                if stmt.execute(params![id, status])? > 0 {
+                    changed.push(id);
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// Every folder that contains at least one note, sorted.
     pub fn folders(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL ORDER BY folder")?;
@@ -527,6 +595,56 @@ mod tests {
 
     fn stored_hashsize(vault: &Vault) -> Option<i64> {
         vault.conn.query_row("SELECT v FROM notes_fts_config WHERE k = 'hashsize'", [], |r| r.get(0)).optional().unwrap()
+    }
+
+    /// Marking notes read changes only their read status: not the body, the dates, the
+    /// tags, the full-text index or the embedding queue. Trashed notes are left alone.
+    #[test]
+    fn set_read_status_touches_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let a = vault.create_note("f", "A", "---\ntags: [x]\n---\nlighthouse #y").unwrap();
+        let b = vault.create_note("f", "B", "keeper").unwrap();
+        let gone = vault.create_note("f", "Gone", "old").unwrap();
+        vault.trash_note(gone).unwrap();
+        vault.conn.execute("UPDATE embedding_dirty SET version = 7", []).unwrap();
+        let state = |v: &Vault| -> Vec<(i64, String, i64, i64, String)> {
+            v.conn
+                .prepare(
+                    "SELECT n.id, n.body, n.created_at, n.updated_at,
+                         (SELECT group_concat(t.name) FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id)
+                         || '|' || coalesce((SELECT version FROM embedding_dirty WHERE note_id = n.id), -1)
+                     FROM notes n ORDER BY n.id",
+                )
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, Option<String>>(4)?.unwrap_or_default())))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let before = state(&vault);
+
+        let changed = vault.set_read_status(&[a, b, gone, 999], ReadStatus::Read).unwrap();
+        assert_eq!(changed, [a, b], "trashed and missing notes are skipped");
+        assert_eq!(vault.set_read_status(&[a], ReadStatus::Read).unwrap(), Vec::<i64>::new(), "already read");
+        vault.set_read_status(&[b], ReadStatus::PartlyRead).unwrap();
+        assert_eq!(state(&vault), before);
+        let found: i64 =
+            vault.conn.query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'lighthouse'", [], |r| r.get(0)).unwrap();
+        assert_eq!(found, 1);
+        assert_eq!(vault.note(a).unwrap().read_status, ReadStatus::Read);
+        assert_eq!(vault.note_summaries(&[a, b]).unwrap().iter().map(|n| n.read_status).collect::<Vec<_>>(), [
+            ReadStatus::Read,
+            ReadStatus::PartlyRead
+        ]);
+        let trashed: i64 = vault.conn.query_row("SELECT read_status FROM notes WHERE id = ?1", [gone], |r| r.get(0)).unwrap();
+        assert_eq!(trashed, 0);
+
+        // A save keeps the status: it is about the reader, not the text.
+        vault.update_body(a, "changed").unwrap();
+        assert_eq!(vault.note(a).unwrap().read_status, ReadStatus::Read);
+        let new = vault.create_note("f", "New", "").unwrap();
+        assert_eq!(vault.note(new).unwrap().read_status, ReadStatus::Unread);
     }
 
     #[test]
