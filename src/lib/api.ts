@@ -610,6 +610,8 @@ export type GpuStatus = {
   model: string | null;
   device: "cpu" | "gpu" | null;
   reason: string | null;
+  /** The name of the model made for the GPU, if Hush knows one. */
+  gpuModel: string | null;
 };
 export const GPU_STATUS_EVENT = "gpu-status";
 export type ModelOverview = {
