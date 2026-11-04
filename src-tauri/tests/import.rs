@@ -415,3 +415,26 @@ fn notes_are_written_in_file_order_across_batches() {
     assert_eq!(notes.len(), files);
     assert!(notes.windows(2).all(|w| w[0].title < w[1].title && w[0].id < w[1].id));
 }
+
+/// #117: imported `mailto:` links, Markdown or HTML, keep the scheme and are found by it.
+#[test]
+fn imported_mailto_links_are_searchable() {
+    let source = tempfile::tempdir().unwrap();
+    fs::write(source.path().join("md.md"), "Reach me: [Email](mailto:xyz@somedomain.com)\n").unwrap();
+    fs::write(source.path().join("txt.txt"), "Reach me: [Email](mailto:xyz@somedomain.com)\n").unwrap();
+    fs::write(source.path().join("html.html"), "<p>Reach me: <a href=\"mailto:xyz@somedomain.com\">Email</a></p>")
+        .unwrap();
+    let (_dir, session) = unlocked();
+    assert_eq!(run(&session, source.path(), false).imported, 3);
+    session
+        .with_vault(|v| {
+            for note in v.folder_notes("", 0, 10)? {
+                let body = v.note(note.id)?.body;
+                assert!(body.contains("[Email](mailto:xyz@somedomain.com)"), "{}: {body:?}", note.title);
+            }
+            let q = SearchQuery { text: "mailto".into(), ..Default::default() };
+            assert_eq!(titles(v, q), ["html", "md", "txt"]);
+            Ok(())
+        })
+        .unwrap();
+}

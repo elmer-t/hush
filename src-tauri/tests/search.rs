@@ -138,6 +138,23 @@ fn facets_list_values_in_use() {
     assert_eq!(facets.authors, strings(&["Ada"]));
 }
 
+/// #117: a Markdown `mailto:` link is found by its scheme, whether written or imported.
+#[test]
+fn a_mailto_link_is_found_by_its_scheme() {
+    let body = "Reach me: [Email](mailto:xyz@somedomain.com)";
+    let (_dir, mut vault) = seeded();
+    vault.create_note("", "Contact", body).unwrap();
+    vault.import_notes(&[NewNote { folder: "", title: "Imported contact", body, created_at: 1, updated_at: 1 }]).unwrap();
+    for q in ["mailto", "mailto:", "somedomain"] {
+        let hits = vault.search(&text(q)).unwrap();
+        let found: Vec<&str> = hits.iter().map(|h| h.note.title.as_str()).collect();
+        assert_eq!(found.len(), 2, "{q}: {found:?}");
+        for hit in &hits {
+            assert!(hit.snippet.as_deref().unwrap().contains("\u{2}mailto\u{3}") || q == "somedomain", "{q}");
+        }
+    }
+}
+
 #[test]
 fn short_prefixes_use_the_prefix_index_and_one_letter_is_a_whole_word() {
     let (_dir, mut vault) = seeded();

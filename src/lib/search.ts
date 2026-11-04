@@ -62,3 +62,11 @@ function splitOnce(s: string, sep: string): [string, string] {
   const at = s.indexOf(sep);
   return at < 0 ? [s, ""] : [s.slice(0, at), s.slice(at + sep.length)];
 }
+
+/** The line above the results: how many there are and, for a text search, their order.
+ *  A very broad search lists the newest matches rather than ranking them (`newestFirst`). */
+export function searchSummary(count: number, hasMore: boolean, text: string, newestFirst: boolean): string {
+  const noun = count === 1 && !hasMore ? "result" : "results";
+  const order = text.trim() ? (newestFirst ? " · newest first" : " · best match first") : "";
+  return `${count.toLocaleString()}${hasMore ? "+" : ""} ${noun}${order}`;
+}

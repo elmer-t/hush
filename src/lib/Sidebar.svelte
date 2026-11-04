@@ -28,7 +28,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
-  import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
+  import { activeFilterCount, emptyFilters, searchSummary, toQuery } from "$lib/search";
   import { currentSearch } from "$lib/currentSearch.svelte";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
@@ -664,10 +664,7 @@
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   {#if searching}
-    <p class="summary">
-      {hits.length.toLocaleString()}{hasMore ? "+" : ""}
-      {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
-    </p>
+    <p class="summary">{searchSummary(hits.length, hasMore, text, newestFirst)}</p>
   {/if}
   {#if !searching && recentOpened.length > 0}
     <RecentlyOpened
