@@ -112,6 +112,8 @@ pub struct GpuStatus {
     pub model: Option<String>,
     pub device: Option<Device>,
     pub reason: Option<String>,
+    /// The name of the model made for the GPU, so Settings can say which one to pick.
+    pub gpu_model: Option<&'static str>,
 }
 
 impl LocalModels {
@@ -154,6 +156,7 @@ impl LocalModels {
             model,
             device,
             reason,
+            gpu_model: embed::MODELS.iter().find(|m| m.gpu).map(|m| m.name),
         }
     }
 

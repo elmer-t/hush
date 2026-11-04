@@ -251,7 +251,8 @@
       {#if gpuModel}
         <p class="muted" role="status">
           This computer has a separate GPU ({gpu.best.name}). {gpuModel.name} runs on it: on an RTX 4060 Ti it indexed long
-          notes about 36 times faster than the bundled model on the CPU. Switching embeds every note again once.
+          notes about 25 times faster than the bundled model on the CPU. To use it, pick it in the list below
+          (download it first if it isn't on this computer). Switching embeds every note again once.
         </p>
       {/if}
     {/if}

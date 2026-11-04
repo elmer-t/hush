@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { api, errorMessage, GPU_STATUS_EVENT, type GpuStatus } from "$lib/api";
+  import { gpuText } from "$lib/gpu";
   import ModelSettings from "$lib/ModelSettings.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
 
@@ -78,18 +79,6 @@
       gpuError = errorMessage(err);
       useGpu = !useGpu;
     }
-  }
-
-  /** Where the vault's model runs, and why, in one line. */
-  function gpuText(s: GpuStatus): string {
-    const found = s.best
-      ? `GPU: ${s.best.name}.`
-      : s.adapters.length > 0
-        ? `No separate GPU found (${s.adapters.map((a) => a.name).join(", ")} shares the computer's memory).`
-        : "No GPU found.";
-    if (!s.model || !s.device) return found;
-    if (s.device === "gpu") return `${found} ${s.model} runs on the GPU.`;
-    return `${found} ${s.model} runs on the CPU${s.reason ? `: ${s.reason}` : " (it isn't made for the GPU)"}.`;
   }
 
   // Saved on change: a checkbox has no Save button.
