@@ -13,9 +13,15 @@ export type NoteSummary = {
   topic: string | null;
   /** 1–5 stars, or null when unrated. */
   rating: number | null;
+  readStatus: ReadStatus;
   createdAt: number;
   updatedAt: number;
 };
+
+/** Mirrors `db::ReadStatus`: marked by hand, stored in the vault (not the frontmatter). */
+export type ReadStatus = "unread" | "partlyRead" | "read";
+/** Mirrors `db::ReadFilter`; `notFinished` is unread or partly read. */
+export type ReadFilter = ReadStatus | "notFinished";
 
 export type Note = NoteSummary & { body: string; tags: string[] };
 
@@ -146,6 +152,8 @@ export type SearchQuery = {
   attributes: [string, string][];
   /** Notes rated this many stars or more; null for any. */
   minRating: number | null;
+  /** null for any read status. */
+  readStatus: ReadFilter | null;
   limit: number;
   offset: number;
 };
@@ -291,6 +299,8 @@ export const api = {
   /** Adds or removes a tag, or sets the topic or author, on several notes, all or nothing. */
   editNotesMetadata: (ids: number[], edit: MetadataEdit) =>
     invoke<MetadataEditReport>("edit_notes_metadata", { ids, edit }),
+  /** Marks notes; resolves to the ids whose status changed. Leaves body and dates alone. */
+  setReadStatus: (ids: number[], status: ReadStatus) => invoke<number[]>("set_read_status", { ids, status }),
   /** Deletes a note for good, live or trashed. */
   deleteNote: (id: number) => invoke<void>("delete_note", { id }),
   /** One page of the trash, newest first: folder groups as one entry each, and loose notes. */

@@ -240,6 +240,14 @@ UPDATE notes SET rating = (SELECT m.rating FROM rating_moves m WHERE m.note_id =
     WHERE id IN (SELECT note_id FROM rating_moves);
 DELETE FROM note_attributes WHERE key = 'rating' AND note_id IN (SELECT note_id FROM rating_moves);
 DROP TABLE rating_moves;
+"#, r#"
+-- Read status: 0 unread, 1 partly read, 2 read. Set by hand, about the reader rather
+-- than the note, so it lives here and not in the frontmatter: marking a note doesn't
+-- rewrite its body, bump `updated_at` or queue it for embedding (the triggers only
+-- watch title, body and deleted_at). Every existing note starts unread. Nearly every
+-- note is unread, so the index only holds marked ones, in the order the search lists them.
+ALTER TABLE notes ADD COLUMN read_status INTEGER NOT NULL DEFAULT 0 CHECK (read_status BETWEEN 0 AND 2);
+CREATE INDEX notes_read ON notes(read_status, updated_at) WHERE read_status > 0;
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -632,5 +640,48 @@ mod tests {
         assert_eq!(attrs, [(2, "rating", "4.5"), (3, "rating", "3"), (3, "rating", "5"), (5, "mood", "calm"), (5, "rating", "9")]);
         assert!(conn.execute("UPDATE notes SET rating = 6 WHERE id = 4", []).is_err(), "1 to 5 only");
         assert!(conn.execute("UPDATE notes SET rating = 0 WHERE id = 4", []).is_err());
+    }
+
+    /// A vault from before read status (version 11) opens with every note unread, trashed
+    /// ones too, and nothing queued for embedding or re-indexed.
+    #[test]
+    fn read_status_migration_leaves_every_note_unread() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..11] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 11).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, title, body, created_at, updated_at) VALUES (1, 'A', 'a', 1, 2), (2, 'B', 'b', 1, 3);
+             INSERT INTO notes(id, title, body, created_at, updated_at, deleted_at) VALUES (3, 'C', 'c', 1, 4, 9);
+             DELETE FROM embedding_dirty;",
+        )
+        .unwrap();
+
+        migrate(&mut conn, &mut |_| {}).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let rows: Vec<(i64, i64, i64)> = conn
+            .prepare("SELECT id, read_status, updated_at FROM notes ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(rows, [(1, 0, 2), (2, 0, 3), (3, 0, 4)], "unread, dates kept");
+        let queued: i64 = conn.query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0)).unwrap();
+        assert_eq!(queued, 0, "the upgrade queues nothing");
+
+        conn.execute("UPDATE notes SET read_status = 2 WHERE id = 1", []).unwrap();
+        let queued: i64 = conn.query_row("SELECT count(*) FROM embedding_dirty", [], |r| r.get(0)).unwrap();
+        assert_eq!(queued, 0, "marking a note doesn't queue it");
+        assert!(conn.execute("UPDATE notes SET read_status = 3 WHERE id = 1", []).is_err(), "0 to 2 only");
+        assert!(conn.execute("UPDATE notes SET read_status = -1 WHERE id = 1", []).is_err());
+        assert!(conn.execute("UPDATE notes SET read_status = NULL WHERE id = 1", []).is_err());
+        let found: i64 = conn
+            .query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'a'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(found, 1, "the full-text index is untouched");
     }
 }

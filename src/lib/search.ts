@@ -1,4 +1,4 @@
-import { HIGHLIGHT_END, HIGHLIGHT_START, type DateField, type SearchQuery } from "$lib/api";
+import { HIGHLIGHT_END, HIGHLIGHT_START, type DateField, type ReadFilter, type SearchQuery } from "$lib/api";
 
 /** What the filters panel edits. Dates are `YYYY-MM-DD` from date inputs, or empty. */
 export type Filters = {
@@ -11,15 +11,19 @@ export type Filters = {
   attributes: [string, string][];
   /** 0 for any rating. */
   minRating: number;
+  /** "" for any read status. */
+  readStatus: ReadFilter | "";
 };
 
 export function emptyFilters(): Filters {
-  return { tags: [], topic: "", author: "", dateField: "created", from: "", to: "", attributes: [], minRating: 0 };
+  return { tags: [], topic: "", author: "", dateField: "created", from: "", to: "", attributes: [], minRating: 0, readStatus: "" };
 }
 
 export function activeFilterCount(f: Filters): number {
   return (
-    f.tags.length + f.attributes.length + Number(!!f.topic) + Number(!!f.author) + Number(!!(f.from || f.to)) + Number(f.minRating > 0)
+    f.tags.length + f.attributes.length + Number(!!f.topic) + Number(!!f.author) + Number(!!(f.from || f.to)) +
+    Number(f.minRating > 0) +
+    Number(!!f.readStatus)
   );
 }
 
@@ -42,6 +46,7 @@ export function toQuery(text: string, folder: string | null, f: Filters, offset:
     to: localDay(f.to, 1),
     attributes: f.attributes.map(([k, v]) => [k, v]),
     minRating: f.minRating || null,
+    readStatus: f.readStatus || null,
     limit,
     offset,
   };

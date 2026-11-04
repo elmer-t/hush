@@ -13,6 +13,7 @@
     type MetadataEdit,
     type MetadataEditReport,
     type NoteSummary,
+    type ReadStatus,
     type SearchHit,
     type SidebarView,
   } from "$lib/api";
@@ -29,6 +30,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
+  import { markRead, READ_STATUSES } from "$lib/readStatus.svelte";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import { searchScheduler } from "$lib/searchTiming";
   import { currentSearch } from "$lib/currentSearch.svelte";
@@ -130,7 +132,9 @@
   let moving = $state(false);
   let moveTarget = $state("");
   let editing = $state(false);
-  let editKind = $state<MetadataEdit["kind"]>("addTag");
+  // Read status isn't a frontmatter edit: it is stored in the vault, so it goes its own way.
+  type EditKind = MetadataEdit["kind"] | "setReadStatus";
+  let editKind = $state<EditKind>("addTag");
   let editValue = $state("");
   // What the last bulk edit did.
   let editNotice = $state<{ text: string; titles: string[] } | null>(null);
@@ -532,12 +536,13 @@
     return items;
   });
 
-  const EDITS: { kind: MetadataEdit["kind"]; label: string }[] = [
+  const EDITS: { kind: EditKind; label: string }[] = [
     { kind: "addTag", label: "Add tag" },
     { kind: "removeTag", label: "Remove tag" },
     { kind: "setTopic", label: "Set topic" },
     { kind: "setAuthor", label: "Set author" },
     { kind: "setRating", label: "Set rating" },
+    { kind: "setReadStatus", label: "Set read status" },
   ];
   const editSuggestions = $derived(
     editKind === "setTopic" ? facets.topics : editKind === "setAuthor" ? facets.authors : facets.tags,
@@ -557,6 +562,11 @@
     if (tagEdit && value.replace(/^#+/, "") === "") return;
     busy = true;
     const ids = [...picked];
+    if (editKind === "setReadStatus") {
+      await markSelection(ids, value as ReadStatus);
+      busy = false;
+      return;
+    }
     const edit: MetadataEdit =
       editKind === "setRating" ? { kind: editKind, value: value ? Number(value) : null } : { kind: editKind, value };
     const report = await onedit(ids, edit, pickedNotes().map((n) => n.folder));
@@ -566,6 +576,30 @@
     editValue = "";
     // A filtered list may have dropped some of them; keep only what is still shown.
     if (view === "recent" || searching) {
+      const shown = new Set(hits.map((h) => h.note.id));
+      for (const id of ids) if (!shown.has(id)) picked.delete(id);
+    }
+  }
+
+  /** Marks the selected notes. Nothing is saved to them, so the lists only reload when
+   * they are filtered on read status. */
+  async function markSelection(ids: number[], status: ReadStatus) {
+    let changed: number[];
+    try {
+      changed = await markRead(ids, status);
+    } catch (e) {
+      error = errorMessage(e);
+      return;
+    }
+    error = "";
+    const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
+    const label = (READ_STATUSES.find((s) => s.value === status)?.label ?? status).toLowerCase();
+    const parts = [`Marked ${notes(changed.length)} as ${label}`];
+    const already = ids.length - changed.length;
+    if (already > 0) parts.push(`${notes(already)} already ${already === 1 ? "was" : "were"}`);
+    editNotice = { text: parts.join("; ") + ".", titles: [] };
+    if (filters.readStatus) {
+      await loadNotes(true);
       const shown = new Set(hits.map((h) => h.note.id));
       for (const id of ids) if (!shown.has(id)) picked.delete(id);
     }
@@ -766,12 +800,18 @@
           <select
             aria-label="Edit"
             bind:value={editKind}
-            onchange={(e) => (editValue = e.currentTarget.value === "setRating" ? "5" : "")}
+            onchange={(e) =>
+              (editValue =
+                e.currentTarget.value === "setRating" ? "5" : e.currentTarget.value === "setReadStatus" ? "read" : "")}
             disabled={busy}
           >
             {#each EDITS as e (e.kind)}<option value={e.kind}>{e.label}</option>{/each}
           </select>
-          {#if editKind === "setRating"}
+          {#if editKind === "setReadStatus"}
+            <select aria-label="Read status" bind:value={editValue} disabled={busy}>
+              {#each READ_STATUSES as r (r.value)}<option value={r.value}>{r.label}</option>{/each}
+            </select>
+          {:else if editKind === "setRating"}
             <select aria-label="Rating" bind:value={editValue} disabled={busy}>
               {#each [1, 2, 3, 4, 5] as n (n)}<option value={String(n)}>{"★".repeat(n)} {n}</option>{/each}
               <option value="">No rating</option>
