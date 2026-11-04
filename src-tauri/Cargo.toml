@@ -36,12 +36,21 @@ tauri-plugin-window-state = "2"
 htmd = "0.5.6"
 # Local embedding model (see docs/decisions.md, AI classification). ONNX Runtime is
 # fetched at build time (`download-binaries`); nothing here can reach the network at runtime.
-ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs", "api-24"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs", "api-24", "half"] }
+# The fp16 model hands back float16 tensors.
+half = { version = "2.1", default-features = false }
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
 sha2 = "0.10"
 # The only HTTP client: downloads an optional model when the user clicks Download, to the
 # descriptor's pinned URL (see docs/decisions.md, Optional models). Nothing else uses it.
 ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
+
+# GPU embedding on Windows through DirectML (#105). `download-binaries` then fetches ONNX
+# Runtime's DirectML build, and `copy-dylibs` puts DirectML.dll next to the executable;
+# the installer ships it from there (tauri.windows.conf.json). DXGI names the GPU.
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["directml"] }
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 
 [dev-dependencies]
 insta = "1.49.0"

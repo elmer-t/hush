@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
+  import { listen } from "@tauri-apps/api/event";
+  import { api, errorMessage, GPU_STATUS_EVENT, type GpuStatus } from "$lib/api";
   import ModelSettings from "$lib/ModelSettings.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
 
@@ -24,6 +25,9 @@
   let confirmTrash = $state(true);
   let allCores = $state(false);
   let coresError = $state("");
+  let gpu = $state<GpuStatus | null>(null);
+  let useGpu = $state(true);
+  let gpuError = $state("");
   let confirmError = $state("");
 
   let trashDays = $state(30);
@@ -38,8 +42,14 @@
   let authorStatus = $state("");
   let authorError = $state("");
 
+  onMount(() => {
+    const unlisten = listen<GpuStatus>(GPU_STATUS_EVENT, (e) => (gpu = e.payload));
+    return () => void unlisten.then((stop) => stop());
+  });
+
   onMount(async () => {
     api.indexAllCores().then((on) => (allCores = on), () => {});
+    api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
@@ -57,6 +67,29 @@
       coresError = errorMessage(err);
       allCores = !allCores;
     }
+  }
+
+  async function saveUseGpu() {
+    gpuError = "";
+    try {
+      await api.setIndexGpu(useGpu);
+      gpu = await api.gpuStatus();
+    } catch (err) {
+      gpuError = errorMessage(err);
+      useGpu = !useGpu;
+    }
+  }
+
+  /** Where the vault's model runs, and why, in one line. */
+  function gpuText(s: GpuStatus): string {
+    const found = s.best
+      ? `GPU: ${s.best.name}.`
+      : s.adapters.length > 0
+        ? `No separate GPU found (${s.adapters.map((a) => a.name).join(", ")} shares the computer's memory).`
+        : "No GPU found.";
+    if (!s.model || !s.device) return found;
+    if (s.device === "gpu") return `${found} ${s.model} runs on the GPU.`;
+    return `${found} ${s.model} runs on the CPU${s.reason ? `: ${s.reason}` : " (it isn't made for the GPU)"}.`;
   }
 
   // Saved on change: a checkbox has no Save button.
@@ -187,6 +220,12 @@
       Use all cores while indexing (faster, but the computer may get busy and warm)
     </label>
     {#if coresError}<p class="error" role="alert">{coresError}</p>{/if}
+    <label class="check">
+      <input type="checkbox" bind:checked={useGpu} onchange={saveUseGpu} />
+      Use the GPU for models made for it (Windows, through DirectML)
+    </label>
+    {#if gpu}<p class="muted" role="status">{gpuText(gpu)}</p>{/if}
+    {#if gpuError}<p class="error" role="alert">{gpuError}</p>{/if}
   </section>
 
   <form class="card" onsubmit={saveTrashDays}>

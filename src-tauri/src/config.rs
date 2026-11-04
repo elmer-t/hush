@@ -18,6 +18,10 @@ pub struct AppConfig {
     /// for this machine, so it lives here rather than in a vault.
     #[serde(default)]
     pub index_all_cores: bool,
+    /// Models made for the GPU run on the CPU even when this machine has a usable GPU
+    /// (Settings → Indexing). Off by default, so a GPU is used when there is one.
+    #[serde(default)]
+    pub index_gpu_off: bool,
     /// Notes per second each model last embedded at on this machine, by model ID, for
     /// the estimate shown before switching models. Holds no vault data.
     #[serde(default)]

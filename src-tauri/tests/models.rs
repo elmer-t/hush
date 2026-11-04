@@ -32,6 +32,8 @@ const fn stub(id: &'static str, model: &'static str, tokenizer: &'static str, di
         prefix: "",
         query_prefix: "",
         suggestion_threshold: 0.5,
+        gpu: false,
+        batch_across_notes: false,
     }
 }
 

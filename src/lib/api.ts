@@ -372,6 +372,10 @@ export const api = {
   indexStatus: () => invoke<IndexStatus>("index_status"),
   /** Whether indexing uses every core on this machine (else half). */
   indexAllCores: () => invoke<boolean>("index_all_cores"),
+  /** Which GPUs there are, whether models made for the GPU may use one, and where the model runs. */
+  gpuStatus: () => invoke<GpuStatus>("gpu_status"),
+  /** Lets models made for the GPU use it (this computer only); applies from the next indexing pass. */
+  setIndexGpu: (on: boolean) => invoke<void>("set_index_gpu", { on }),
   setIndexAllCores: (on: boolean) => invoke<void>("set_index_all_cores", { on }),
   /** The vault's model as the indexing job last saw it; changes arrive as `MODEL_STATUS_EVENT`. */
   modelStatus: () => invoke<ModelStatus>("model_status"),
@@ -591,7 +595,23 @@ export type ModelInfo = {
   availability: Availability;
   /** Notes per second last measured on this machine. */
   rate: number | null;
+  /** Made for the GPU: runs through DirectML when this computer has a usable one. */
+  gpu: boolean;
 };
+export type GpuAdapter = { name: string; dedicatedBytes: number; discrete: boolean };
+/** Settings → Indexing's GPU line (see `GpuStatus` in commands/embeddings.rs). */
+export type GpuStatus = {
+  adapters: GpuAdapter[];
+  /** The separate GPU a GPU model would use, if any. */
+  best: GpuAdapter | null;
+  /** Settings allows the GPU. */
+  enabled: boolean;
+  /** The model last loaded, where it runs, and why not on the GPU when it could have. */
+  model: string | null;
+  device: "cpu" | "gpu" | null;
+  reason: string | null;
+};
+export const GPU_STATUS_EVENT = "gpu-status";
 export type ModelOverview = {
   status: ModelStatus;
   /** The vault's model, from its settings. */

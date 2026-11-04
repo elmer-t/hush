@@ -14,9 +14,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::CommandError;
 
 use crate::config::Config;
+use crate::embed::gpu::{self, Adapter};
 use crate::embed::job::{self, EmbedderSource, IndexStatus};
 use crate::embed::related::{self, RelatedNote};
-use crate::embed::onnx::OnnxEmbedder;
+use crate::embed::onnx::{Device, OnnxEmbedder};
 use crate::embed::models::{self, Availability, FileChecks, LoadState, ModelDirs, ModelStatus, ModelTracker, SwitchError};
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::Session;
@@ -34,6 +35,9 @@ const POLL: Duration = Duration::from_secs(1);
 /// Emitted with a [`ModelStatus`] whenever it changes.
 pub const MODEL_STATUS_EVENT: &str = "model-status";
 
+/// Emitted with a [`GpuStatus`] whenever a model loads, or the GPU setting changes.
+pub const GPU_STATUS_EVENT: &str = "gpu-status";
+
 pub struct Indexer {
     status: Mutex<IndexStatus>,
     pub(super) models: LocalModels,
@@ -45,14 +49,16 @@ pub struct Indexer {
 
 impl Indexer {
     /// `dirs` are the bundled and the downloaded models' folders; `all_cores` the
-    /// "use all cores while indexing" choice.
-    pub fn new(app: AppHandle, dirs: ModelDirs, all_cores: bool) -> Self {
+    /// "use all cores while indexing" choice; `gpu_off` the "don't use the GPU" one.
+    pub fn new(app: AppHandle, dirs: ModelDirs, all_cores: bool, gpu_off: bool) -> Self {
         Self {
             status: Mutex::new(IndexStatus::Idle),
             models: LocalModels {
                 app,
                 dirs,
                 all_cores: AtomicBool::new(all_cores),
+                gpu_off: AtomicBool::new(gpu_off),
+                gpu: Mutex::default(),
                 loaded: Mutex::default(),
                 tracker: ModelTracker::default(),
                 checks: FileChecks::default(),
@@ -63,24 +69,109 @@ impl Indexer {
 }
 
 /// The models on this computer: bundled with the app, downloaded or imported. A loaded
-/// model holds no note data, so it is kept across lock and unlock, once per core count:
-/// the job asks for its model at the start of every pass, so a change of
-/// [`LocalModels::all_cores`] applies from the next pass.
+/// model holds no note data, so it is kept across lock and unlock, once per core count
+/// and device: the job asks for its model at the start of every pass, so a change of
+/// [`LocalModels::all_cores`] or [`LocalModels::gpu_off`] applies from the next pass.
+///
+/// A model made for the GPU ([`embed::ModelDescriptor::gpu`]) is loaded on the GPU
+/// through DirectML unless Settings turned that off; if that fails it is loaded on the
+/// CPU instead, and the GPU isn't tried again for it until the setting changes or the
+/// models are checked again.
 pub(super) struct LocalModels {
     app: AppHandle,
     pub(super) dirs: ModelDirs,
     all_cores: AtomicBool,
-    loaded: Mutex<HashMap<(&'static str, usize), Arc<dyn Embedder>>>,
+    gpu_off: AtomicBool,
+    /// Where the last model loaded, and why a GPU model isn't on the GPU.
+    gpu: Mutex<GpuState>,
+    loaded: Mutex<HashMap<(&'static str, usize, Device), Arc<dyn Embedder>>>,
     pub(super) tracker: ModelTracker,
     pub(super) checks: FileChecks,
 }
 
+/// What the GPU is doing for indexing, for Settings → Indexing.
+#[derive(Debug, Default, Clone)]
+struct GpuState {
+    /// The model last loaded, and where.
+    loaded: Option<(&'static str, Device)>,
+    /// A GPU model that failed to load on the GPU, and the error.
+    failed: Option<(&'static str, String)>,
+}
+
+/// Settings → Indexing's GPU line.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuStatus {
+    /// The GPUs Windows reports (none off Windows).
+    pub adapters: Vec<Adapter>,
+    /// The discrete GPU a GPU model would use, if any.
+    pub best: Option<Adapter>,
+    /// Settings allows the GPU.
+    pub enabled: bool,
+    /// The model last loaded, where it runs, and why not on the GPU when it could have.
+    pub model: Option<String>,
+    pub device: Option<Device>,
+    pub reason: Option<String>,
+}
+
 impl LocalModels {
+    /// Where `descriptor` should load, and why not on the GPU when it is a GPU model.
+    fn device_for(&self, descriptor: &'static embed::ModelDescriptor) -> (Device, Option<String>) {
+        if !descriptor.gpu {
+            return (Device::Cpu, None);
+        }
+        if !cfg!(windows) {
+            return (Device::Cpu, Some("the GPU is only used on Windows".into()));
+        }
+        if self.gpu_off.load(Ordering::SeqCst) {
+            return (
+                Device::Cpu,
+                Some("turned off in Settings → Indexing".into()),
+            );
+        }
+        let gpu = self.gpu.lock().unwrap_or_else(|e| e.into_inner());
+        match &gpu.failed {
+            Some((id, error)) if *id == descriptor.id => (Device::Cpu, Some(error.clone())),
+            _ => (Device::Gpu, None),
+        }
+    }
+
+    pub(super) fn gpu_status(&self) -> GpuStatus {
+        let adapters = gpu::adapters();
+        let best = gpu::best(&adapters).cloned();
+        let state = self.gpu.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (model, device, reason) = match state.loaded {
+            Some((id, device)) => {
+                let reason = embed::descriptor(id).and_then(|d| self.device_for(d).1);
+                (Some(id.to_string()), Some(device), reason)
+            }
+            None => (None, None, None),
+        };
+        GpuStatus {
+            adapters,
+            best,
+            enabled: !self.gpu_off.load(Ordering::SeqCst),
+            model,
+            device,
+            reason,
+        }
+    }
+
+    fn emit_gpu(&self) {
+        let _ = self.app.emit(GPU_STATUS_EVENT, self.gpu_status());
+    }
+
     /// The threads a model gets, and the machine's cores.
     fn threads(&self) -> (usize, usize) {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         let threads = if self.all_cores.load(Ordering::SeqCst) { cores } else { (cores / 2).max(1) };
         (threads, cores)
+    }
+
+    /// Lets a GPU model try the GPU again (the setting changed, or the models were
+    /// checked again).
+    fn retry_gpu(&self) {
+        self.gpu.lock().unwrap_or_else(|e| e.into_inner()).failed = None;
     }
 
     /// Drops `model` from memory (its files are being removed).
@@ -109,7 +200,11 @@ impl EmbedderSource for LocalModels {
     fn is_loaded(&self, model: &str) -> bool {
         let Some(descriptor) = embed::descriptor(model) else { return false };
         let (threads, _) = self.threads();
-        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&(descriptor.id, threads))
+        let (device, _) = self.device_for(descriptor);
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&(descriptor.id, threads, device))
     }
 
     fn embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
@@ -118,19 +213,39 @@ impl EmbedderSource for LocalModels {
             return Err(EmbedError::UnknownModel(model.to_string()));
         };
         let (threads, _) = self.threads();
+        let (device, _) = self.device_for(descriptor);
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = loaded.get(&(descriptor.id, threads)) {
+        if let Some(e) = loaded.get(&(descriptor.id, threads, device)) {
             return Ok(e.clone());
         }
-        // Only one core count is kept loaded.
+        // Only one core count and device is kept loaded.
         loaded.clear();
         self.emit_if(self.tracker.load(model, LoadState::Loading));
         // The folder that has the files intact, else the likeliest one (for the error).
-        let dir = self.checks.locate(&self.dirs, descriptor).1.unwrap_or_else(|| self.dirs.search(descriptor)[0].to_path_buf());
-        match OnnxEmbedder::load_with_threads(&dir, descriptor, threads) {
+        let dir = self
+            .checks
+            .locate(&self.dirs, descriptor)
+            .1
+            .unwrap_or_else(|| self.dirs.search(descriptor)[0].to_path_buf());
+        let mut result = OnnxEmbedder::load_on(&dir, descriptor, threads, device);
+        let mut device = device;
+        if device == Device::Gpu {
+            if let Err(EmbedError::Load(error)) = &result {
+                // No usable GPU: the CPU, and not the GPU again until something changes.
+                eprintln!("hush: {} runs on the CPU: {error}", descriptor.id);
+                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).failed =
+                    Some((descriptor.id, error.clone()));
+                device = Device::Cpu;
+                result = OnnxEmbedder::load_on(&dir, descriptor, threads, device);
+            }
+        }
+        match result {
             Ok(e) => {
                 let embedder: Arc<dyn Embedder> = Arc::new(e);
-                loaded.insert((descriptor.id, threads), embedder.clone());
+                loaded.insert((descriptor.id, threads, device), embedder.clone());
+                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).loaded =
+                    Some((descriptor.id, device));
+                self.emit_gpu();
                 self.emit_if(self.tracker.load(model, LoadState::Ready));
                 Ok(embedder)
             }
@@ -206,6 +321,31 @@ pub fn index_all_cores(config: State<'_, Config>) -> bool {
     config.get().index_all_cores
 }
 
+/// Whether models made for the GPU may use it, which GPUs there are, and where the
+/// last model loaded.
+#[tauri::command]
+pub fn gpu_status(indexer: State<'_, Indexer>) -> GpuStatus {
+    indexer.models.gpu_status()
+}
+
+/// Saves the GPU choice for this machine; the job uses it from its next pass (a GPU
+/// model is then reloaded on the new device).
+#[tauri::command]
+pub fn set_index_gpu(
+    app: AppHandle,
+    config: State<'_, Config>,
+    indexer: State<'_, Indexer>,
+    on: bool,
+) -> super::Result<()> {
+    config.update(|c| c.index_gpu_off = !on)?;
+    indexer.models.gpu_off.store(!on, Ordering::SeqCst);
+    indexer.models.retry_gpu();
+    indexer.models.emit_gpu();
+    // A job that stopped on the model starts again.
+    models_changed(&app);
+    Ok(())
+}
+
 /// Saves the choice for this machine; the job uses it from its next pass.
 #[tauri::command]
 pub fn set_index_all_cores(config: State<'_, Config>, indexer: State<'_, Indexer>, on: bool) -> super::Result<()> {
@@ -251,6 +391,8 @@ pub struct ModelInfo {
     pub availability: Availability,
     /// Notes per second last measured on this machine.
     pub rate: Option<f64>,
+    /// Made for the GPU (see [`GpuStatus`]).
+    pub gpu: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -290,6 +432,7 @@ pub async fn model_overview(
             host: host(d.model.url),
             availability: indexer.models.checks.locate(&indexer.models.dirs, d).0,
             rate: rates.get(d.id).copied(),
+            gpu: d.gpu,
         })
         .collect();
     Ok(ModelOverview { status: indexer.models.tracker.status(), model, notes, models, default_rate: models::DEFAULT_RATE })
@@ -326,7 +469,10 @@ pub fn recheck_models(app: AppHandle) {
 pub(super) fn models_changed(app: &AppHandle) {
     let indexer = app.state::<Indexer>();
     indexer.models.checks.forget();
-    indexer.models.emit_if(indexer.models.tracker.forget_failures());
+    indexer.models.retry_gpu();
+    indexer
+        .models
+        .emit_if(indexer.models.tracker.forget_failures());
     let generation = app.state::<Session>().generation();
     if generation != 0 {
         start(app, generation);

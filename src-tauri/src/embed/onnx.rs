@@ -1,5 +1,6 @@
 //! The real embedder: a bundled ONNX model run in-process with ONNX Runtime. The model
 //! and tokenizer files are checked against their pinned SHA-256 and loaded from memory.
+//! On Windows a model made for the GPU can run through DirectML ([`Device::Gpu`]).
 
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -10,13 +11,33 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 use tokenizers::{Encoding, PostProcessor, Token, Tokenizer};
 
-use super::{EmbedError, Embedder, FirstChunk, ModelDescriptor, TokenPooling, normalize, pool_chunks, read_verified};
+use super::{
+    EmbedError, Embedder, FirstChunk, ModelDescriptor, TokenPooling, normalize, pool_chunks,
+    read_verified,
+};
 
 /// A note longer than this many chunks is embedded from its start only, so one huge
 /// note can't keep the job busy for minutes.
 const MAX_CHUNKS: usize = 64;
-/// Chunks of one note run through the model together.
+/// Chunks run through the model together: of one note, or of several notes when the
+/// model allows it ([`ModelDescriptor::batch_across_notes`]). 8 was also the fastest
+/// batch on DirectML, ahead of 32 and 64 (#105).
 const CHUNK_BATCH: usize = 8;
+/// Run once when a model loads on the GPU: DirectML can register and then fail on the
+/// first run (an old system DirectML.dll does), and that should fall back to the CPU
+/// before any note waits on it. Repeated into one full run of [`CHUNK_BATCH`] chunks:
+/// after a smaller first run every later run took twice as long (RTX 4060 Ti, #105).
+const GPU_PROBE: &str = "Hush checks that the GPU can run the model. ";
+
+/// Where a model runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Device {
+    /// ONNX Runtime's CPU execution provider.
+    Cpu,
+    /// DirectML on the GPU Windows considers the fastest (Windows only).
+    Gpu,
+}
 
 pub struct OnnxEmbedder {
     descriptor: &'static ModelDescriptor,
@@ -24,6 +45,7 @@ pub struct OnnxEmbedder {
     session: Mutex<Session>,
     /// Whether the model takes `token_type_ids` (BERT exports usually do).
     token_types: bool,
+    device: Device,
 }
 
 impl OnnxEmbedder {
@@ -35,7 +57,23 @@ impl OnnxEmbedder {
     }
 
     /// [`OnnxEmbedder::load`], running the model on `threads` cores.
-    pub fn load_with_threads(dir: &Path, descriptor: &'static ModelDescriptor, threads: usize) -> Result<Self, EmbedError> {
+    pub fn load_with_threads(
+        dir: &Path,
+        descriptor: &'static ModelDescriptor,
+        threads: usize,
+    ) -> Result<Self, EmbedError> {
+        Self::load_on(dir, descriptor, threads, Device::Cpu)
+    }
+
+    /// Loads `descriptor`'s files from `dir` to run on `device`: on the CPU with
+    /// `threads` cores, or on the GPU, where it also embeds a probe text so a GPU that
+    /// registers but can't run the model fails here.
+    pub fn load_on(
+        dir: &Path,
+        descriptor: &'static ModelDescriptor,
+        threads: usize,
+        device: Device,
+    ) -> Result<Self, EmbedError> {
         let tokenizer_bytes = read_verified(dir, &descriptor.tokenizer)?;
         let model_bytes = read_verified(dir, &descriptor.model)?;
 
@@ -43,14 +81,54 @@ impl OnnxEmbedder {
         tokenizer.with_truncation(None).map_err(|e| EmbedError::Load(e.to_string()))?;
         tokenizer.with_padding(None);
 
-        let session = Session::builder(environment()?)
-            .and_then(|b| Ok(b.with_optimization_level(GraphOptimizationLevel::Level3)?))
-            .and_then(|b| Ok(b.with_intra_threads(threads.max(1))?))
-            .and_then(|b| Ok(b.with_inter_threads(1)?))
-            .and_then(|mut b| b.commit_from_memory(&model_bytes))
-            .map_err(|e| EmbedError::Load(e.to_string()))?;
-        let token_types = session.inputs().iter().any(|i| i.name() == "token_type_ids");
-        Ok(Self { descriptor, tokenizer, session: Mutex::new(session), token_types })
+        fn load(e: impl std::fmt::Display) -> EmbedError {
+            EmbedError::Load(e.to_string())
+        }
+        let mut builder = Session::builder(environment()?).map_err(load)?;
+        builder = builder
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(load)?;
+        builder = match device {
+            Device::Cpu => builder
+                .with_intra_threads(threads.max(1))
+                .map_err(load)?
+                .with_inter_threads(1)
+                .map_err(load)?,
+            // DirectML needs both off.
+            Device::Gpu => directml(
+                builder
+                    .with_memory_pattern(false)
+                    .map_err(load)?
+                    .with_parallel_execution(false)
+                    .map_err(load)?,
+            )?,
+        };
+        let session = builder.commit_from_memory(&model_bytes).map_err(load)?;
+        let token_types = session
+            .inputs()
+            .iter()
+            .any(|i| i.name() == "token_type_ids");
+        let embedder = Self {
+            descriptor,
+            tokenizer,
+            session: Mutex::new(session),
+            token_types,
+            device,
+        };
+        if device == Device::Gpu {
+            let probe = GPU_PROBE.repeat(descriptor.max_tokens);
+            let mut chunks = embedder.chunks(&probe, "")?;
+            chunks.truncate(CHUNK_BATCH);
+            embedder
+                .run(&chunks)
+                .map_err(|e| EmbedError::Load(format!("the GPU couldn't run the model: {e}")))?;
+        }
+        Ok(embedder)
+    }
+
+    /// Where the model runs.
+    pub fn device(&self) -> Device {
+        self.device
     }
 
     /// The token count of each chunk `text` is split into (special tokens included), as
@@ -81,15 +159,20 @@ impl OnnxEmbedder {
             .collect()
     }
 
-    /// One unit-length vector per chunk.
+    /// One unit-length vector per chunk. On the GPU a run of fewer than [`CHUNK_BATCH`]
+    /// chunks is filled up with copies of its chunks, whose vectors are dropped: DirectML
+    /// ran a note's last few chunks no faster than a full batch, and a full batch every
+    /// time made indexing 3,000-word notes 27% faster (8.8 to 11.2 notes/s, #105).
     fn run(&self, chunks: &[Encoding]) -> Result<Vec<Vec<f32>>, EmbedError> {
         let err = |e: ort::Error| EmbedError::Inference(e.to_string());
         let rows = chunks.len();
+        let run_rows = if self.device == Device::Gpu && rows > 0 { rows.max(CHUNK_BATCH) } else { rows };
         let len = chunks.iter().map(Encoding::len).max().unwrap_or(0);
-        let mut ids = vec![0i64; rows * len];
-        let mut mask = vec![0i64; rows * len];
-        let mut types = vec![0i64; rows * len];
-        for (r, chunk) in chunks.iter().enumerate() {
+        let mut ids = vec![0i64; run_rows * len];
+        let mut mask = vec![0i64; run_rows * len];
+        let mut types = vec![0i64; run_rows * len];
+        for r in 0..run_rows {
+            let chunk = &chunks[r % rows];
             for (c, ((&id, &m), &t)) in
                 chunk.get_ids().iter().zip(chunk.get_attention_mask()).zip(chunk.get_type_ids()).enumerate()
             {
@@ -98,7 +181,7 @@ impl OnnxEmbedder {
                 types[r * len + c] = i64::from(t);
             }
         }
-        let shape = [rows as i64, len as i64];
+        let shape = [run_rows as i64, len as i64];
         let mut inputs = vec![
             ("input_ids", Tensor::from_array((shape, ids)).map_err(err)?.into_dyn()),
             ("attention_mask", Tensor::from_array((shape, mask.clone())).map_err(err)?.into_dyn()),
@@ -109,9 +192,21 @@ impl OnnxEmbedder {
 
         let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
         let outputs = session.run(inputs).map_err(err)?;
-        let (out_shape, hidden) = outputs[0].try_extract_tensor::<f32>().map_err(err)?;
+        // fp16 exports hand back float16.
+        let (out_shape, hidden): (Vec<i64>, std::borrow::Cow<[f32]>) = match outputs[0]
+            .try_extract_tensor::<f32>()
+        {
+            Ok((shape, data)) => (shape.to_vec(), data.into()),
+            Err(_) => {
+                let (shape, data) = outputs[0].try_extract_tensor::<half::f16>().map_err(err)?;
+                (
+                    shape.to_vec(),
+                    data.iter().map(|x| x.to_f32()).collect::<Vec<_>>().into(),
+                )
+            }
+        };
         let dims = self.descriptor.dims;
-        if out_shape.len() != 3 || out_shape[0] as usize != rows || out_shape[2] as usize != dims {
+        if out_shape.len() != 3 || out_shape[0] as usize != run_rows || out_shape[2] as usize != dims {
             return Err(EmbedError::Inference(format!("unexpected model output shape {out_shape:?}")));
         }
         let seq = out_shape[1] as usize;
@@ -158,21 +253,30 @@ impl Embedder for OnnxEmbedder {
         self.batch_with(texts, self.descriptor.prefix, stop)
     }
 
-    /// Each text's first chunk on its own run (for the int8 model, see
-    /// [`OnnxEmbedder::batch_with`]); a one-chunk text gets exactly its full vector.
-    fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
-        let mut out = Vec::with_capacity(texts.len());
+    /// Each text's first chunk, run as [`OnnxEmbedder::batch_with`] runs chunks; a
+    /// one-chunk text gets exactly its full vector.
+    fn embed_first_batch(
+        &self,
+        texts: &[&str],
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Vec<FirstChunk>, EmbedError> {
+        let mut firsts = Vec::with_capacity(texts.len());
+        let mut complete = Vec::with_capacity(texts.len());
         for text in texts {
-            if stop() {
-                return Err(EmbedError::Stopped);
-            }
             let mut chunks = self.chunks(text, self.descriptor.prefix)?;
-            let complete = chunks.len() <= 1;
+            complete.push(chunks.len() <= 1);
             chunks.truncate(1);
-            let vectors = if chunks.is_empty() { Vec::new() } else { self.run(&chunks)? };
-            out.push(FirstChunk { vector: pool_chunks(self.descriptor.chunk_pooling, &vectors), complete });
+            firsts.push(chunks);
         }
-        Ok(out)
+        let vectors = self.run_chunks(&firsts, stop)?;
+        Ok(vectors
+            .iter()
+            .zip(complete)
+            .map(|(v, complete)| FirstChunk {
+                vector: pool_chunks(self.descriptor.chunk_pooling, v),
+                complete,
+            })
+            .collect())
     }
 }
 
@@ -181,25 +285,89 @@ impl OnnxEmbedder {
         Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
     }
 
-    /// Embeds each text on its own, its chunks run [`CHUNK_BATCH`] at a time, asking
-    /// `stop` before each run. Texts are not batched together: the bundled int8 model
+    /// Embeds `texts`, asking `stop` before each model run. With an int8 model each text
+    /// runs on its own, its chunks [`CHUNK_BATCH`] at a time: the bundled int8 model
     /// quantises each run with one scale for the whole run, so a text's vector would
-    /// depend on the texts it ran with (up to 0.04 per element, measured).
-    fn batch_with(&self, texts: &[&str], prefix: &str, stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
-        let mut out = Vec::with_capacity(texts.len());
-        for text in texts {
-            let chunks = self.chunks(text, prefix)?;
-            let mut vectors = Vec::with_capacity(chunks.len());
-            for run in chunks.chunks(CHUNK_BATCH) {
+    /// depend on the texts it ran with (up to 0.04 per element, measured). A model that
+    /// allows it ([`ModelDescriptor::batch_across_notes`]) runs the chunks of all texts
+    /// [`CHUNK_BATCH`] at a time, which keeps the GPU busy with short notes.
+    fn batch_with(
+        &self,
+        texts: &[&str],
+        prefix: &str,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let chunked = texts
+            .iter()
+            .map(|t| self.chunks(t, prefix))
+            .collect::<Result<Vec<_>, _>>()?;
+        let vectors = self.run_chunks(&chunked, stop)?;
+        Ok(vectors
+            .iter()
+            .map(|v| pool_chunks(self.descriptor.chunk_pooling, v))
+            .collect())
+    }
+
+    /// Each text's chunk vectors, run as [`OnnxEmbedder::batch_with`] says.
+    fn run_chunks(
+        &self,
+        texts: &[Vec<Encoding>],
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Vec<Vec<Vec<f32>>>, EmbedError> {
+        let mut out: Vec<Vec<Vec<f32>>> =
+            texts.iter().map(|c| Vec::with_capacity(c.len())).collect();
+        if self.descriptor.batch_across_notes {
+            let all: Vec<(usize, &Encoding)> = texts
+                .iter()
+                .enumerate()
+                .flat_map(|(n, chunks)| chunks.iter().map(move |c| (n, c)))
+                .collect();
+            for run in all.chunks(CHUNK_BATCH) {
                 if stop() {
                     return Err(EmbedError::Stopped);
                 }
-                vectors.extend(self.run(run)?);
+                let encodings: Vec<Encoding> = run.iter().map(|(_, c)| (*c).clone()).collect();
+                for ((n, _), v) in run.iter().zip(self.run(&encodings)?) {
+                    out[*n].push(v);
+                }
             }
-            out.push(pool_chunks(self.descriptor.chunk_pooling, &vectors));
+        } else {
+            for (n, chunks) in texts.iter().enumerate() {
+                for run in chunks.chunks(CHUNK_BATCH) {
+                    if stop() {
+                        return Err(EmbedError::Stopped);
+                    }
+                    out[n].extend(self.run(run)?);
+                }
+            }
         }
         Ok(out)
     }
+}
+
+/// Adds DirectML to `builder`, failing if it can't register (no DirectX 12 GPU, or not
+/// Windows). It asks for the high-performance GPU, so a laptop's discrete GPU wins over
+/// its integrated one.
+#[cfg(windows)]
+fn directml(
+    builder: ort::session::builder::SessionBuilder,
+) -> Result<ort::session::builder::SessionBuilder, EmbedError> {
+    use ort::ep::directml::{DeviceFilter, PerformancePreference};
+    let ep = ort::ep::DirectML::default()
+        .with_device_filter(DeviceFilter::Gpu)
+        .with_performance_preference(PerformancePreference::HighPerformance)
+        .build()
+        .error_on_failure();
+    builder
+        .with_execution_providers([ep])
+        .map_err(|e| EmbedError::Load(format!("DirectML didn't start: {e}")))
+}
+
+#[cfg(not(windows))]
+fn directml(
+    _: ort::session::builder::SessionBuilder,
+) -> Result<ort::session::builder::SessionBuilder, EmbedError> {
+    Err(EmbedError::Load("the GPU is only used on Windows".into()))
 }
 
 /// ONNX Runtime allows one environment per process; it is made on first use, with

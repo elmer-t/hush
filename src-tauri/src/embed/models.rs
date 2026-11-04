@@ -111,8 +111,15 @@ impl FileChecks {
             let name = file.name.to_string();
             let meta = match std::fs::metadata(&path) {
                 Ok(m) => m,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => return Availability::Missing { file: name },
-                Err(e) => return Availability::Unreadable { file: name, message: e.to_string() },
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    return Availability::Missing { file: name };
+                }
+                Err(e) => {
+                    return Availability::Unreadable {
+                        file: name,
+                        message: e.to_string(),
+                    };
+                }
             };
             let stamp = (meta.len(), meta.modified().ok());
             let key = (path.clone(), file.sha256);
@@ -125,7 +132,12 @@ impl FileChecks {
                         self.lock().insert(key, (stamp.0, stamp.1, ok));
                         ok
                     }
-                    Err(e) => return Availability::Unreadable { file: name, message: e.to_string() },
+                    Err(e) => {
+                        return Availability::Unreadable {
+                            file: name,
+                            message: e.to_string(),
+                        };
+                    }
                 },
             };
             if !ok {
@@ -381,6 +393,8 @@ mod tests {
             prefix: "",
             query_prefix: "",
             suggestion_threshold: 0.5,
+            gpu: false,
+            batch_across_notes: false,
         }
     }
 
@@ -401,8 +415,19 @@ mod tests {
         assert_eq!(checks.locate(&dirs, &d), (Availability::Available { bytes: 7, downloaded: true }, Some(dirs.user.clone())));
         // A different size can't hit the cached result.
         std::fs::write(dir.path().join("stub.onnx"), b"hello, world").unwrap();
-        assert_eq!(checks.availability(dir.path(), &d), Availability::Checksum { file: "stub.onnx".into() });
-        assert!(checks.availability(dir.path(), &d).problem().unwrap().contains("checksum"));
+        assert_eq!(
+            checks.availability(dir.path(), &d),
+            Availability::Checksum {
+                file: "stub.onnx".into()
+            }
+        );
+        assert!(
+            checks
+                .availability(dir.path(), &d)
+                .problem()
+                .unwrap()
+                .contains("checksum")
+        );
     }
 
     #[test]

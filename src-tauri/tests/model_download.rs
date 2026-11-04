@@ -254,6 +254,8 @@ fn descriptor(model: &[u8], tokenizer: &[u8], bundled: bool) -> &'static ModelDe
         prefix: "",
         query_prefix: "",
         suggestion_threshold: 0.5,
+        gpu: false,
+        batch_across_notes: false,
     }))
 }
 

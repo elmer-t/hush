@@ -7,6 +7,7 @@
 //! vector length or chunk size.
 
 pub mod download;
+pub mod gpu;
 pub mod job;
 pub mod models;
 pub mod onnx;
@@ -24,7 +25,12 @@ pub const DEFAULT_MODEL: &str = BGE_SMALL_EN_V15_Q8.id;
 
 /// Every model Hush knows. Only the default ships with the app; the others can be
 /// downloaded or imported from Settings → Model.
-pub const MODELS: &[ModelDescriptor] = &[BGE_SMALL_EN_V15_Q8, MULTILINGUAL_E5_SMALL_Q8, ALL_MINILM_L6_V2_Q8];
+pub const MODELS: &[ModelDescriptor] = &[
+    BGE_SMALL_EN_V15_Q8,
+    MULTILINGUAL_E5_SMALL_Q8,
+    ALL_MINILM_L6_V2_Q8,
+    BGE_SMALL_EN_V15_FP16,
+];
 
 /// `BAAI/bge-small-en-v1.5` (MIT), int8-quantized ONNX export from `Xenova/bge-small-en-v1.5`.
 const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
@@ -56,6 +62,9 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     // Measured on the fixture vault with the fp32 export of this model, not the int8 file
     // itself: re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
     suggestion_threshold: 0.67,
+    gpu: false,
+    // Dynamic int8 quantisation scales a whole run at once: see `onnx::OnnxEmbedder::batch_with`.
+    batch_across_notes: false,
 };
 
 /// `intfloat/multilingual-e5-small` (MIT), int8-quantized ONNX export from
@@ -87,6 +96,8 @@ const MULTILINGUAL_E5_SMALL_Q8: ModelDescriptor = ModelDescriptor {
     prefix: "passage: ",
     query_prefix: "query: ",
     suggestion_threshold: E5_SUGGESTION_THRESHOLD,
+    gpu: false,
+    batch_across_notes: false,
 };
 
 /// `sentence-transformers/all-MiniLM-L6-v2` (Apache-2.0), int8-quantized ONNX export
@@ -118,6 +129,48 @@ const ALL_MINILM_L6_V2_Q8: ModelDescriptor = ModelDescriptor {
     prefix: "",
     query_prefix: "",
     suggestion_threshold: MINILM_SUGGESTION_THRESHOLD,
+    gpu: false,
+    batch_across_notes: false,
+};
+
+/// The same `BAAI/bge-small-en-v1.5` (MIT) as the bundled model, in the fp16 ONNX export
+/// from `Xenova/bge-small-en-v1.5`, for the GPU (#105): through DirectML on an RTX 4060
+/// Ti it embedded 3,000-word notes about 36x faster than the int8 model on the CPU
+/// (docs/decisions.md, GPU indexing). Its vectors differ slightly from the int8 ones
+/// (cosine down to 0.994), so it is a model of its own and switching re-embeds the
+/// vault. Optional; without a usable GPU it runs on the CPU.
+const BGE_SMALL_EN_V15_FP16: ModelDescriptor = ModelDescriptor {
+    id: "bge-small-en-v1.5-fp16",
+    name: "BGE small English v1.5 (fp16, GPU)",
+    licence: "MIT",
+    licence_url: "https://huggingface.co/BAAI/bge-small-en-v1.5",
+    bundled: false,
+    model: ModelFile {
+        name: "bge-small-en-v1.5-fp16.onnx",
+        url: "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/onnx/model_fp16.onnx",
+        sha256: BGE_FP16_MODEL_SHA256,
+        size: BGE_FP16_MODEL_SIZE,
+    },
+    tokenizer: ModelFile {
+        // The same file as the bundled model's, under its own name.
+        name: "bge-small-en-v1.5-fp16.tokenizer.json",
+        url: "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main/tokenizer.json",
+        sha256: "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        size: BGE_TOKENIZER_DOWNLOAD_SIZE,
+    },
+    dims: 384,
+    max_tokens: 512,
+    token_pooling: TokenPooling::Cls,
+    chunk_pooling: ChunkPooling::Mean,
+    prefix: "",
+    query_prefix: "Represent this sentence for searching relevant passages: ",
+    // The bundled model's threshold was measured with the fp32 export, which this file
+    // matches to a cosine of 0.99998 (#105).
+    suggestion_threshold: 0.67,
+    gpu: true,
+    // Measured on DirectML: a note's vector alone and in a batch agree to a cosine of
+    // 0.99999 or better (#105).
+    batch_across_notes: true,
 };
 
 // Checksums and sizes of the optional files, taken from the files as Hugging Face served
@@ -136,6 +189,12 @@ const MINILM_MODEL_SIZE: u64 = 22_972_370;
 const MINILM_TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
 const MINILM_TOKENIZER_SIZE: u64 = 711_661;
 const MINILM_SUGGESTION_THRESHOLD: f32 = 0.4;
+// Taken from the files as Hugging Face served them on 2026-11-03 (#105), checked on two
+// machines.
+const BGE_FP16_MODEL_SHA256: &str =
+    "4d76223b73a3fd708f009a93a830a6ed5e536b07c77d3c812ba7b35a4988d767";
+const BGE_FP16_MODEL_SIZE: u64 = 66_749_212;
+const BGE_TOKENIZER_DOWNLOAD_SIZE: u64 = 711_396;
 
 /// One model: its files, the shape of its vectors and how text is fed to it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -169,6 +228,12 @@ pub struct ModelDescriptor {
     /// Default similarity at or above which a tag is suggested. Overridden per vault by
     /// the `suggest_threshold:<model ID>` setting.
     pub suggestion_threshold: f32,
+    /// Made for the GPU: runs through DirectML when this computer has a usable GPU and
+    /// Settings allows it, else on the CPU.
+    pub gpu: bool,
+    /// Chunks of several notes may run through the model together without changing any
+    /// note's vector (not so for dynamically quantised int8 exports).
+    pub batch_across_notes: bool,
 }
 
 /// A model file, checked against its SHA-256 before it is loaded.

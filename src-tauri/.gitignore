@@ -10,3 +10,6 @@
 /models/*.onnx
 /models/*.tokenizer.json
 /models/*.part
+
+# DirectML.dll staged by build.rs for the Windows installer.
+/directml/
