@@ -456,18 +456,10 @@ pub(super) fn derive(conn: &Connection, id: i64, body: &str) -> Result<()> {
     )?
     .execute(params![id, p.author, p.topic, p.created_at, p.rating])?;
 
-    for table in ["note_tags", "note_attributes"] {
-        conn.prepare_cached(&format!("DELETE FROM {table} WHERE note_id = ?1"))?.execute([id])?;
-    }
+    set_note_tags(conn, id, &p.tags)?;
+    conn.prepare_cached("DELETE FROM note_attributes WHERE note_id = ?1")?.execute([id])?;
     conn.prepare_cached("DELETE FROM links WHERE from_note_id = ?1")?.execute([id])?;
 
-    let mut insert_tag = conn.prepare_cached("INSERT INTO tags(name) VALUES (?1) ON CONFLICT(name) DO NOTHING")?;
-    let mut link_tag =
-        conn.prepare_cached("INSERT OR IGNORE INTO note_tags(note_id, tag_id) SELECT ?1, id FROM tags WHERE name = ?2")?;
-    for tag in &p.tags {
-        insert_tag.execute([tag])?;
-        link_tag.execute(params![id, tag])?;
-    }
     let mut insert_attr = conn.prepare_cached("INSERT INTO note_attributes(note_id, key, value) VALUES (?1, ?2, ?3)")?;
     for (key, value) in &p.attributes {
         insert_attr.execute(params![id, key, value])?;
@@ -476,6 +468,19 @@ pub(super) fn derive(conn: &Connection, id: i64, body: &str) -> Result<()> {
         conn.prepare_cached("INSERT INTO links(from_note_id, target_path, target_title) VALUES (?1, ?2, ?3)")?;
     for link in &p.links {
         insert_link.execute(params![id, link.path, link.title])?;
+    }
+    Ok(())
+}
+
+/// Replaces the tag rows of note `id` with `tags`.
+pub(super) fn set_note_tags(conn: &Connection, id: i64, tags: &[String]) -> Result<()> {
+    conn.prepare_cached("DELETE FROM note_tags WHERE note_id = ?1")?.execute([id])?;
+    let mut insert_tag = conn.prepare_cached("INSERT INTO tags(name) VALUES (?1) ON CONFLICT(name) DO NOTHING")?;
+    let mut link_tag =
+        conn.prepare_cached("INSERT OR IGNORE INTO note_tags(note_id, tag_id) SELECT ?1, id FROM tags WHERE name = ?2")?;
+    for tag in tags {
+        insert_tag.execute([tag])?;
+        link_tag.execute(params![id, tag])?;
     }
     Ok(())
 }

@@ -25,6 +25,7 @@
     import: "Import",
     discover: "Discover tags",
     migration: "Migrations",
+    retag: "Tag rules",
   };
   const STATE_NAMES: Record<ActivityState, string> = {
     idle: "idle",

@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { api, errorMessage, TAGS_TRAINED_EVENT, type TagInfo, type TagTraining } from "$lib/api";
   import ModelNotice from "$lib/ModelNotice.svelte";
+  import { groupTags, PAGE_SIZE, shownCount } from "$lib/tagGroups";
 
   type Props = {
     /** The Tags settings' list; reloaded whenever it changes (a description was saved). */
@@ -12,6 +13,14 @@
 
   let rows = $state<TagTraining[]>([]);
   let error = $state("");
+
+  // Most-used first; tags on one note (and no description) folded into a closed group,
+  // and a page of rows at a time, so 10,000 tags don't render 10,000 rows.
+  const byTag = $derived(new Map(tags.map((t) => [t.tag, t])));
+  const groups = $derived(groupTags(rows, (r) => byTag.get(r.tag)));
+  let pages = $state(1);
+  let rarePages = $state(1);
+  let rareOpen = $state(false);
 
   $effect(() => {
     void tags;
@@ -51,6 +60,46 @@
   }
 </script>
 
+{#snippet table(list: TagTraining[], pageCount: number, more: () => void)}
+  {@const shown = shownCount(list.length, pageCount)}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Tag</th>
+          <th scope="col" class="num" title="Notes with the tag / notes without it">Examples</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="num">Precision</th>
+          <th scope="col" class="num">Recall</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each list.slice(0, shown) as row (row.tag)}
+          <tr>
+            <td class="tag">#{row.tag}</td>
+            <td
+              class="num"
+              title="{row.positives} with the tag, {row.negatives} without{row.rejected
+                ? ` (${row.rejected} rejected)`
+                : ''}"
+            >
+              {row.positives} / {row.negatives}
+            </td>
+            <td class="status" class:muted={row.status !== "trained"}>{status(row)}</td>
+            <td class="num">{percent(row.precision)}</td>
+            <td class="num">{percent(row.recall)}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+  {#if shown < list.length}
+    <button type="button" class="ghost small more" onclick={more}>
+      Show {Math.min(PAGE_SIZE, list.length - shown)} more ({(list.length - shown).toLocaleString()} not shown)
+    </button>
+  {/if}
+{/snippet}
+
 <section class="training" aria-labelledby="training-heading">
   <h3 id="training-heading">Classifiers</h3>
   <p class="muted">
@@ -61,38 +110,17 @@
   </p>
   <ModelNotice what="Tag classifiers" />
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if rows.length > 0}
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Tag</th>
-            <th scope="col" class="num" title="Notes with the tag / notes without it">Examples</th>
-            <th scope="col">Status</th>
-            <th scope="col" class="num">Precision</th>
-            <th scope="col" class="num">Recall</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each rows as row (row.tag)}
-            <tr>
-              <td class="tag">#{row.tag}</td>
-              <td
-                class="num"
-                title="{row.positives} with the tag, {row.negatives} without{row.rejected
-                  ? ` (${row.rejected} rejected)`
-                  : ''}"
-              >
-                {row.positives} / {row.negatives}
-              </td>
-              <td class="status" class:muted={row.status !== "trained"}>{status(row)}</td>
-              <td class="num">{percent(row.precision)}</td>
-              <td class="num">{percent(row.recall)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+  {#if groups.main.length > 0}
+    {@render table(groups.main, pages, () => pages++)}
+  {/if}
+  {#if groups.rare.length > 0}
+    <details class="rare" bind:open={rareOpen}>
+      <summary>Rare tags ({groups.rare.length.toLocaleString()})</summary>
+      <p class="muted">On one note or none, with no description. They can't be suggested until they are on more notes.</p>
+      {#if rareOpen}
+        {@render table(groups.rare, rarePages, () => rarePages++)}
+      {/if}
+    </details>
   {/if}
 </section>
 
@@ -153,5 +181,25 @@
 
   .status {
     white-space: normal;
+  }
+
+  .more {
+    align-self: flex-start;
+  }
+
+  .rare {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .rare summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .rare p {
+    margin: 6px 0;
   }
 </style>

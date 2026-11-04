@@ -40,11 +40,21 @@ pub enum Job {
     Discover,
     /// Schema upgrades run while the vault opens.
     Migration,
+    /// Re-deriving tags after the tag rules changed (`retag`).
+    Retag,
 }
 
 impl Job {
-    pub const ALL: [Job; 7] =
-        [Job::Embedding, Job::Related, Job::Training, Job::SafetyNet, Job::Import, Job::Discover, Job::Migration];
+    pub const ALL: [Job; 8] = [
+        Job::Embedding,
+        Job::Related,
+        Job::Training,
+        Job::SafetyNet,
+        Job::Import,
+        Job::Discover,
+        Job::Migration,
+        Job::Retag,
+    ];
 
     fn index(self) -> usize {
         Self::ALL.iter().position(|j| *j == self).unwrap_or(0)

@@ -12,6 +12,7 @@ mod metadata;
 mod notes;
 mod reasons;
 mod recent;
+mod retag;
 mod review;
 mod rules;
 mod schema;
@@ -42,6 +43,7 @@ pub use recent::{
     DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING,
     RECENT_OPENED_SETTING,
 };
+pub use retag::{RetagEnd, RetagPage, TAG_RULES_PROGRESS_SETTING, TAG_RULES_SETTING};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
 pub use schema::Upgrade;
 pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};

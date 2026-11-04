@@ -29,6 +29,29 @@ pub fn start(app: &AppHandle, generation: u64) {
     });
 }
 
+/// Starts the tag re-derive pass ([`crate::retag`]) for unlock `generation`; it ends by
+/// itself, at once when the vault's tags follow the current rules. Tells the frontend
+/// when tags or heads went away, so the Tags settings reload.
+pub fn start_retag(app: &AppHandle, generation: u64) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let session = app.state::<Session>();
+        match crate::retag::run(&session, generation, POLL) {
+            Ok(Some(r)) if r.changed > 0 || r.end.tags_dropped > 0 || r.end.heads_dropped > 0 => {
+                if session.is_open(generation) {
+                    let _ = app.emit(TAGS_TRAINED_EVENT, ());
+                }
+            }
+            Ok(_) | Err(crate::retag::RetagError::Locked) => {}
+            // Not fatal: the old tags stay, and the next unlock tries again.
+            Err(e) => {
+                eprintln!("hush: re-deriving tags failed: {e}");
+                session.activity().reporter(generation).fail(crate::activity::Job::Retag, e.to_string());
+            }
+        }
+    });
+}
+
 /// Example counts, status and cross-validated quality of every used or described tag.
 #[tauri::command]
 pub fn tag_training(session: State<'_, Session>) -> Result<Vec<TagTraining>> {

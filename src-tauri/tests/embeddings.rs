@@ -195,7 +195,7 @@ fn imported_and_bulk_edited_notes_are_picked_up_by_the_running_job() {
         let ids: Vec<i64> = session.with_vault(|v| v.folder_notes("imp", 0, 10)).unwrap().iter().map(|n| n.id).collect();
         let calls = fake.calls();
         // A bulk tag edit only touches frontmatter: nothing to re-embed.
-        let edit = MetadataEdit::AddTag("x".into());
+        let edit = MetadataEdit::AddTag("xx".into());
         session.with_vault(|v| v.edit_notes_metadata(&ids, &edit).map(|_| ())).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(fake.calls(), calls);
@@ -518,11 +518,11 @@ fn every_write_path_queues_the_note() {
     check("update_body", &|v| v.update_body(id, "Rain all day").unwrap());
     check("rename", &|v| v.rename_note(id, "a", "Rain").unwrap());
     check("bulk metadata edit", &|v| {
-        v.edit_notes_metadata(&[id], &MetadataEdit::AddTag("x".into())).unwrap();
+        v.edit_notes_metadata(&[id], &MetadataEdit::AddTag("xx".into())).unwrap();
     });
-    check("accept suggestion", &|v| v.accept_tag_suggestion(id, "y").unwrap());
+    check("accept suggestion", &|v| v.accept_tag_suggestion(id, "yy").unwrap());
     check("create tag from group", &|v| {
-        v.create_tag_from_group("z", "", &[id]).unwrap();
+        v.create_tag_from_group("zz", "", &[id]).unwrap();
     });
     check("trash", &|v| v.trash_note(id).unwrap());
     check("restore", &|v| {

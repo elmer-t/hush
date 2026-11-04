@@ -96,6 +96,7 @@ describe("loadDisplay (graph controls)", () => {
     expect(d.colorBy).toBe("folder");
     expect(d.meaning).toEqual({ local: true, global: false });
     expect(d).not.toHaveProperty("scopeFolder");
+    expect(d.rareTags).toBe(false);
   });
 
   it("is the defaults when the stored value isn't an object", () => {
