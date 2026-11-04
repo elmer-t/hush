@@ -149,14 +149,28 @@ impl Vault {
         }
         let newest_first = matches as usize > RANK_LIMIT;
         let order = if newest_first { "notes_fts.rowid DESC" } else { "bm25(notes_fts, 10.0, 1.0)" };
-        let mut page_args = args_with_text;
+        // Several unquoted words: when ranking, notes with the words as a phrase come
+        // first. The phrase's matches are read once, into a set; above `RANK_LIMIT` the
+        // newest matches are listed as before, without reading them.
+        let phrase = phrase_query(&q.text).filter(|_| !newest_first);
+        let (is_phrase, order) = match &phrase {
+            Some(_) => (
+                "notes_fts.rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)",
+                format!("2 DESC, {order}"),
+            ),
+            None => ("0", order.to_string()),
+        };
+        let mut page_args: Vec<Value> = phrase.iter().map(|p| Value::from(p.clone())).collect();
+        page_args.extend(args_with_text);
         page_args.push(limit.into());
         page_args.push(offset.into());
-        let ids: Vec<i64> = self
+        let rows: Vec<(i64, bool)> = self
             .conn
-            .prepare(&format!("SELECT notes_fts.rowid {from} ORDER BY {order} LIMIT ? OFFSET ?"))?
-            .query_map(params_from_iter(page_args), |r| r.get(0))?
+            .prepare(&format!("SELECT notes_fts.rowid, {is_phrase} {from} ORDER BY {order} LIMIT ? OFFSET ?"))?
+            .query_map(params_from_iter(page_args), |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?;
+        let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+        let phrase_ids: std::collections::HashSet<i64> = rows.iter().filter(|(_, p)| *p).map(|(id, _)| *id).collect();
 
         // Summaries and snippets for this page only.
         let mut snippet = self.conn.prepare_cached(
@@ -171,7 +185,12 @@ impl Vault {
             if stop() {
                 return Ok(None);
             }
-            let text: Option<String> = snippet.query_row(params![fts, note.id], |r| r.get(0)).optional()?;
+            // A phrase match shows the phrase, not the words elsewhere in the note.
+            let matching = match &phrase {
+                Some(p) if phrase_ids.contains(&note.id) => p,
+                _ => &fts,
+            };
+            let text: Option<String> = snippet.query_row(params![matching, note.id], |r| r.get(0)).optional()?;
             hits.push(SearchHit { snippet: text.and_then(|s| clean_snippet(&s)), note });
         }
         Ok(Some(SearchPage { hits, newest_first }))
@@ -306,28 +325,62 @@ fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
     (filters, args)
 }
 
-/// Turns user input into a safe FTS5 query: every word is a quoted phrase (so FTS
-/// syntax characters are literal), all words must match, and the last word is a
-/// prefix while the user is still typing it, from two characters on (a one-letter
-/// prefix matches nearly every note, and the prefix index starts at two).
+/// Turns user input into a safe FTS5 query: every word, and every phrase the user put
+/// in double quotes, is a quoted FTS5 string (so FTS syntax characters are literal), all
+/// of them must match, and the last one is a prefix while the user is still typing its
+/// last word, from two characters on (a one-letter prefix matches nearly every note, and
+/// the prefix index starts at two). An unclosed quote runs to the end (`"9 yea` is the
+/// phrase `"9 yea"*`); a closed one is finished, so it gets no prefix.
 fn fts_query(text: &str) -> Option<String> {
-    let words: Vec<String> = text
-        .split_whitespace()
-        .map(|w| w.replace('"', ""))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let last = words.len().checked_sub(1)?;
-    let typing = !text.ends_with(char::is_whitespace);
+    let (terms, prefix) = terms(text);
+    let last = terms.len().checked_sub(1)?;
     Some(
-        words
+        terms
             .iter()
             .enumerate()
-            .map(|(i, w)| {
-                if i == last && typing && w.chars().count() >= 2 { format!("\"{w}\"*") } else { format!("\"{w}\"") }
-            })
+            .map(|(i, t)| if i == last && prefix { format!("\"{t}\"*") } else { format!("\"{t}\"") })
             .collect::<Vec<_>>()
             .join(" "),
     )
+}
+
+/// For several words typed without quotes, the same words as one phrase (with the same
+/// prefix rule): notes containing it are listed before those that only contain the words.
+fn phrase_query(text: &str) -> Option<String> {
+    let (terms, prefix) = terms(text);
+    if text.contains('"') || terms.len() < 2 {
+        return None;
+    }
+    let star = if prefix { "*" } else { "" };
+    Some(format!("\"{}\"{star}", terms.join(" ")))
+}
+
+/// The words and quoted phrases of `text` (without quotes, never empty), and whether the
+/// last one is a prefix.
+fn terms(text: &str) -> (Vec<String>, bool) {
+    let mut terms = Vec::new();
+    let mut term = String::new();
+    let mut quoted = false;
+    for c in text.chars() {
+        if c == '"' || (!quoted && c.is_whitespace()) {
+            let phrase = term.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !phrase.is_empty() {
+                terms.push(phrase);
+            }
+            term.clear();
+            quoted ^= c == '"';
+        } else {
+            term.push(c);
+        }
+    }
+    // Still typing when the text ends inside a word: not after a space or a quote.
+    let phrase = term.split_whitespace().collect::<Vec<_>>().join(" ");
+    let prefix = !text.ends_with(char::is_whitespace)
+        && phrase.split(' ').next_back().is_some_and(|w| w.chars().count() >= 2);
+    if !phrase.is_empty() {
+        terms.push(phrase);
+    }
+    (terms, prefix)
 }
 
 /// `None` unless the snippet contains a match. Text before the match up to a `---`
@@ -344,7 +397,7 @@ fn escape_like(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_snippet, fts_query};
+    use super::{clean_snippet, fts_query, phrase_query};
 
     #[test]
     fn snippets_need_a_match_and_skip_frontmatter() {
@@ -363,6 +416,24 @@ mod tests {
         assert_eq!(fts_query("foo b").as_deref(), Some(r#""foo" "b""#), "one letter is a whole word");
         assert_eq!(fts_query("é").as_deref(), Some(r#""é""#));
         assert_eq!(fts_query("foo bar ").as_deref(), Some(r#""foo" "bar""#));
-        assert_eq!(fts_query(r#"a"b OR c*"#).as_deref(), Some(r#""ab" "OR" "c*"*"#));
+        // Quotes make a phrase; an unclosed one runs to the end. FTS syntax inside stays literal.
+        assert_eq!(fts_query(r#""9 years""#).as_deref(), Some(r#""9 years""#), "a closed quote is finished");
+        assert_eq!(fts_query(r#""9 yea"#).as_deref(), Some(r#""9 yea"*"#));
+        assert_eq!(fts_query(r#""9  years "#).as_deref(), Some(r#""9 years""#));
+        assert_eq!(fts_query(r#""9 y"#).as_deref(), Some(r#""9 y""#));
+        assert_eq!(fts_query(r#"old "9 years" ag"#).as_deref(), Some(r#""old" "9 years" "ag"*"#));
+        assert_eq!(fts_query(r#"a"b OR c*"#).as_deref(), Some(r#""a" "b OR c*"*"#));
+        assert_eq!(fts_query(r#"foo "" " "#).as_deref(), Some(r#""foo""#));
+        assert_eq!(fts_query(r#"""#), None);
+    }
+
+    #[test]
+    fn phrase_query_only_for_several_unquoted_words() {
+        assert_eq!(phrase_query("9 years").as_deref(), Some(r#""9 years"*"#));
+        assert_eq!(phrase_query(" 9   years ").as_deref(), Some(r#""9 years""#));
+        assert_eq!(phrase_query("foo b").as_deref(), Some(r#""foo b""#));
+        assert_eq!(phrase_query("years"), None);
+        assert_eq!(phrase_query(r#""9 years""#), None, "quotes already ask for a phrase");
+        assert_eq!(phrase_query(r#"old "9 years""#), None);
     }
 }

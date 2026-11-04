@@ -153,6 +153,60 @@ fn short_prefixes_use_the_prefix_index_and_one_letter_is_a_whole_word() {
     assert_eq!(titles(&vault, &text("walked th")), vec!["Lighthouse"]);
 }
 
+/// Notes with "9" and "years": as a phrase, apart, and reversed. "Many years" would win
+/// on bm25 alone (its title matches).
+fn phrases() -> (tempfile::TempDir, Vault) {
+    let (dir, mut vault) = common::vault();
+    vault.create_note("", "Age", "He was 9 years old when the lighthouse was built.").unwrap();
+    vault.create_note("", "Many years", "9 cats over many years.").unwrap();
+    vault.create_note("", "Reversed", "Years ago, at 9, we moved.").unwrap();
+    vault.create_note("", "Unrelated", "Nothing to see here.").unwrap();
+    (dir, vault)
+}
+
+#[test]
+fn quotes_match_an_exact_phrase() {
+    let (_dir, vault) = phrases();
+    assert_eq!(titles(&vault, &text(r#""9 years""#)), vec!["Age"]);
+    assert_eq!(titles(&vault, &text(r#""years 9""#)), Vec::<String>::new(), "word order counts");
+    // An unclosed quote runs to the end, and its last word is a prefix while typing.
+    assert_eq!(titles(&vault, &text(r#""9 years"#)), vec!["Age"]);
+    assert_eq!(titles(&vault, &text(r#""9 yea"#)), vec!["Age"]);
+    assert_eq!(titles(&vault, &text(r#""9 years "#)), vec!["Age"]);
+    assert_eq!(titles(&vault, &text(r#""9 y"#)), Vec::<String>::new(), "one letter is a whole word");
+    // A closed quote is finished: no prefix.
+    assert_eq!(titles(&vault, &text(r#""9 yea""#)), Vec::<String>::new());
+    // A phrase and a word together.
+    assert_eq!(titles(&vault, &text(r#""9 years" lighthouse"#)), vec!["Age"]);
+    assert_eq!(titles(&vault, &text(r#""9 years" cats"#)), Vec::<String>::new());
+}
+
+#[test]
+fn unquoted_words_list_phrase_matches_first() {
+    let (_dir, vault) = phrases();
+    assert_eq!(titles(&vault, &text("9 years")), vec!["Age", "Many years", "Reversed"]);
+    assert_eq!(titles(&vault, &text("9 yea")), vec!["Age", "Many years", "Reversed"], "prefix while typing");
+    // Paging keeps the order.
+    let page = |offset| titles(&vault, &SearchQuery { text: "9 years".into(), limit: Some(1), offset, ..Default::default() });
+    assert_eq!([page(0), page(1), page(2)].concat(), vec!["Age", "Many years", "Reversed"]);
+    // One word has no phrase to prefer: bm25 as before.
+    assert_eq!(titles(&vault, &text("years"))[0], "Many years");
+}
+
+#[test]
+fn snippets_highlight_the_phrase() {
+    let (_dir, vault) = phrases();
+    for query in [r#""9 years""#, r#""9 yea"#, "9 years"] {
+        let hits = vault.search(&text(query)).unwrap();
+        let snippet = hits[0].snippet.as_deref().unwrap();
+        assert!(snippet.contains("\u{2}9 years\u{3}"), "{query}: {snippet}");
+    }
+    // Notes without the phrase still show their words.
+    let hits = vault.search(&text("9 years")).unwrap();
+    let snippet = hits[2].snippet.as_deref().unwrap();
+    assert!(snippet.contains("\u{2}Years\u{3}") && snippet.contains("\u{2}9\u{3}"), "{snippet}");
+}
+
 #[test]
 fn a_very_broad_query_lists_the_newest_matches() {
     use hush_lib::db::{NewNote, RANK_LIMIT};
@@ -302,4 +356,56 @@ fn min_rating_filter_at_1m_notes() {
     }
     times.sort();
     println!("min_rating = 4 at 1M notes (10k rated, 4k at 4+): first page median {:?}, all {times:?}", times[2]);
+}
+
+/// What preferring phrase matches costs at 1M notes: `9 years` (9,091 notes have both
+/// words, 4,546 the phrase, so it is ranked) against the same words without the phrase
+/// order (`"9" years`), and `many years` (100,000 matches, newest first, where the
+/// phrase is not read). Only runs on request:
+///
+/// ```text
+/// cargo test --release --manifest-path src-tauri/Cargo.toml --test search -- --ignored --nocapture phrase
+/// ```
+#[test]
+#[ignore = "timing: builds a 1M-note vault"]
+fn phrase_order_at_1m_notes() {
+    const NOTES: usize = 1_000_000;
+    let (_dir, mut vault) = common::vault();
+    let notes: Vec<(String, String, String)> = (0..NOTES)
+        .map(|i| {
+            let words = match (i % 220 == 0, i % 110 == 0, i % 10 == 0, i % 11 == 0) {
+                (true, ..) => "he was 9 years old",
+                (_, true, ..) => "9 cats over many years",
+                (_, _, true, _) => "it took many years",
+                (.., true) => "aged 9 then",
+                _ => "nothing to see",
+            };
+            (format!("f{}", i % 50_000), format!("Note {i}"), format!("entry {i}: {words}, and more text after it"))
+        })
+        .collect();
+    for chunk in notes.chunks(10_000) {
+        let batch: Vec<NewNote> = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, (f, t, b))| NewNote { folder: f, title: t, body: b, created_at: j as i64, updated_at: j as i64 })
+            .collect();
+        vault.import_notes(&batch).unwrap();
+    }
+    // A quote anywhere turns the phrase order off, so `"9" years` is the old query.
+    for query in ["9 years", r#""9" years"#, "9 years ", r#""9" "years""#, r#""9 years""#, "many years", r#""many" years"#] {
+        let q = SearchQuery { text: query.into(), ..Default::default() };
+        let mut times = Vec::new();
+        let mut page = None;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            page = Some(vault.search_page(&q).unwrap());
+            times.push(t.elapsed());
+        }
+        let page = page.unwrap();
+        times.sort();
+        println!("{query:>18}: median {:?}, newest first {}, all {times:?}", times[2], page.newest_first);
+        if query == "9 years" {
+            assert!(page.hits[0].snippet.as_deref().unwrap().contains("\u{2}9 years\u{3}"));
+        }
+    }
 }
