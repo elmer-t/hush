@@ -98,8 +98,8 @@
   }
 </script>
 
-<section class="card tags" aria-labelledby="tags-heading">
-  <h2 id="tags-heading">Tags</h2>
+<!-- Settings gives this its "Tags" section header. -->
+<div class="card tags">
   <p class="muted">
     Describe a tag in a sentence and Hush suggests it on notes whose meaning is close to it. Until a tag has a
     classifier (below), it is only suggested if it has a description. Tags are case-sensitive.
@@ -170,7 +170,7 @@
       </div>
     </form>
   {/if}
-</section>
+</div>
 
 <style>
   .tags {
@@ -178,12 +178,6 @@
     flex-direction: column;
     gap: 12px;
     padding: 20px;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
   }
 
   h3 {
