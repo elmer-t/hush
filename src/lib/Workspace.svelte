@@ -301,6 +301,17 @@
       void navigate(back ? -1 : 1);
       return;
     }
+    // Find in the open note: Ctrl+F; with replace, Ctrl+H (Cmd+Alt+F on a Mac, where Cmd+H hides the app).
+    const mod = (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.shiftKey;
+    const f = e.code === "KeyF" || e.key.toLowerCase() === "f";
+    const findKey = mod && !e.altKey && f;
+    const replaceKey = mod && (isMac ? e.altKey && f : !e.altKey && e.key.toLowerCase() === "h");
+    if ((findKey || replaceKey) && view === "note" && editor) {
+      e.preventDefault();
+      e.stopPropagation();
+      void editor.openFind(replaceKey);
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
     const key = e.key.toLowerCase();
     if (key === "l") {

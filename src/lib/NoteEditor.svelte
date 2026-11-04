@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, errorMessage, type NoteMeta, type NoteSummary, type OpenedNote } from "$lib/api";
   import { confirmTrash } from "$lib/confirmTrash";
+  import FindBar from "$lib/FindBar.svelte";
+  import { findPattern, formatCount, type FindSpec } from "$lib/find";
   import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
@@ -49,6 +51,80 @@
   let titleInput = $state<HTMLInputElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<void> = Promise.resolve();
+
+  // Find in note. The bar drives the editor's search in split view, and the preview's in
+  // "Preview only"; in split view the preview highlights the same query too.
+  let findOpen = $state(false);
+  let replacing = $state(false);
+  let find = $state<FindSpec>({ query: "", caseSensitive: false, wholeWord: false, regexp: false, replace: "" });
+  let findResult = $state({ current: -1, total: 0 });
+  let findBar = $state<ReturnType<typeof FindBar>>();
+  let preview = $state<ReturnType<typeof Preview>>();
+  let returnFocus: HTMLElement | null = null;
+
+  /** The query while there is one to show; a fresh object, so the panes see every change. */
+  const activeFind = $derived(findOpen && find.query ? { ...find } : null);
+  const findCount = $derived.by(() => {
+    if (!activeFind) return "";
+    if (activeFind.regexp && !findPattern(activeFind.query, activeFind)) return "Invalid pattern";
+    return formatCount(findResult.current, findResult.total);
+  });
+
+  $effect(() => {
+    const spec = showPreviewOnly ? null : activeFind;
+    untrack(() => editor?.setFind(spec));
+    if (!spec) untrack(() => (findResult = { current: -1, total: 0 }));
+  });
+
+  /** Opens the find bar, prefilled with the selected text; `replace` opens the replace row too. */
+  export async function openFind(replace = false) {
+    const selected = editor?.selectedText() || preview?.selectedText() || "";
+    if (!findOpen) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (selected && !selected.includes("\n")) find.query = selected;
+    findOpen = true;
+    if (replace && !showPreviewOnly) replacing = true;
+    await tick();
+    await findBar?.focus(replace && !showPreviewOnly ? "replace" : "find");
+  }
+
+  /** Closes the find bar, clears the highlights and gives focus back to where it was. */
+  function closeFind() {
+    findOpen = false;
+    replacing = false;
+    const target = returnFocus;
+    returnFocus = null;
+    if (target?.isConnected && target.offsetParent !== null) target.focus();
+    else if (!showPreviewOnly) editor?.focus();
+  }
+
+  function findStep(dir: 1 | -1) {
+    if (!activeFind) return;
+    if (showPreviewOnly) preview?.findStep(dir);
+    else editor?.findStep(dir);
+  }
+
+  function editorFindResult(current: number, total: number) {
+    if (!showPreviewOnly) findResult = { current, total };
+  }
+
+  function previewFindResult(current: number, total: number) {
+    if (showPreviewOnly) findResult = { current, total };
+  }
+
+  // F3 anywhere in the note, and Esc in its panes, while the bar is open (the bar's own fields
+  // handle Esc themselves; the title and folder fields keep theirs).
+  function findKeys(e: KeyboardEvent & { currentTarget: HTMLElement }) {
+    if (!findOpen) return;
+    if (e.key === "F3") {
+      e.preventDefault();
+      e.stopPropagation();
+      findStep(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape" && (e.target as Element).closest(".panes")) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFind();
+    }
+  }
 
   const statusText = $derived(
     { saved: "Saved", pending: "Edited", saving: "Saving…", failed: "Not saved" }[status],
@@ -182,7 +258,7 @@
   }
 </script>
 
-<section class="note">
+<section class="note" onkeydowncapture={findKeys}>
   <header>
     <div class="toolbar">
       <label class="folder">
@@ -245,22 +321,43 @@
     />
   </header>
 
+  {#if findOpen}
+    <FindBar
+      bind:this={findBar}
+      bind:spec={find}
+      bind:replacing
+      canReplace={!showPreviewOnly}
+      count={findCount}
+      onstep={findStep}
+      onreplace={(all) => editor?.replaceMatch(all)}
+      onclose={closeFind}
+    />
+  {/if}
+
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   <div class="panes" class:preview-only={showPreviewOnly}>
     <div class="source">
-      <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} />
+      <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} onfindresult={editorFindResult} />
     </div>
     <div class="rendered">
-      <Preview {body} large={showPreviewOnly} {onwikilink} />
+      <Preview
+        bind:this={preview}
+        {body}
+        large={showPreviewOnly}
+        {onwikilink}
+        find={activeFind}
+        findLead={showPreviewOnly}
+        onfindresult={previewFindResult}
+      />
     </div>
   </div>
 </section>
 
 <style>
   .note {
-    display: grid;
-    grid-template-rows: auto auto 1fr;
+    display: flex;
+    flex-direction: column;
     height: 100%;
     min-height: 0;
   }
@@ -368,6 +465,7 @@
   }
 
   .panes {
+    flex: 1;
     display: grid;
     grid-template-columns: 1fr 1fr;
     min-height: 0;

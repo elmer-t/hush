@@ -1,14 +1,35 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { EditorState } from "@codemirror/state";
+  import { EditorSelection, EditorState } from "@codemirror/state";
   import { EditorView, drawSelection, highlightActiveLine, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
   import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-  import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+  import {
+    closeSearchPanel,
+    findNext,
+    findPrevious,
+    getSearchQuery,
+    highlightSelectionMatches,
+    openSearchPanel,
+    replaceAll,
+    replaceNext,
+    search,
+    searchKeymap,
+    searchPanelOpen,
+    SearchQuery,
+    setSearchQuery,
+  } from "@codemirror/search";
+  import type { FindSpec } from "$lib/find";
   import { tags as t } from "@lezer/highlight";
 
-  let { doc, onchange }: { doc: string; onchange: (doc: string) => void } = $props();
+  type Props = {
+    doc: string;
+    onchange: (doc: string) => void;
+    /** The current find match (-1 for none) and the number of matches, while find is on. */
+    onfindresult?: (current: number, total: number) => void;
+  };
+  let { doc, onchange, onfindresult }: Props = $props();
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -34,7 +55,33 @@
       backgroundColor: "var(--selection)",
     },
     ".cm-activeLine": { backgroundColor: "var(--hover)" },
+    // Find: the note's find bar drives CodeMirror's search, whose own panel stays hidden.
+    ".cm-panels": { display: "none" },
+    "& .cm-searchMatch": { backgroundColor: "var(--mark)", color: "var(--mark-text)", borderRadius: "2px" },
+    "& .cm-searchMatch.cm-searchMatch-selected": {
+      backgroundColor: "var(--mark-current)",
+      color: "var(--mark-current-text)",
+    },
   });
+
+  // The find bar replaces CodeMirror's panel: Ctrl+F and Esc are handled by the note.
+  const findKeys = searchKeymap.filter((b) => b.key !== "Mod-f" && b.key !== "Escape");
+
+  /** Reports the current match and the count after each change that can move them. */
+  function reportFind(state: EditorState) {
+    if (!onfindresult) return;
+    const query = getSearchQuery(state);
+    if (!query.valid) return onfindresult(-1, 0);
+    const { from, to } = state.selection.main;
+    let total = 0;
+    let current = -1;
+    const cursor = query.getCursor(state);
+    for (let m = cursor.next(); !m.done; m = cursor.next()) {
+      if (m.value.from === from && m.value.to === to) current = total;
+      total++;
+    }
+    onfindresult(current, total);
+  }
 
   onMount(() => {
     view = new EditorView({
@@ -50,9 +97,13 @@
           markdown({ base: markdownLanguage }),
           syntaxHighlighting(highlight),
           theme,
-          keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+          search({ top: true, createPanel: () => ({ dom: document.createElement("div") }) }),
+          keymap.of([...defaultKeymap, ...historyKeymap, ...findKeys, indentWithTab]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onchange(u.state.doc.toString());
+            if (!searchPanelOpen(u.state)) return;
+            const queryChanged = !getSearchQuery(u.state).eq(getSearchQuery(u.startState));
+            if (u.docChanged || u.selectionSet || queryChanged || !searchPanelOpen(u.startState)) reportFind(u.state);
           }),
         ],
       }),
@@ -79,6 +130,66 @@
 
   export function focus() {
     view?.focus();
+  }
+
+  /**
+   * Searches for `spec`, highlighting every match, or stops searching when it is null. A new
+   * query (not a new replacement) selects the first match from the cursor, without focusing.
+   */
+  export function setFind(spec: FindSpec | null) {
+    if (!view) return;
+    if (!spec) {
+      closeSearchPanel(view);
+      return;
+    }
+    const query = new SearchQuery({
+      search: spec.query,
+      caseSensitive: spec.caseSensitive,
+      wholeWord: spec.wholeWord,
+      regexp: spec.regexp,
+      literal: true,
+      replace: spec.replace,
+    });
+    const before = getSearchQuery(view.state);
+    const wasOpen = searchPanelOpen(view.state);
+    if (!wasOpen) openSearchPanel(view);
+    view.dispatch({ effects: setSearchQuery.of(query) });
+    const sameSearch =
+      wasOpen &&
+      before.search === query.search &&
+      before.caseSensitive === query.caseSensitive &&
+      before.wholeWord === query.wholeWord &&
+      before.regexp === query.regexp;
+    if (sameSearch || !query.valid) return;
+    // The first match from the cursor, wrapping to the first in the note.
+    const { from } = view.state.selection.main;
+    let next = query.getCursor(view.state, from).next();
+    if (next.done) next = query.getCursor(view.state).next();
+    if (next.done) return;
+    const match = next.value;
+    view.dispatch({
+      selection: EditorSelection.single(match.from, match.to),
+      effects: EditorView.scrollIntoView(match.from, { y: "center" }),
+      userEvent: "select.search",
+    });
+  }
+
+  /** Selects the next (`dir` 1) or previous (-1) match, wrapping around. */
+  export function findStep(dir: 1 | -1) {
+    if (view && searchPanelOpen(view.state)) (dir === 1 ? findNext : findPrevious)(view);
+  }
+
+  /** Replaces the current match and moves to the next, or replaces every match. */
+  export function replaceMatch(all: boolean) {
+    if (view && searchPanelOpen(view.state)) (all ? replaceAll : replaceNext)(view);
+  }
+
+  /** The selected text while the editor has focus, if it fits on one line. */
+  export function selectedText(): string {
+    if (!view?.hasFocus) return "";
+    const { from, to } = view.state.selection.main;
+    const text = view.state.sliceDoc(from, to);
+    return text.length > 200 || text.includes("\n") ? "" : text;
   }
 </script>
 
