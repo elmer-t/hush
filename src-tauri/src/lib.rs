@@ -63,6 +63,10 @@ pub fn run() {
             app.manage(Indexer::new(app.handle().clone(), dirs, all_cores, gpu_off));
             commands::activity::start_emitter(app.handle());
 
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_title(&format!("Hush {}", app.package_info().version))?;
+            }
+
             // Auto-lock runs here rather than in the webview, whose timers are throttled
             // while the window is hidden.
             let handle = app.handle().clone();
