@@ -34,6 +34,8 @@
   --danger-text: #ffffff;
   --mark: #fbe7a1;
   --mark-text: #1a1b19;
+  --mark-current: #f0b232;
+  --mark-current-text: #1a1b19;
   --inverse-button: #3a3c38;
   --scrim: rgba(26, 27, 25, 0.32);
   --shadow: 0 2px 4px rgba(20, 20, 15, 0.06), 0 12px 32px rgba(20, 20, 15, 0.12);
@@ -78,6 +80,8 @@
     --danger-text: #2a0606;
     --mark: #5b4b12;
     --mark-text: #fcefc4;
+    --mark-current: #d9a53a;
+    --mark-current-text: #1a1b19;
     --inverse-button: #c9ccc6;
     --scrim: rgba(0, 0, 0, 0.55);
     --shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
@@ -405,4 +409,30 @@ mark {
   border-radius: 3px;
   background: var(--mark);
   color: var(--mark-text);
+}
+
+/* Find in note: every match, and the current one. The preview paints them with the CSS
+   Custom Highlight API, or with `mark.hush-find` where that is missing; the editor uses
+   CodeMirror's search classes, styled in MarkdownEditor. Separate rules, since a browser
+   without ::highlight() drops a whole selector list that contains it. */
+::highlight(hush-find) {
+  background-color: var(--mark);
+  color: var(--mark-text);
+}
+
+::highlight(hush-find-current) {
+  background-color: var(--mark-current);
+  color: var(--mark-current-text);
+}
+
+mark.hush-find {
+  padding: 0;
+  border-radius: 2px;
+  background-color: var(--mark);
+  color: var(--mark-text);
+}
+
+mark.hush-find.hush-find-current {
+  background-color: var(--mark-current);
+  color: var(--mark-current-text);
 }
