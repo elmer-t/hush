@@ -23,6 +23,10 @@ const MAX_CHUNKS: usize = 64;
 /// model allows it ([`ModelDescriptor::batch_across_notes`]). 8 was also the fastest
 /// batch on DirectML, ahead of 32 and 64 (#105).
 const CHUNK_BATCH: usize = 8;
+/// In the second indexing phase a model that runs several notes together takes notes
+/// until they hold at least this many chunks (four full runs), so most runs are full
+/// rather than padded, while a save still waits for at most one group (#111).
+const GROUP_CHUNKS: usize = 32;
 /// Run once when a model loads on the GPU: DirectML can register and then fail on the
 /// first run (an old system DirectML.dll does), and that should fall back to the CPU
 /// before any note waits on it. Repeated into one full run of [`CHUNK_BATCH`] chunks:
@@ -253,6 +257,10 @@ impl Embedder for OnnxEmbedder {
         self.batch_with(texts, self.descriptor.prefix, stop)
     }
 
+    fn embed_group(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.group(texts, stop)
+    }
+
     /// Each text's first chunk, run as [`OnnxEmbedder::batch_with`] runs chunks; a
     /// one-chunk text gets exactly its full vector.
     fn embed_first_batch(
@@ -281,6 +289,19 @@ impl Embedder for OnnxEmbedder {
 }
 
 impl OnnxEmbedder {
+    /// [`Embedder::embed_group`]: an int8 model completes one note per call; a model that
+    /// runs several notes together takes them until they hold [`GROUP_CHUNKS`] chunks.
+    fn group(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let budget = if self.descriptor.batch_across_notes { GROUP_CHUNKS } else { 0 };
+        let prefix = self.descriptor.prefix;
+        let chunked = take_group(texts.iter().map(|t| self.chunks(t, prefix)), budget)?;
+        let vectors = self.run_chunks(&chunked, stop)?;
+        Ok(vectors
+            .iter()
+            .map(|v| pool_chunks(self.descriptor.chunk_pooling, v))
+            .collect())
+    }
+
     fn embed_with(&self, text: &str, prefix: &str) -> Result<Vec<f32>, EmbedError> {
         Ok(self.batch_with(&[text], prefix, &|| false)?.pop().expect("one vector per text"))
     }
@@ -345,6 +366,23 @@ impl OnnxEmbedder {
     }
 }
 
+/// The chunk lists of the first notes, taken (and tokenized) one at a time until they hold
+/// at least `budget` chunks; always at least one note, so `budget` 0 takes one. Lazy, so
+/// no note past the group is tokenized.
+fn take_group<T, E>(notes: impl Iterator<Item = Result<Vec<T>, E>>, budget: usize) -> Result<Vec<Vec<T>>, E> {
+    let mut group = Vec::new();
+    let mut chunks = 0;
+    for note in notes {
+        let note = note?;
+        chunks += note.len();
+        group.push(note);
+        if chunks >= budget {
+            break;
+        }
+    }
+    Ok(group)
+}
+
 /// Adds DirectML to `builder`, failing if it can't register (no DirectX 12 GPU, or not
 /// Windows). It asks for the high-performance GPU, so a laptop's discrete GPU wins over
 /// its integrated one.
@@ -377,4 +415,33 @@ fn environment() -> Result<&'static Environment, EmbedError> {
     ENV.get_or_init(|| ort::init().with_name("hush").with_telemetry(false).build().map_err(|e| e.to_string()))
         .as_ref()
         .map_err(|e| EmbedError::Load(e.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_group;
+
+    fn notes(sizes: &[usize]) -> impl Iterator<Item = Result<Vec<()>, ()>> + '_ {
+        sizes.iter().map(|&n| Ok(vec![(); n]))
+    }
+
+    #[test]
+    fn a_group_takes_notes_until_it_holds_the_budget() {
+        let sizes = |g: Vec<Vec<()>>| g.iter().map(Vec::len).collect::<Vec<_>>();
+        assert_eq!(sizes(take_group(notes(&[7, 6, 7, 7, 6, 7]), 32).unwrap()), [7, 6, 7, 7, 6]);
+        assert_eq!(sizes(take_group(notes(&[7, 6]), 32).unwrap()), [7, 6], "fewer notes than the budget");
+        assert_eq!(sizes(take_group(notes(&[64, 7]), 32).unwrap()), [64], "one long note fills a group");
+        assert_eq!(sizes(take_group(notes(&[7, 6]), 0).unwrap()), [7], "no budget: one note per call");
+    }
+
+    #[test]
+    fn notes_past_the_group_are_not_tokenized() {
+        let mut seen = 0;
+        let iter = [9, 9, 9, 9, 9].iter().map(|&n| {
+            seen += 1;
+            Ok::<_, ()>(vec![(); n])
+        });
+        assert_eq!(take_group(iter, 16).unwrap().len(), 2);
+        assert_eq!(seen, 2);
+    }
 }

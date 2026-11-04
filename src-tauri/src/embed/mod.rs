@@ -314,6 +314,14 @@ pub trait Embedder: Send + Sync {
     fn embed_first_batch(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
         Ok(self.embed_batch(texts, stop)?.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect())
     }
+    /// Full vectors for the second indexing phase (see [`job`]): of the first text, or of
+    /// the first few when the model can run several notes together without changing their
+    /// vectors (a GPU model fills its runs that way). Returns one vector per text taken,
+    /// at least one, in order; `texts` is never empty. `stop` as in
+    /// [`Embedder::embed_batch`].
+    fn embed_group(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.embed_batch(&texts[..1], stop)
+    }
 }
 
 /// A text's vector from its first chunk (see [`Embedder::embed_first_batch`]).

@@ -69,7 +69,8 @@ fn notes() -> Vec<String> {
         .collect()
 }
 
-/// As the job indexes: first chunks [`BATCH`] notes at a time, then each note whole on its own.
+/// As the job indexes: first chunks [`BATCH`] notes at a time, then whole notes as the
+/// second phase takes them ([`Embedder::embed_group`]: a group of notes on the GPU, #111).
 fn job_path(model: &OnnxEmbedder, texts: &[&str]) -> (Vec<Vec<f32>>, f64, f64) {
     let start = Instant::now();
     for page in texts.chunks(BATCH) {
@@ -77,10 +78,10 @@ fn job_path(model: &OnnxEmbedder, texts: &[&str]) -> (Vec<Vec<f32>>, f64, f64) {
     }
     let first = start.elapsed().as_secs_f64();
     let start = Instant::now();
-    let vectors = texts
-        .iter()
-        .map(|t| model.embed_batch(&[t], &|| false).unwrap().remove(0))
-        .collect();
+    let mut vectors = Vec::with_capacity(texts.len());
+    while vectors.len() < texts.len() {
+        vectors.extend(model.embed_group(&texts[vectors.len()..], &|| false).unwrap());
+    }
     (vectors, first, start.elapsed().as_secs_f64())
 }
 
@@ -137,6 +138,13 @@ fn measure_the_fp16_model_on_the_gpu_and_the_cpu() {
             first + rest,
             NOTES as f64 / (first + rest)
         );
+        // The second phase before #111: one note per call.
+        let start = Instant::now();
+        let single: Vec<Vec<f32>> = texts.iter().map(|t| model.embed_batch(&[t], &|| false).unwrap().remove(0)).collect();
+        let secs = start.elapsed().as_secs_f64();
+        let min = job_vectors.iter().zip(&single).map(|(a, b)| embed::cosine(a, b)).fold(f32::MAX, f32::min);
+        println!("{device:?}, one note per call: {secs:.1}s = {:.2} notes/s; min cosine vs job path {min:.6}", NOTES as f64 / secs);
+        assert!(min >= 0.9999, "grouping changed the vectors: {min}");
         let (vectors, secs) = batched(&model, &texts);
         println!(
             "{device:?}, {BATCH} whole notes per call: {secs:.1}s = {:.2} notes/s",
@@ -147,7 +155,7 @@ fn measure_the_fp16_model_on_the_gpu_and_the_cpu() {
             .zip(&vectors)
             .map(|(a, b)| embed::cosine(a, b))
             .fold(f32::MAX, f32::min);
-        println!("{device:?}: min cosine one note per call vs {BATCH} per call {min:.6}");
+        println!("{device:?}: min cosine job path vs {BATCH} per call {min:.6}");
         results.push((device, vectors));
     }
     if let [(_, gpu), (_, cpu)] = &results[..] {
