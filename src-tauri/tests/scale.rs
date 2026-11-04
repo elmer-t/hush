@@ -560,6 +560,56 @@ fn real_model_throughput(path: &Path, notes: usize) -> Option<Throughput> {
 }
 
 /// The generator itself, so a change to it shows up without running the benchmark.
+/// The tag re-derive pass (#122) over the generated vault: the whole pass as unlock
+/// runs it, and the longest it holds the vault for one page. Same environment variables
+/// as [`scale_benchmark`]; the vault is marked as needing the pass first.
+#[test]
+#[ignore = "scale benchmark: minutes; run with --ignored --nocapture"]
+fn retag_benchmark() {
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
+    let temp = tempfile::tempdir().unwrap();
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    println!("machine: {}", machine());
+    let vault = prepare(&path, notes);
+    vault.delete_setting(hush_lib::db::TAG_RULES_SETTING).unwrap();
+    vault.delete_setting(hush_lib::db::TAG_RULES_PROGRESS_SETTING).unwrap();
+    let session = Session::default();
+    let g = session.unlock(vault, path.clone()).unwrap();
+
+    // Page by page, timing each vault access.
+    let mut pages = Vec::new();
+    let mut after = 0;
+    let start = Instant::now();
+    loop {
+        let t = Instant::now();
+        let page = session.with_vault_quiet(g, |v| v.retag_page(after, hush_lib::retag::PAGE)).unwrap();
+        pages.push(t.elapsed());
+        match page.next {
+            Some(next) => after = next,
+            None => break,
+        }
+    }
+    let end = Instant::now();
+    session.with_vault_quiet(g, |v| v.finish_retag()).unwrap();
+    let total = start.elapsed();
+    let longest = pages.iter().max().copied().unwrap_or_default();
+    println!(
+        "retag pages: {} pages of {}, all {} (finish {}), median page {}, longest {}",
+        pages.len(),
+        hush_lib::retag::PAGE,
+        secs(total),
+        ms(end.elapsed()),
+        ms(median(pages.clone())),
+        ms(longest)
+    );
+
+    // The job itself, with its pauses, on the same vault marked stale again.
+    session.with_vault(|v| v.delete_setting(hush_lib::db::TAG_RULES_SETTING)).unwrap();
+    let start = Instant::now();
+    let done = hush_lib::retag::run(&session, g, Duration::from_secs(1)).unwrap().unwrap();
+    println!("retag job: {} notes checked, {} changed, {}", done.checked, done.changed, secs(start.elapsed()));
+}
+
 #[test]
 fn generator_is_deterministic_and_shaped_as_specified() {
     let mut a = Generator::new(20_000);

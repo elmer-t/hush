@@ -8,7 +8,7 @@
 //! the graph, and the vault is taken per page, so a large scope doesn't hold it for
 //! the whole build. Nothing is stored: the graph lives in the frontend's memory.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -41,6 +41,9 @@ pub struct GraphOptions {
     pub meaning: bool,
     /// Tag nodes, each joined to its notes.
     pub tags: bool,
+    /// With `tags`, also the nodes of tags that only one note in the vault has; without
+    /// it they are left out, as most of them are typos or one-offs.
+    pub rare_tags: bool,
     /// Unresolved link targets as nodes.
     pub ghosts: bool,
     /// Lowest cosine similarity a meaning edge needs.
@@ -53,7 +56,7 @@ pub struct GraphOptions {
 
 impl Default for GraphOptions {
     fn default() -> Self {
-        Self { meaning: false, tags: false, ghosts: false, threshold: 0.7, neighbours: 5, cap: DEFAULT_CAP }
+        Self { meaning: false, tags: false, rare_tags: false, ghosts: false, threshold: 0.7, neighbours: 5, cap: DEFAULT_CAP }
     }
 }
 
@@ -207,17 +210,35 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
         });
     }
     if options.tags {
-        let mut tag_nodes: BTreeMap<&str, ()> = BTreeMap::new();
+        // Notes in view per tag.
+        let mut in_view: BTreeMap<&str, usize> = BTreeMap::new();
+        for tag in tags.iter().filter(|(id, _)| present.contains(id)).flat_map(|(_, l)| l.iter()) {
+            *in_view.entry(tag).or_default() += 1;
+        }
+        let mut shown: BTreeSet<&str> = in_view.keys().copied().collect();
+        if !options.rare_tags {
+            // Only a tag on one note in view can be on one note in the vault.
+            let once: Vec<&str> = in_view.iter().filter(|(_, n)| **n == 1).map(|(t, _)| *t).collect();
+            let mut rare = Vec::new();
+            for page in once.chunks(PAGE) {
+                session.with_vault(|v| {
+                    rare.extend(v.rare_tags(page)?);
+                    Ok(())
+                })?;
+            }
+            for tag in &rare {
+                shown.remove(tag.as_str());
+            }
+        }
         for (id, list) in &tags {
             if !present.contains(id) {
                 continue;
             }
-            for tag in list {
-                tag_nodes.insert(tag, ());
+            for tag in list.iter().filter(|t| shown.contains(t.as_str())) {
                 edges.push(GraphEdge { source: note_key(*id), target: format!("t:{tag}"), kind: EdgeKind::Tag, score: None });
             }
         }
-        for tag in tag_nodes.keys() {
+        for tag in shown {
             nodes.push(GraphNode {
                 key: format!("t:{tag}"),
                 kind: NodeKind::Tag,

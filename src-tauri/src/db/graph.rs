@@ -190,6 +190,24 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// Of `tags`, those that only one live note has. Each lookup stops at the second
+    /// note on the `note_tags_tag` index, so a tag on 500,000 notes costs what one on
+    /// two does.
+    pub fn rare_tags(&self, tags: &[&str]) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT count(*) FROM (SELECT 1 FROM note_tags WHERE tag_id = (SELECT id FROM tags WHERE name = ?1) LIMIT 2)",
+        )?;
+        let mut rare = Vec::new();
+        for tag in tags {
+            if stmt.query_row([tag], |r| r.get::<_, i64>(0))? < 2 {
+                rare.push(tag.to_string());
+            }
+        }
+        Ok(rare)
+    }
+}
+
 fn marks(n: usize) -> String {
     vec!["?"; n].join(", ")
 }

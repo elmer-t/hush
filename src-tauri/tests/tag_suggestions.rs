@@ -111,10 +111,10 @@ fn suggestions_respect_threshold_limit_existing_tags_and_rejections() {
     let source = Fakes(vec![fake.clone()]);
     let id = session.with_vault(|v| v.create_note("", "Night", &format!("---\ntags: [has]\n---\n{BODY}"))).unwrap();
     let descriptions = [
-        ("a", "dream sleep night moon"),
-        ("b", "dream sleep night"),
-        ("c", "dream sleep"),
-        ("d", "dream"),
+        ("aa", "dream sleep night moon"),
+        ("bb", "dream sleep night"),
+        ("cc", "dream sleep"),
+        ("dd", "dream"),
         ("far", "invoice budget spreadsheet"),
         ("has", "dream sleep night moon"),
     ];
@@ -126,26 +126,26 @@ fn suggestions_respect_threshold_limit_existing_tags_and_rejections() {
     let score = |d: &str| fake.score("Night", BODY, d);
     assert!(score("invoice budget spreadsheet") < 0.3 && score("dream") >= 0.3, "fixture scores");
     let all = session.with_vault(|v| v.tag_suggestions(id)).unwrap();
-    assert_eq!(all.iter().map(|s| s.tag.as_str()).collect::<Vec<_>>(), ["a", "b", "c"], "best 3, without `has`");
+    assert_eq!(all.iter().map(|s| s.tag.as_str()).collect::<Vec<_>>(), ["aa", "bb", "cc"], "best 3, without `has`");
     assert!(all.windows(2).all(|w| w[0].score >= w[1].score), "best first");
     assert!((all[0].score - score("dream sleep night moon")).abs() < 1e-6);
 
     // At the threshold counts; just above it doesn't.
     let c = score("dream sleep");
     session.with_vault(|v| v.set_suggestion_threshold("fake-64", Some(c))).unwrap();
-    assert_eq!(suggested(&session, id), ["a", "b", "c"]);
+    assert_eq!(suggested(&session, id), ["aa", "bb", "cc"]);
     session.with_vault(|v| v.set_suggestion_threshold("fake-64", Some(c + 1e-4))).unwrap();
-    assert_eq!(suggested(&session, id), ["a", "b"]);
+    assert_eq!(suggested(&session, id), ["aa", "bb"]);
     session.with_vault(|v| v.set_suggestion_threshold("fake-64", Some(0.3))).unwrap();
 
     // A rejection removes the suggestion for good, also after lock and unlock.
-    session.with_vault(|v| v.reject_tag_suggestion(id, "a")).unwrap();
-    assert_eq!(suggested(&session, id), ["b", "c", "d"]);
+    session.with_vault(|v| v.reject_tag_suggestion(id, "aa")).unwrap();
+    assert_eq!(suggested(&session, id), ["bb", "cc", "dd"]);
     session.lock();
     let g = session.unlock(Vault::open(&path, common::PASS).unwrap(), path).unwrap();
     index(&session, g, &source);
-    assert_eq!(suggested(&session, id), ["b", "c", "d"]);
-    assert_eq!(feedback(&session, id), [("a".to_string(), false)]);
+    assert_eq!(suggested(&session, id), ["bb", "cc", "dd"]);
+    assert_eq!(feedback(&session, id), [("aa".to_string(), false)]);
 
     // No vector for the note yet: nothing to suggest.
     let fresh = session.with_vault(|v| v.create_note("", "Fresh", BODY)).unwrap();
@@ -350,12 +350,12 @@ fn tags_can_be_described_before_any_note_uses_them() {
 fn feedback_is_kept_in_the_trash_hidden_and_deleted_with_the_note() {
     let (_dir, _path, session, _g) = session("fake-64", 0.3);
     let id = session.with_vault(|v| v.create_note("", "A", "text")).unwrap();
-    session.with_vault(|v| v.reject_tag_suggestion(id, "x")).unwrap();
+    session.with_vault(|v| v.reject_tag_suggestion(id, "xx")).unwrap();
     session.with_vault(|v| v.trash_note(id)).unwrap();
     assert!(feedback(&session, id).is_empty(), "hidden while trashed");
-    assert!(session.with_vault(|v| v.reject_tag_suggestion(id, "y")).is_err());
+    assert!(session.with_vault(|v| v.reject_tag_suggestion(id, "yy")).is_err());
     session.with_vault(|v| v.restore_note(id).map(|_| ())).unwrap();
-    assert_eq!(feedback(&session, id), [("x".to_string(), false)], "kept through the trash");
+    assert_eq!(feedback(&session, id), [("xx".to_string(), false)], "kept through the trash");
 
     session.with_vault(|v| v.delete_note(id)).unwrap();
     let other = session.with_vault(|v| v.create_note("", "B", "text")).unwrap();

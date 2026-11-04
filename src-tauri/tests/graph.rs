@@ -83,8 +83,8 @@ fn local(id: i64, depth: u8) -> GraphScope {
 
 /// A chain A -> B -> C -> D, E -> A, and A -> [[Nowhere]].
 fn chain(session: &Session) -> [i64; 5] {
-    let a = note(session, "", "A", "[[B]] [[Nowhere]] #x");
-    let b = note(session, "", "B", "[[C]] #x");
+    let a = note(session, "", "A", "[[B]] [[Nowhere]] #xx");
+    let b = note(session, "", "B", "[[C]] #xx");
     let c = note(session, "", "C", "[[D]]");
     let d = note(session, "", "D", "");
     let e = note(session, "", "E", "[[A]]");
@@ -131,14 +131,32 @@ fn tag_and_ghost_nodes_are_toggles() {
     let [a, ..] = chain(&session);
     let g = graph::build(&session, &local(a, 1), &GraphOptions::default()).unwrap();
     assert!(labels(&g, NodeKind::Tag).is_empty() && labels(&g, NodeKind::Ghost).is_empty());
-    assert_eq!(g.nodes.iter().find(|n| n.label == "A").unwrap().tags, ["x"], "tags are there for colouring");
+    assert_eq!(g.nodes.iter().find(|n| n.label == "A").unwrap().tags, ["xx"], "tags are there for colouring");
 
     let opts = GraphOptions { tags: true, ghosts: true, ..Default::default() };
     let g = graph::build(&session, &local(a, 1), &opts).unwrap();
-    assert_eq!(labels(&g, NodeKind::Tag), set(&["#x"]));
-    assert_eq!(edges(&g, EdgeKind::Tag), set(&["A -> #x", "B -> #x"]));
+    assert_eq!(labels(&g, NodeKind::Tag), set(&["#xx"]));
+    assert_eq!(edges(&g, EdgeKind::Tag), set(&["A -> #xx", "B -> #xx"]));
     assert_eq!(labels(&g, NodeKind::Ghost), set(&["Nowhere"]));
     assert!(edges(&g, EdgeKind::Link).contains("A -> Nowhere"));
+}
+
+#[test]
+fn tags_on_one_note_are_hidden_unless_asked_for() {
+    let (_dir, session, _) = session();
+    let a = note(&session, "", "A", "[[B]] #shared #lonely #wide");
+    note(&session, "", "B", "#shared");
+    note(&session, "", "Far", "#wide");
+    let opts = GraphOptions { tags: true, ..Default::default() };
+    let g = graph::build(&session, &local(a, 1), &opts).unwrap();
+    // `#wide` is on one note in view but two in the vault, so it stays.
+    assert_eq!(labels(&g, NodeKind::Tag), set(&["#shared", "#wide"]));
+    assert!(!edges(&g, EdgeKind::Tag).contains("A -> #lonely"));
+    assert_eq!(g.nodes.iter().find(|n| n.label == "A").unwrap().tags, ["lonely", "shared", "wide"], "still coloured by it");
+
+    let opts = GraphOptions { tags: true, rare_tags: true, ..Default::default() };
+    let g = graph::build(&session, &local(a, 1), &opts).unwrap();
+    assert_eq!(labels(&g, NodeKind::Tag), set(&["#lonely", "#shared", "#wide"]));
 }
 
 #[test]
@@ -148,9 +166,9 @@ fn global_graph_is_scoped_and_capped_by_link_count() {
     note(&session, "p", "One", "[[Hub]] [[Two]]");
     note(&session, "p", "Two", "[[Hub]]");
     note(&session, "p", "Lonely", "");
-    note(&session, "q", "Outside", "[[Hub]] #t");
-    let nested = note(&session, "q", "Nested", "#t/sub");
-    note(&session, "q", "Other", "#tx #T");
+    note(&session, "q", "Outside", "[[Hub]] #tt");
+    let nested = note(&session, "q", "Nested", "#tt/sub");
+    note(&session, "q", "Other", "#ttx #TT");
 
     let folder = GraphScope::Global { scope: GraphScopeNotes::Folder { folder: "p".into() } };
     let g = graph::build(&session, &folder, &GraphOptions::default()).unwrap();
@@ -163,7 +181,7 @@ fn global_graph_is_scoped_and_capped_by_link_count() {
     assert_eq!(labels(&g, NodeKind::Note), set(&["Hub", "One", "Two"]));
     assert_eq!((g.total, g.capped), (4, true));
 
-    let tag = GraphScope::Global { scope: GraphScopeNotes::Tag { tag: "t".into() } };
+    let tag = GraphScope::Global { scope: GraphScopeNotes::Tag { tag: "tt".into() } };
     let g = graph::build(&session, &tag, &GraphOptions::default()).unwrap();
     assert_eq!(labels(&g, NodeKind::Note), set(&["Outside", "Nested"]), "nested tags, case-sensitive");
     assert!(g.edges.is_empty(), "Hub is outside the scope");

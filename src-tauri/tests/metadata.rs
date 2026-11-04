@@ -51,9 +51,9 @@ fn add_tag_creates_frontmatter_or_key_and_skips_notes_that_have_it() {
 #[test]
 fn add_tag_folds_a_singular_tag_key_into_tags() {
     let (_dir, mut vault) = common::vault();
-    let id = vault.create_note("", "N", "---\ntag: a\ntopic: T\n---\n").unwrap();
-    vault.edit_notes_metadata(&[id], &add("b")).unwrap();
-    assert_eq!(body(&vault, id), "---\ntopic: T\ntags: [a, b]\n---\n");
+    let id = vault.create_note("", "N", "---\ntag: aa\ntopic: T\n---\n").unwrap();
+    vault.edit_notes_metadata(&[id], &add("bb")).unwrap();
+    assert_eq!(body(&vault, id), "---\ntopic: T\ntags: [aa, bb]\n---\n");
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn an_unknown_id_fails_the_whole_call_and_changes_nothing() {
     let trashed = vault.create_note("", "T", "Text").unwrap();
     vault.trash_note(trashed).unwrap();
     for bad in [9999, trashed] {
-        assert!(matches!(vault.edit_notes_metadata(&[a, bad], &add("x")), Err(Error::NoteNotFound)));
+        assert!(matches!(vault.edit_notes_metadata(&[a, bad], &add("xx")), Err(Error::NoteNotFound)));
         assert_eq!(body(&vault, a), "Text");
         assert!(vault.note(a).unwrap().tags.is_empty());
     }
@@ -130,7 +130,8 @@ fn an_unknown_id_fails_the_whole_call_and_changes_nothing() {
 fn invalid_tags_are_rejected() {
     let (_dir, mut vault) = common::vault();
     let a = vault.create_note("", "A", "Text").unwrap();
-    for tag in ["", " # ", "two words", "a,b"] {
+    // Tags the parser wouldn't read back (`markdown::is_tag`) are refused, not written.
+    for tag in ["", " # ", "two words", "a,b", "a", "#1", "1st", "1e1e1e"] {
         assert!(matches!(vault.edit_notes_metadata(&[a], &add(tag)), Err(Error::InvalidTag(_))), "{tag:?}");
     }
 }
@@ -140,9 +141,9 @@ fn crlf_bodies_keep_crlf() {
     let (_dir, mut vault) = common::vault();
     let a = vault.create_note("", "A", "---\r\ntopic: T\r\n---\r\nLine 1\r\nLine 2").unwrap();
     let b = vault.create_note("", "B", "Line 1\r\nLine 2").unwrap();
-    vault.edit_notes_metadata(&[a, b], &add("x")).unwrap();
-    assert_eq!(body(&vault, a), "---\r\ntopic: T\r\ntags: [x]\r\n---\r\nLine 1\r\nLine 2");
-    assert_eq!(body(&vault, b), "---\r\ntags: [x]\r\n---\r\nLine 1\r\nLine 2");
+    vault.edit_notes_metadata(&[a, b], &add("xx")).unwrap();
+    assert_eq!(body(&vault, a), "---\r\ntopic: T\r\ntags: [xx]\r\n---\r\nLine 1\r\nLine 2");
+    assert_eq!(body(&vault, b), "---\r\ntags: [xx]\r\n---\r\nLine 1\r\nLine 2");
 }
 
 #[test]
@@ -151,7 +152,7 @@ fn notes_with_unreadable_frontmatter_are_skipped_and_reported() {
     let broken = "---\ntags: [a\n---\nText";
     let bad = vault.create_note("", "Bad", broken).unwrap();
     let good = vault.create_note("", "Good", "Text").unwrap();
-    let report = vault.edit_notes_metadata(&[bad, good], &add("x")).unwrap();
+    let report = vault.edit_notes_metadata(&[bad, good], &add("xx")).unwrap();
     assert_eq!(report.changed, vec![good]);
     assert_eq!(report.unreadable.iter().map(|n| n.id).collect::<Vec<_>>(), vec![bad]);
     assert_eq!(body(&vault, bad), broken);
@@ -162,7 +163,7 @@ fn links_are_rederived() {
     let (_dir, mut vault) = common::vault();
     let target = vault.create_note("", "Target", "").unwrap();
     let a = vault.create_note("", "A", "See [[Target]]").unwrap();
-    vault.edit_notes_metadata(&[a], &add("x")).unwrap();
+    vault.edit_notes_metadata(&[a], &add("xx")).unwrap();
     assert_eq!(vault.backlinks(target).unwrap().len(), 1);
 }
 

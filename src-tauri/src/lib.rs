@@ -8,6 +8,7 @@ pub mod embed;
 pub mod graph;
 pub mod import;
 pub mod markdown;
+pub mod retag;
 pub mod session;
 
 use std::time::Duration;

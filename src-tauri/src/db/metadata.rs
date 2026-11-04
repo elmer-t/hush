@@ -121,6 +121,8 @@ pub(super) fn normalize_tag(t: &str) -> Result<String> {
         Err(Error::InvalidTag("tag is empty".into()))
     } else if t.contains(|c: char| c == ',' || c.is_whitespace()) {
         Err(Error::InvalidTag("tag must not contain spaces or commas".into()))
+    } else if !markdown::is_tag(t) {
+        Err(Error::InvalidTag("a tag needs at least two characters and a letter, and can't be a colour code".into()))
     } else {
         Ok(t.to_string())
     }

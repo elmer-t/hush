@@ -421,7 +421,15 @@ export const api = {
 };
 
 /** The background jobs (see `activity::Job`), in the order the panel lists them. */
-export type ActivityJob = "embedding" | "related" | "training" | "safetyNet" | "import" | "discover" | "migration";
+export type ActivityJob =
+  | "embedding"
+  | "related"
+  | "training"
+  | "safetyNet"
+  | "import"
+  | "discover"
+  | "migration"
+  | "retag";
 export type ActivityState = "idle" | "waiting" | "running" | "paused" | "stopped" | "failed";
 export type JobStatus = {
   job: ActivityJob;
@@ -493,6 +501,8 @@ export type GraphScopeNotes =
 export type GraphOptions = {
   meaning: boolean;
   tags: boolean;
+  /** With `tags`, also tags only one note in the vault has. */
+  rareTags: boolean;
   ghosts: boolean;
   /** Lowest cosine similarity of a meaning edge. */
   threshold: number;
