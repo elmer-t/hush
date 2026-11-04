@@ -10,7 +10,7 @@ use crate::db::{MetadataEditReport, ReviewOrder, SuggestionReview};
 use crate::session::{Session, SessionError};
 
 /// The first `limit` notes suggested for `tag`, in `order`, and how many there are.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn review_tag_suggestions(
     session: State<'_, Session>,
     tag: String,
@@ -22,13 +22,13 @@ pub fn review_tag_suggestions(
 
 /// Adds `tag` to the notes and records each as an accepted example, all or nothing. The
 /// frontend flushes the open note first and reloads it after, as for a bulk edit.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn accept_tag_suggestions(session: State<'_, Session>, tag: String, ids: Vec<i64>) -> Result<MetadataEditReport> {
     Ok(session.with_vault(|v| v.accept_tag_suggestions(&ids, &tag))?)
 }
 
 /// Records `tag` as rejected on the notes, all or nothing; the notes don't change.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reject_tag_suggestions(session: State<'_, Session>, tag: String, ids: Vec<i64>) -> Result<()> {
     Ok(session.with_vault(|v| v.reject_tag_suggestions(&ids, &tag))?)
 }

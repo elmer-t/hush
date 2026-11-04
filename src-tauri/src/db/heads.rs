@@ -197,11 +197,36 @@ impl Vault {
         Ok(gone)
     }
 
+    /// [`Vault::training_vectors`] without the vectors: `(note id, content hash)` of up
+    /// to `limit` live notes with a `model` vector and an id above `after`, and the id to
+    /// continue after (`None` on the last page).
+    pub fn training_hashes(&self, model: &str, after: i64, limit: u32) -> Result<(Vec<(i64, [u8; 32])>, Option<i64>)> {
+        // `+e.model`: see `training_vectors`.
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT e.note_id, e.content_hash FROM note_embeddings e JOIN notes n ON n.id = e.note_id
+             WHERE +e.model = ?1 AND e.note_id > ?2 AND n.deleted_at IS NULL ORDER BY e.note_id LIMIT ?3",
+        )?;
+        let hashes: Vec<(i64, [u8; 32])> = stmt
+            .query_map(params![model, after, limit], |r| {
+                let hash: Vec<u8> = r.get(1)?;
+                Ok((r.get(0)?, hash.try_into().unwrap_or([0; 32])))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let next = (hashes.len() == limit as usize).then(|| hashes.last().map(|h| h.0)).flatten();
+        Ok((hashes, next))
+    }
+
     /// Up to `limit` `model` vectors of live notes with an id above `after`.
+    ///
+    /// `+e.model` keeps SQLite off the `note_embeddings_model` index: nearly every row
+    /// has the same model, and without `ANALYZE` statistics the planner picked that
+    /// index, then sorted every vector of the model to return one page. That made each
+    /// page cost as much as reading the whole table (0.7 s at 350k notes, before
+    /// decryption), all of it holding the vault. The primary key walks note ids in order.
     pub fn training_vectors(&self, model: &str, after: i64, limit: u32) -> Result<TrainingPage> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT e.note_id, e.content_hash, e.vector FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-             WHERE e.model = ?1 AND e.note_id > ?2 AND n.deleted_at IS NULL ORDER BY e.note_id LIMIT ?3",
+             WHERE +e.model = ?1 AND e.note_id > ?2 AND n.deleted_at IS NULL ORDER BY e.note_id LIMIT ?3",
         )?;
         let vectors: Vec<(i64, [u8; 32], Zeroizing<Vec<f32>>)> = stmt
             .query_map(params![model, after, limit], |r| {

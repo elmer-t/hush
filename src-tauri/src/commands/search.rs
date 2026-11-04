@@ -20,7 +20,7 @@ pub struct SearchResult {
 /// With text: ranked by relevance (or newest first for very broad queries). Without:
 /// most recently updated first, so this also lists notes. A newer search cancels an
 /// older one still running.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_notes(session: State<'_, Session>, query: SearchQuery) -> Result<SearchResult> {
     Ok(match session.search(|v, stop| v.search_page_until(&query, stop))? {
         Some(page) => SearchResult { page, cancelled: false },
@@ -28,12 +28,12 @@ pub fn search_notes(session: State<'_, Session>, query: SearchQuery) -> Result<S
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_facets(session: State<'_, Session>) -> Result<Facets> {
     Ok(session.with_vault(|v| v.facets())?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attribute_values(session: State<'_, Session>, key: String) -> Result<Vec<String>> {
     Ok(session.with_vault(|v| v.attribute_values(&key))?)
 }

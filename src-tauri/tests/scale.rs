@@ -610,6 +610,83 @@ fn retag_benchmark() {
     println!("retag job: {} notes checked, {} changed, {}", done.checked, done.changed, secs(start.elapsed()));
 }
 
+/// What the UI waits for while the background jobs start up after unlock: every job
+/// the app starts on unlock runs (embedding job with the related-index rebuild and
+/// safety net, tag training, tag re-derive), and the foreground opens a folder page
+/// every 100 ms, timing how long it waits for the vault. Same environment variables as
+/// [`scale_benchmark`], plus `HUSH_CONTENTION_SECS` (default 120): how long to watch.
+#[test]
+#[ignore = "scale benchmark: minutes; run with --ignored --nocapture"]
+fn unlock_contention_benchmark() {
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
+    let watch = Duration::from_secs(std::env::var("HUSH_CONTENTION_SECS").ok().and_then(|n| n.parse().ok()).unwrap_or(120));
+    let temp = tempfile::tempdir().unwrap();
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    println!("machine: {}", machine());
+    let vault = prepare(&path, notes);
+    let session = Session::default();
+    let g = session.unlock(vault, path.clone()).unwrap();
+    let source = Counting::default();
+    let start = Instant::now();
+    while job::pass(&session, g, &source, &mut |_| {}).unwrap().stale > 0 {}
+    println!("indexed (or checked) with the fake embedder: {}", secs(start.elapsed()));
+    let folder = session.with_vault(|v| v.folders()).unwrap().into_iter().nth(1).unwrap_or_default();
+    // As after the #122 rules change: the re-derive pass runs on unlock.
+    session.with_vault(|v| {
+        v.delete_setting(hush_lib::db::TAG_RULES_SETTING)?;
+        v.delete_setting(hush_lib::db::TAG_RULES_PROGRESS_SETTING)
+    })
+    .unwrap();
+    session.lock();
+
+    let start = Instant::now();
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    let opened = start.elapsed();
+    let g = session.unlock(vault, path.clone()).unwrap();
+    println!("open {}, unlock {}", ms(opened), ms(start.elapsed()));
+    let done = |what: &str, since: Instant| println!("  {what} done after {}", secs(since.elapsed()));
+    let mut waits = Vec::new();
+    let source = Counting::default();
+    let unlocked = Instant::now();
+    std::thread::scope(|s| {
+        s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
+        s.spawn(|| {
+            if hush_lib::classify::job::pass(&session, g).is_ok() {
+                done("tag training pass", unlocked);
+            }
+        });
+        s.spawn(|| {
+            if hush_lib::retag::run(&session, g, POLL).is_ok() {
+                done("tag re-derive", unlocked);
+            }
+        });
+        let _stop = LockOnDrop(&session);
+        let mut related_seen = false;
+        while unlocked.elapsed() < watch {
+            let t = Instant::now();
+            session.with_vault(|v| v.folder_notes(&folder, 0, 200)).unwrap();
+            waits.push(t.elapsed());
+            if !related_seen && session.related_index().as_ref().is_some_and(|i| i.len() > 0) {
+                related_seen = true;
+                done("related index rebuild", unlocked);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    waits.sort();
+    let pct = |p: f64| waits[((waits.len() - 1) as f64 * p) as usize];
+    println!(
+        "folder page over {}: {} calls, median {}, p95 {}, p99 {}, max {}, {} over 1 s",
+        secs(watch),
+        waits.len(),
+        ms(pct(0.5)),
+        ms(pct(0.95)),
+        ms(pct(0.99)),
+        ms(*waits.last().unwrap()),
+        waits.iter().filter(|w| **w > Duration::from_secs(1)).count()
+    );
+}
+
 #[test]
 fn generator_is_deterministic_and_shaped_as_specified() {
     let mut a = Generator::new(20_000);

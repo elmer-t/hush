@@ -34,7 +34,7 @@ pub enum ImportFinished {
 
 /// Starts a dry run or an import of `source` into the open vault and returns at once;
 /// progress and the result arrive as events.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_import(
     app: AppHandle,
     session: State<'_, Session>,
@@ -108,7 +108,7 @@ pub fn suggest_import_target(source: String) -> String {
 
 /// How many notes are already in `target` and its subfolders, to warn that an import
 /// would merge into them.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_target_notes(session: State<'_, Session>, target: String) -> Result<usize> {
     let target = markdown::normalize_folder(&target);
     if target.is_empty() {
@@ -123,12 +123,12 @@ pub fn cancel_import(job: State<'_, ImportJob>) {
     job.cancel.store(true, Ordering::SeqCst);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_rules(session: State<'_, Session>) -> Result<Vec<Rule>> {
     Ok(session.with_vault(|v| v.import_rules())?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_import_rules(session: State<'_, Session>, rules: Vec<Rule>) -> Result<()> {
     Ok(session.with_vault(|v| v.set_import_rules(&rules))?)
 }

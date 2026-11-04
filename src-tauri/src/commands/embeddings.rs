@@ -364,7 +364,7 @@ pub fn index_status(indexer: State<'_, Indexer>) -> IndexStatus {
 
 /// Up to `limit` notes closest in meaning to note `id`, most similar first, with their
 /// score and reasons; `None` when the note has no vector yet.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn related_notes(session: State<'_, Session>, id: i64, limit: usize) -> super::Result<Option<Vec<RelatedNote>>> {
     Ok(related::related_notes(&session, id, limit)?)
 }
