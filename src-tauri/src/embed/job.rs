@@ -310,8 +310,9 @@ fn safety_net_page(session: &Session, generation: u64, after: i64) -> Result<(us
 /// One pass over one indexing phase ([`db::QueuePhase`]). While any queued note waits
 /// for a vector, the pass embeds the first chunk of each such note (a note of one chunk
 /// gets its full vector and leaves the queue); otherwise it replaces first-chunk vectors
-/// with full ones, a note at a time, and ends early as soon as a save queues a note for
-/// its first chunk, so that note goes first. Queued notes whose vector is already up to
+/// with full ones, a note at a time (a group of notes per call when the model runs
+/// several notes together, see [`Embedder::embed_group`]), and ends early between calls
+/// as soon as a save queues a note for its first chunk, so that note goes first. Queued notes whose vector is already up to
 /// date just leave the queue.
 ///
 /// Once no note waits for a first vector, the active model becomes the ready model
@@ -377,10 +378,6 @@ pub fn pass(
     // The queue as this pass works through it, for the Activity panel.
     let mut handled = 0;
     let mut page_number = 0;
-    let batch_size = match phase {
-        QueuePhase::First => BATCH,
-        QueuePhase::Rest => 1,
-    };
     'pages: loop {
         let page = session.with_vault_quiet(generation, |v| {
             let foreign = v.change_count() != seen_changes;
@@ -398,8 +395,11 @@ pub fn pass(
         }
         handled += page.settled + page.partial + page.dropped.len();
         changed.extend(&page.dropped);
-        let batches = page.stale.len().div_ceil(batch_size);
-        for (b, batch) in page.stale.chunks(batch_size).enumerate() {
+        let batches = page.stale.len().div_ceil(BATCH);
+        // The first page note not embedded yet. The first phase takes `BATCH` notes at a
+        // time; the second as many as the model takes per call (`Embedder::embed_group`).
+        let mut start = 0;
+        while start < page.stale.len() {
             if show {
                 let (done, complete) = (done.min(total), complete.min(total));
                 let progress = if phase == QueuePhase::First { done } else { complete };
@@ -408,8 +408,14 @@ pub fn pass(
             activity.progress(
                 Job::Embedding,
                 match phase {
-                    QueuePhase::First => format!("first chunks: batch {} of {batches} on queue page {page_number}", b + 1),
-                    QueuePhase::Rest => format!("remaining chunks: note {} of {batches} on queue page {page_number}", b + 1),
+                    QueuePhase::First => {
+                        format!("first chunks: batch {} of {batches} on queue page {page_number}", start / BATCH + 1)
+                    }
+                    QueuePhase::Rest => format!(
+                        "remaining chunks: note {} of {} on queue page {page_number}",
+                        start + 1,
+                        page.stale.len()
+                    ),
                 },
                 handled as u64,
                 Some(work.max(handled) as u64),
@@ -422,6 +428,7 @@ pub fn pass(
                 break 'pages;
             }
             if phase == QueuePhase::Rest {
+                // Once per call, so once per group of notes when the model groups them.
                 let first_waiting = session.with_vault_quiet(generation, |v| {
                     let changes = v.change_count();
                     if changes == seen_changes {
@@ -435,13 +442,17 @@ pub fn pass(
                     break 'pages;
                 }
             }
-            let texts: Vec<&str> = batch.iter().map(|q| q.note.text.as_str()).collect();
+            let candidates = match phase {
+                QueuePhase::First => &page.stale[start..page.stale.len().min(start + BATCH)],
+                QueuePhase::Rest => &page.stale[start..],
+            };
+            let texts: Vec<&str> = candidates.iter().map(|q| q.note.text.as_str()).collect();
             let stop = || !session.is_open(generation) || session.import_running();
-            // One call for the batch: the model may run several notes' chunks together.
+            // One call: the model may run several notes' chunks together.
             let embedded = match phase {
                 QueuePhase::First => embedder.embed_first_batch(&texts, &stop),
                 QueuePhase::Rest => embedder
-                    .embed_batch(&texts, &stop)
+                    .embed_group(&texts, &stop)
                     .map(|vectors| vectors.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect()),
             };
             let embedded = match embedded {
@@ -452,6 +463,15 @@ pub fn pass(
                 Err(EmbedError::Stopped) => return Err(JobError::Locked),
                 result => result?,
             };
+            if embedded.is_empty() || embedded.len() > candidates.len() {
+                return Err(EmbedError::Inference(format!(
+                    "the model returned {} vectors for {} notes",
+                    embedded.len(),
+                    candidates.len()
+                ))
+                .into());
+            }
+            let batch = &candidates[..embedded.len()];
             let vectors: Vec<db::QueuedVector> = batch
                 .iter()
                 .zip(embedded)
@@ -477,6 +497,7 @@ pub fn pass(
             complete += batch.len() - partial_now;
             stale += batch.len();
             handled += batch.len();
+            start += batch.len();
         }
         drop(page.stale);
         match page.next {

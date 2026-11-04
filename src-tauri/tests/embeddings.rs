@@ -684,15 +684,38 @@ enum Call {
 
 /// A deterministic embedder that splits text into chunks of `words` words, like the
 /// real model splits it into token windows. Logs every note it embeds, by title.
+///
+/// With `group_chunks` > 0 it completes several notes per call in the second phase, as
+/// a GPU model does: notes until the group holds at least that many chunks.
 struct Chunked {
     words: usize,
     full_delay: Duration,
+    group_chunks: usize,
     log: std::sync::Mutex<Vec<(Call, String)>>,
+    /// The notes in each second-phase call.
+    groups: std::sync::Mutex<Vec<usize>>,
+    /// Told when a second-phase call has started, which then waits for the reply.
+    pause: std::sync::Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
 }
 
 impl Chunked {
     fn new(words: usize, full_delay: Duration) -> Arc<Self> {
-        Arc::new(Self { words, full_delay, log: std::sync::Mutex::new(Vec::new()) })
+        Self::grouped(words, full_delay, 0)
+    }
+
+    fn grouped(words: usize, full_delay: Duration, group_chunks: usize) -> Arc<Self> {
+        Arc::new(Self {
+            words,
+            full_delay,
+            group_chunks,
+            log: std::sync::Mutex::new(Vec::new()),
+            groups: std::sync::Mutex::new(Vec::new()),
+            pause: std::sync::Mutex::new(None),
+        })
+    }
+
+    fn groups(&self) -> Vec<usize> {
+        self.groups.lock().unwrap().clone()
     }
 
     fn vector_of(words: &[&str]) -> Vec<f32> {
@@ -751,6 +774,30 @@ impl Embedder for Chunked {
                 Ok(FirstChunk { vector: if complete { Self::full(t) } else { self.first(t) }, complete })
             })
             .collect()
+    }
+
+    fn embed_group(&self, texts: &[&str], stop: &dyn Fn() -> bool) -> Result<Vec<Vec<f32>>, EmbedError> {
+        let mut take = 1;
+        if self.group_chunks > 0 {
+            let mut chunks = 0;
+            take = 0;
+            for t in texts {
+                take += 1;
+                chunks += t.split_whitespace().count().div_ceil(self.words);
+                if chunks >= self.group_chunks {
+                    break;
+                }
+            }
+        }
+        if stop() {
+            return Err(EmbedError::Stopped);
+        }
+        self.groups.lock().unwrap().push(take);
+        if let Some((started, go)) = self.pause.lock().unwrap().take() {
+            started.send(()).unwrap();
+            go.recv().unwrap();
+        }
+        texts[..take].iter().map(|t| self.embed(t)).collect()
     }
 }
 
@@ -829,11 +876,25 @@ fn every_note_gets_its_first_chunk_before_any_note_is_completed() {
 }
 
 /// A note saved while long notes are being completed gets its first chunk before the
-/// next note's remaining chunks, and is completed again afterwards.
+/// next note's (or, `group_chunks` > 0, the next group's) remaining chunks, and is
+/// completed again afterwards.
 #[test]
 fn a_save_during_the_second_phase_goes_first() {
+    a_save_during_the_second_phase_goes_first_with(0);
+}
+
+/// As above with a model that completes several notes per call: the save is noticed
+/// between groups.
+#[test]
+fn a_save_during_the_second_phase_goes_first_when_notes_are_grouped() {
+    a_save_during_the_second_phase_goes_first_with(9);
+}
+
+fn a_save_during_the_second_phase_goes_first_with(group_chunks: usize) {
     let (_dir, _path, session, g) = session("chunked");
-    let chunked = Chunked::new(4, Duration::from_millis(30));
+    let chunked = Chunked::grouped(4, Duration::from_millis(30), group_chunks);
+    // One note per group, else three (of three chunks each).
+    let group = if group_chunks == 0 { 1 } else { 3 };
     let source = ChunkedSource(chunked.clone());
     let (long, _) = long_and_short(&session, 30);
     job::pass(&session, g, &source, &mut |_| {}).unwrap();
@@ -850,7 +911,7 @@ fn a_save_during_the_second_phase_goes_first() {
         let log = chunked.log();
         let first = log.iter().rposition(|(c, t)| *c == Call::First && t == "L0").unwrap();
         let fulls_between = log[saved_at..first].iter().filter(|(c, _)| *c == Call::Full).count();
-        assert!(fulls_between <= 1, "{fulls_between} notes were completed before the saved note's first chunk");
+        assert!(fulls_between <= group, "{fulls_between} notes were completed before the saved note's first chunk");
         wait_for(|| counts(&session) == QueueCounts::default());
         session.lock();
     });
@@ -916,4 +977,70 @@ fn progress_counts_indexed_and_complete_notes() {
     assert!(indexing.contains(&(40, 20, 40)), "after the first phase: all indexed, the short ones complete: {indexing:?}");
     assert_eq!(indexing.last(), Some(&(40, 40, 40)));
     assert_eq!(statuses.last(), Some(&IndexStatus::Idle));
+}
+
+/// A model that may run several notes together completes long notes a group at a
+/// time (until the group holds enough chunks), with the same vectors as one at a time.
+#[test]
+fn the_second_phase_completes_several_notes_per_call_when_the_model_allows_it() {
+    let (_dir, _path, session, g) = session("chunked");
+    // Three chunks per long note: three notes per group of at least 9 chunks.
+    let chunked = Chunked::grouped(4, Duration::ZERO, 9);
+    let source = ChunkedSource(chunked.clone());
+    let (long, _) = long_and_short(&session, 20);
+    job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    assert_eq!(counts(&session).rest, 20);
+
+    let p = job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    assert_eq!(p.stale, 20);
+    assert_eq!(counts(&session), QueueCounts::default());
+    assert_eq!(chunked.groups(), vec![3, 3, 3, 3, 3, 3, 2]);
+    for (i, &id) in long.iter().enumerate() {
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, id).unwrap(), Chunked::full(&text), "L{i} is complete");
+        assert_eq!(chunked.calls(Call::Full, &format!("L{i}")), 1, "L{i}");
+    }
+}
+
+/// A model without grouping (CPU int8) still completes one note per call.
+#[test]
+fn the_second_phase_completes_one_note_per_call_by_default() {
+    let (_dir, _path, session, g) = session("chunked");
+    let chunked = Chunked::new(4, Duration::ZERO);
+    let source = ChunkedSource(chunked.clone());
+    long_and_short(&session, 5);
+    index(&session, g, &source);
+    assert_eq!(chunked.groups(), vec![1; 5]);
+}
+
+/// A note saved while its group runs keeps its queue row (rows are removed only at the
+/// version read), so its new text is embedded next; its group mates are complete.
+#[test]
+fn a_save_while_its_group_runs_is_not_lost() {
+    let (_dir, _path, session, g) = session("chunked");
+    let chunked = Chunked::grouped(4, Duration::ZERO, 9);
+    let source = ChunkedSource(chunked.clone());
+    let (long, _) = long_and_short(&session, 3);
+    job::pass(&session, g, &source, &mut |_| {}).unwrap();
+    let (started_tx, started) = mpsc::channel();
+    let (go, go_rx) = mpsc::channel();
+    *chunked.pause.lock().unwrap() = Some((started_tx, go_rx));
+
+    std::thread::scope(|s| {
+        let job = s.spawn(|| job::pass(&session, g, &source, &mut |_| {}).unwrap());
+        started.recv().unwrap();
+        session.with_vault(|v| v.update_body(long[1], "new words one two three four five six seven eight nine")).unwrap();
+        go.send(()).unwrap();
+        assert_eq!(job.join().unwrap().stale, 3);
+    });
+    assert_eq!(chunked.groups(), vec![3], "the three long notes ran as one group");
+    assert_eq!(counts(&session), QueueCounts { first: 1, rest: 0 }, "the saved note waits for its first chunk again");
+    for i in [0, 2] {
+        let text = format!("L{i}\n\nalpha{i} beta gamma delta epsilon zeta eta theta iota kappa lambda");
+        assert_eq!(vector(&session, long[i]).unwrap(), Chunked::full(&text), "L{i} is complete");
+    }
+
+    index(&session, g, &source);
+    let text = "L1\n\nnew words one two three four five six seven eight nine";
+    assert_eq!(vector(&session, long[1]).unwrap(), Chunked::full(text));
 }
