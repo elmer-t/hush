@@ -10,25 +10,25 @@ use crate::embed;
 use crate::session::Session;
 
 /// Every tag used or described, for the Tags settings.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tag_list(session: State<'_, Session>) -> Result<Vec<TagInfo>> {
     Ok(session.with_vault(|v| v.tag_list())?)
 }
 
 /// Sets a tag's description; an empty one removes it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_tag_description(session: State<'_, Session>, tag: String, description: String) -> Result<()> {
     Ok(session.with_vault(|v| v.set_tag_description(&tag, &description))?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tag_suggestions(session: State<'_, Session>, id: i64) -> Result<Vec<TagSuggestion>> {
     Ok(session.with_vault(|v| v.tag_suggestions(id))?)
 }
 
 /// Adds the tag to the note's frontmatter and returns the note fresh; the frontend
 /// flushes its autosave first and reloads the editor after.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn accept_tag_suggestion(session: State<'_, Session>, id: i64, tag: String) -> Result<OpenedNote> {
     Ok(session.with_vault(|v| {
         v.accept_tag_suggestion(id, &tag)?;
@@ -36,7 +36,7 @@ pub fn accept_tag_suggestion(session: State<'_, Session>, id: i64, tag: String) 
     })?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reject_tag_suggestion(session: State<'_, Session>, id: i64, tag: String) -> Result<()> {
     Ok(session.with_vault(|v| v.reject_tag_suggestion(id, &tag))?)
 }
@@ -60,7 +60,7 @@ fn threshold_model(v: &Vault) -> crate::db::Result<String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn suggestion_threshold(session: State<'_, Session>) -> Result<SuggestionThreshold> {
     Ok(session.with_vault(|v| {
         let model = threshold_model(v)?;
@@ -73,7 +73,7 @@ pub fn suggestion_threshold(session: State<'_, Session>) -> Result<SuggestionThr
 }
 
 /// Overrides the threshold for the model suggestions use; `null` restores the default.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_suggestion_threshold(session: State<'_, Session>, threshold: Option<f32>) -> Result<()> {
     Ok(session.with_vault(|v| v.set_suggestion_threshold(&threshold_model(v)?, threshold))?)
 }

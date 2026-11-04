@@ -139,51 +139,30 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
     }
 }
 
-/// One pass: drops heads that shouldn't exist and (re)trains every tag with enough
-/// examples whose inputs changed. Each head is written as soon as it is trained.
-pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError> {
-    let _one_at_a_time = PASSES.lock().unwrap_or_else(|e| e.into_inner());
-    let activity = session.activity().reporter(generation);
-    let mut result = TrainPass::default();
-    let Some((model, labels, heads)) = session.with_vault_quiet(generation, |v| {
-        let Some(model) = v.embedding_model_ready()? else { return Ok(None) };
-        Ok(Some((model, v.training_labels()?, v.tag_heads()?)))
-    })?
-    else {
-        activity.idle(Job::Training, Some("no model is ready yet"));
-        return Ok(result);
-    };
-    activity.start(Job::Training, "reading note vectors");
+/// The tags that get a head, and which of those are out of date.
+struct Plan {
+    keep: Vec<String>,
+    /// `(tag, positives, rejected, negatives, inputs)`, positions in the corpus.
+    stale: Vec<(String, Vec<usize>, Vec<usize>, usize, [u8; 32])>,
+    current: usize,
+}
 
-    let mut ids: Vec<i64> = Vec::new();
-    let mut vectors: Vec<Zeroizing<Vec<f32>>> = Vec::new();
+/// The corpus hash before any note: training version and model.
+fn corpus_hasher(model: &str) -> Sha256 {
     let mut corpus = Sha256::new();
     corpus.update(TRAINING_VERSION.to_le_bytes());
     corpus.update((model.len() as u64).to_le_bytes());
     corpus.update(model.as_bytes());
-    let mut after = 0;
-    loop {
-        let page = session.with_vault_quiet(generation, |v| v.training_vectors(&model, after, PAGE))?;
-        for (id, hash, vector) in page.vectors {
-            corpus.update(id.to_le_bytes());
-            corpus.update(hash);
-            ids.push(id);
-            vectors.push(vector);
-        }
-        activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
-        match page.next {
-            Some(next) => after = next,
-            None => break,
-        }
-    }
-    let corpus = corpus.finalize();
+    corpus
+}
+
+/// Works out the [`Plan`] for the notes `ids` (in id order) whose ids and content
+/// hashes hash to `corpus`.
+fn plan_heads(labels: &[db::TagLabels], heads: &[StoredHead], model: &str, ids: &[i64], corpus: [u8; 32]) -> Plan {
     let index: HashMap<i64, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let heads: HashMap<&str, &StoredHead> = heads.iter().map(|h| (h.tag.as_str(), h)).collect();
-
-    // Which tags get a head, and which of those are out of date.
-    let mut keep = Vec::new();
-    let mut stale = Vec::new();
-    for labels in &labels {
+    let mut plan = Plan { keep: Vec::new(), stale: Vec::new(), current: 0 };
+    for labels in labels {
         let positives: Vec<usize> = labels.positives.iter().filter_map(|id| index.get(id).copied()).collect();
         let rejected: Vec<usize> = labels.rejected.iter().filter_map(|id| index.get(id).copied()).collect();
         let negatives = ids.len() - positives.len();
@@ -199,12 +178,76 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
             set.iter().for_each(|i| inputs.update(ids[*i].to_le_bytes()));
         }
         let inputs: [u8; 32] = inputs.finalize().into();
-        keep.push(labels.tag.clone());
+        plan.keep.push(labels.tag.clone());
         match heads.get(labels.tag.as_str()) {
-            Some(h) if h.model == model && h.inputs == inputs => result.current += 1,
-            _ => stale.push((labels.tag.clone(), positives, rejected, negatives, inputs)),
+            Some(h) if h.model == model && h.inputs == inputs => plan.current += 1,
+            _ => plan.stale.push((labels.tag.clone(), positives, rejected, negatives, inputs)),
         }
     }
+    plan
+}
+
+/// One pass: drops heads that shouldn't exist and (re)trains every tag with enough
+/// examples whose inputs changed. Each head is written as soon as it is trained.
+pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError> {
+    let _one_at_a_time = PASSES.lock().unwrap_or_else(|e| e.into_inner());
+    let activity = session.activity().reporter(generation);
+    let mut result = TrainPass::default();
+    let Some((model, labels, heads)) = session.with_vault_quiet(generation, |v| {
+        let Some(model) = v.embedding_model_ready()? else { return Ok(None) };
+        Ok(Some((model, v.training_labels()?, v.tag_heads()?)))
+    })?
+    else {
+        activity.idle(Job::Training, Some("no model is ready yet"));
+        return Ok(result);
+    };
+    // Which heads are out of date depends only on the note ids and content hashes, so
+    // that is read first; the vectors (1.5 KB per note) are only loaded when a head
+    // needs training. Most passes on unlock find every head current.
+    activity.start(Job::Training, "checking note vectors");
+    let mut ids: Vec<i64> = Vec::new();
+    let mut corpus = corpus_hasher(&model);
+    let mut after = 0;
+    loop {
+        let (page, next) = session.with_vault_quiet(generation, |v| v.training_hashes(&model, after, PAGE))?;
+        for (id, hash) in page {
+            corpus.update(id.to_le_bytes());
+            corpus.update(hash);
+            ids.push(id);
+        }
+        activity.progress(Job::Training, "checking note vectors", ids.len() as u64, None);
+        match next {
+            Some(n) => after = n,
+            None => break,
+        }
+    }
+    let mut plan = plan_heads(&labels, &heads, &model, &ids, corpus.finalize().into());
+    let mut vectors: Vec<Zeroizing<Vec<f32>>> = Vec::new();
+    if !plan.stale.is_empty() {
+        activity.start(Job::Training, "reading note vectors");
+        ids.clear();
+        let mut corpus = corpus_hasher(&model);
+        let mut after = 0;
+        loop {
+            let page = session.with_vault_quiet(generation, |v| v.training_vectors(&model, after, PAGE))?;
+            for (id, hash, vector) in page.vectors {
+                corpus.update(id.to_le_bytes());
+                corpus.update(hash);
+                ids.push(id);
+                vectors.push(vector);
+            }
+            activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
+            match page.next {
+                Some(next) => after = next,
+                None => break,
+            }
+        }
+        // Planned again: notes may have changed since the check.
+        plan = plan_heads(&labels, &heads, &model, &ids, corpus.finalize().into());
+    }
+    let heads: HashMap<&str, &StoredHead> = heads.iter().map(|h| (h.tag.as_str(), h)).collect();
+    let Plan { keep, stale, current } = plan;
+    result.current = current;
     result.dropped = session.with_vault_quiet(generation, |v| v.retain_tag_heads(&model, &keep))?;
 
     if result.dropped > 0 {

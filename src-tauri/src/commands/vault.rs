@@ -108,29 +108,29 @@ fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, pat
     Ok(VaultInfo::new(path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lock_vault(app: AppHandle, session: State<'_, Session>) {
     session.lock();
     let _ = app.emit(LOCKED_EVENT, "manual");
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_status(session: State<'_, Session>) -> Option<VaultInfo> {
     session.path().map(VaultInfo::new)
 }
 
 /// Reports user activity, postponing auto-lock.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn touch(session: State<'_, Session>) {
     session.touch();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auto_lock_minutes(session: State<'_, Session>) -> Result<u32> {
     Ok(session.auto_lock_minutes()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auto_lock_minutes(session: State<'_, Session>, minutes: u32) -> Result<()> {
     Ok(session.set_auto_lock_minutes(minutes)?)
 }

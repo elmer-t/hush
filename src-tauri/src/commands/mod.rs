@@ -1,4 +1,10 @@
 //! Tauri commands. Every error reaches the frontend as `{ kind, message }`.
+//!
+//! Every command that uses the vault is `#[tauri::command(async)]` (or an `async fn`):
+//! a plain `#[tauri::command]` runs on the main thread, which also runs the window, so
+//! a command waiting for the vault while a background job holds it froze the whole
+//! window ("Not Responding"). Off the main thread only the call waits. New commands
+//! that take `State<Session>` must do the same.
 
 pub mod activity;
 pub mod discover;
@@ -114,3 +120,41 @@ impl Serialize for CommandError {
 }
 
 pub type Result<T> = std::result::Result<T, CommandError>;
+
+#[cfg(test)]
+mod tests {
+    /// Every command module, as compiled.
+    const SOURCES: &[(&str, &str)] = &[
+        ("activity", include_str!("activity.rs")),
+        ("discover", include_str!("discover.rs")),
+        ("embeddings", include_str!("embeddings.rs")),
+        ("import", include_str!("import.rs")),
+        ("layout", include_str!("layout.rs")),
+        ("links", include_str!("links.rs")),
+        ("models", include_str!("models.rs")),
+        ("notes", include_str!("notes.rs")),
+        ("review", include_str!("review.rs")),
+        ("search", include_str!("search.rs")),
+        ("tags", include_str!("tags.rs")),
+        ("training", include_str!("training.rs")),
+        ("vault", include_str!("vault.rs")),
+    ];
+
+    /// A command on the main thread that waits for the vault freezes the window.
+    #[test]
+    fn commands_that_use_the_vault_stay_off_the_main_thread() {
+        let mut main_thread = Vec::new();
+        for (module, source) in SOURCES {
+            let mut rest = *source;
+            while let Some(at) = rest.find("#[tauri::command]") {
+                rest = &rest[at + "#[tauri::command]".len()..];
+                let signature = &rest[..rest.find('{').unwrap_or(rest.len())];
+                if !signature.contains("async fn") && signature.contains("Session") {
+                    let name = signature.split("fn ").nth(1).and_then(|s| s.split('(').next()).unwrap_or("?");
+                    main_thread.push(format!("{module}::{name}"));
+                }
+            }
+        }
+        assert!(main_thread.is_empty(), "use #[tauri::command(async)] for: {}", main_thread.join(", "));
+    }
+}

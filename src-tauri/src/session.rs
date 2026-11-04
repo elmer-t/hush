@@ -13,6 +13,8 @@ use crate::embed::related::RelatedIndex;
 pub const AUTO_LOCK_SETTING: &str = "auto_lock_minutes";
 pub const DEFAULT_AUTO_LOCK_MINUTES: u32 = 10;
 pub const MAX_AUTO_LOCK_MINUTES: u32 = 24 * 60;
+/// How long background work sleeps between checks while a foreground caller waits.
+const FOREGROUND_FIRST_PAUSE: Duration = Duration::from_millis(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -42,6 +44,11 @@ pub struct Session {
     running_search: Mutex<Option<rusqlite::InterruptHandle>>,
     /// Imports writing to the vault right now (see [`Session::begin_import`]).
     imports: AtomicUsize,
+    /// Foreground callers (the UI's commands) waiting for the vault right now. `Mutex`
+    /// is not fair: a background job that releases the vault and takes it again a
+    /// moment later can keep a waiting command out for as long as it keeps going, so
+    /// background work waits until this is 0 (see [`Session::background_guard`]).
+    foreground_waiting: AtomicUsize,
     /// What the background jobs are doing, for the Activity panel. Cleared on lock.
     activity: crate::activity::Activity,
 }
@@ -266,7 +273,7 @@ impl Session {
         generation: u64,
         f: impl FnOnce(&mut Vault) -> db::Result<T>,
     ) -> Result<T, SessionError> {
-        let mut guard = self.guard();
+        let mut guard = self.background_guard(generation);
         match guard.as_mut() {
             Some(unlocked) if unlocked.generation == generation => Ok(f(&mut unlocked.vault)?),
             _ => Err(SessionError::Locked),
@@ -301,7 +308,22 @@ impl Session {
         Ok(())
     }
 
+    /// The vault for a foreground caller: counted in `foreground_waiting` while it
+    /// waits, so background work steps aside.
     fn guard(&self) -> MutexGuard<'_, Option<Unlocked>> {
+        self.foreground_waiting.fetch_add(1, Ordering::SeqCst);
+        let guard = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        self.foreground_waiting.fetch_sub(1, Ordering::SeqCst);
+        guard
+    }
+
+    /// The vault for background work of unlock `generation`: first lets every
+    /// foreground caller that is waiting have it. Stops waiting once that unlock is
+    /// over, so a job of a locked vault finds out at once.
+    fn background_guard(&self, generation: u64) -> MutexGuard<'_, Option<Unlocked>> {
+        while self.foreground_waiting.load(Ordering::SeqCst) > 0 && self.is_open(generation) {
+            std::thread::sleep(FOREGROUND_FIRST_PAUSE);
+        }
         self.open.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

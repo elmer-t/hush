@@ -53,7 +53,7 @@ pub fn start_retag(app: &AppHandle, generation: u64) {
 }
 
 /// Example counts, status and cross-validated quality of every used or described tag.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tag_training(session: State<'_, Session>) -> Result<Vec<TagTraining>> {
     Ok(session.with_vault(|v| v.tag_training())?)
 }

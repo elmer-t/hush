@@ -114,7 +114,7 @@ pub fn cancel_discover_tags(job: State<'_, DiscoverJob>) {
 /// Saves the tag's description and adds the tag to `ids`, or with `whole_group` to
 /// every member of that group still live, recording each as an accepted example; all
 /// or nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_tag_from_group(
     session: State<'_, Session>,
     job: State<'_, DiscoverJob>,

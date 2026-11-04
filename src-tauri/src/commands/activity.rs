@@ -95,7 +95,7 @@ fn refresh_stats(app: &AppHandle, session: &Session, generation: u64) {
 }
 
 /// Everything the Activity panel shows; changes arrive as [`ACTIVITY_EVENT`].
-#[tauri::command]
+#[tauri::command(async)]
 pub fn activity_status(session: State<'_, Session>) -> Snapshot {
     session.activity().snapshot()
 }
@@ -115,7 +115,7 @@ pub fn set_activity_panel_open(app: AppHandle, panel: State<'_, ActivityPanel>, 
 }
 
 /// What Hush stores and derives for note `id`, for the details panel.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn note_internals(session: State<'_, Session>, id: i64) -> Result<NoteInternals> {
     Ok(session.with_vault(|v| v.note_internals(id))?)
 }

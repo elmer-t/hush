@@ -466,7 +466,7 @@ impl Vault {
     pub fn embedding_hashes(&self, model: &str) -> Result<Vec<(i64, [u8; 32])>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT e.note_id, e.content_hash FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-             WHERE e.model = ?1 AND n.deleted_at IS NULL ORDER BY e.note_id",
+             WHERE +e.model = ?1 AND n.deleted_at IS NULL ORDER BY e.note_id",
         )?;
         let mut rows = stmt.query([model])?;
         let mut hashes = Vec::new();
