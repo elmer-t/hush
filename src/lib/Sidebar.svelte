@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
   import { indexText, indexing } from "$lib/indexing";
+  import { searchSummary } from "$lib/search";
   import {
     api,
     errorMessage,
@@ -659,10 +660,7 @@
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   {#if searching}
-    <p class="summary">
-      {hits.length.toLocaleString()}{hasMore ? "+" : ""}
-      {hits.length === 1 && !hasMore ? "result" : "results"}{text.trim() ? " · best match first" : ""}
-    </p>
+    <p class="summary">{searchSummary(hits.length, hasMore, text, newestFirst)}</p>
   {/if}
   {#if !searching && recentOpened.length > 0}
     <RecentlyOpened
