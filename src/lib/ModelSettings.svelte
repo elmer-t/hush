@@ -205,8 +205,8 @@
   }
 </script>
 
-<section class="card" id="model-settings">
-  <h2>Model</h2>
+<!-- Settings gives this its "Model" section header (id model-settings). -->
+<div class="card model">
   <p class="muted">
     The embedding model works out what each note is about, on this computer. Without a ready model these are off:
     {MODEL_FEATURES}. Search and everything else keep working.
@@ -220,31 +220,37 @@
   {/if}
 
   {#if overview}
-    <dl class="current">
-      <div><dt>Model</dt><dd>{current?.name ?? overview.model}</dd></div>
-      <div><dt>ID</dt><dd class="mono">{overview.model}</dd></div>
-      <div><dt>State</dt><dd>{stateText()}</dd></div>
-      {#if current}
-        <div>
-          <dt>On disk</dt>
-          <dd>{current.availability.state === "available" ? mb(current.availability.bytes) : "–"}</dd>
-        </div>
-        <div><dt>Vectors</dt><dd>{current.dims} dimensions, up to {current.maxTokens} tokens per chunk</dd></div>
-        <div>
-          <dt>Licence</dt>
-          <dd>
-            {#if current.licenceUrl}
-              <button class="link" onclick={() => void openUrl(current.licenceUrl)}>{current.licence}</button>
-            {:else}
-              {current.licence}
-            {/if}
-          </dd>
-        </div>
-      {/if}
-      {#if status?.readyModel && status.readyModel !== overview.model}
-        <div><dt>Serving</dt><dd class="mono">{status.readyModel} <span class="muted">until the switch is done</span></dd></div>
-      {/if}
-    </dl>
+    <div class="in-use">
+      <div class="in-use-head">
+        <span class="led on" aria-hidden="true"></span>
+        <span class="badge">In use</span>
+        <strong>{current?.name ?? overview.model}</strong>
+      </div>
+      <dl class="current">
+        <div><dt>ID</dt><dd class="mono">{overview.model}</dd></div>
+        <div><dt>State</dt><dd>{stateText()}</dd></div>
+        {#if current}
+          <div>
+            <dt>On disk</dt>
+            <dd>{current.availability.state === "available" ? mb(current.availability.bytes) : "–"}</dd>
+          </div>
+          <div><dt>Vectors</dt><dd>{current.dims} dimensions, up to {current.maxTokens} tokens per chunk</dd></div>
+          <div>
+            <dt>Licence</dt>
+            <dd>
+              {#if current.licenceUrl}
+                <button class="link" onclick={() => void openUrl(current.licenceUrl)}>{current.licence}</button>
+              {:else}
+                {current.licence}
+              {/if}
+            </dd>
+          </div>
+        {/if}
+        {#if status?.readyModel && status.readyModel !== overview.model}
+          <div><dt>Serving</dt><dd class="mono">{status.readyModel} <span class="muted">until the switch is done</span></dd></div>
+        {/if}
+      </dl>
+    </div>
 
     {#if gpu?.best && gpu.enabled && current && !current.gpu}
       {@const gpuModel = overview.models.find((m) => m.gpu)}
@@ -261,14 +267,17 @@
     <ul class="models">
       {#each overview.models as m (m.id)}
         {@const d = downloads[m.id]}
-        <li>
+        {@const inUse = m.id === overview.model}
+        {@const serving = !inUse && status?.readyModel === m.id}
+        <li class:selected={inUse} class:serving aria-current={inUse ? "true" : undefined}>
           <div class="name">
+            <span class="led" class:on={inUse} class:half={serving} aria-hidden="true"></span>
             <strong>{m.name}</strong>
+            {#if inUse}<span class="badge">In use</span>{:else if serving}<span class="badge outline">Serving until the switch is done</span>{/if}
             <span class="muted mono">{m.id}</span>
           </div>
           <span class="muted" class:unavailable={m.availability.state !== "available" && (m.bundled || m.availability.state !== "missing")}>
-            {availabilityText(m)} · {m.dims} dimensions · {m.licence}{#if m.gpu} · made for the GPU{/if}{#if m.rate != null}
-              · {m.rate.toFixed(1)} notes/s here{/if}
+            {availabilityText(m)} · {m.dims} dimensions · {m.licence}{#if m.gpu}{" · made for the GPU"}{/if}{#if m.rate != null}{` · ${m.rate.toFixed(1)} notes/s here`}{/if}
           </span>
           {#if d?.state === "running"}
             <div class="progress" role="status">
@@ -286,9 +295,7 @@
           {#if modelErrors[m.id]}<span class="error" role="alert">{modelErrors[m.id]}</span>{/if}
           {#if notices[m.id]}<span class="muted">{notices[m.id]}</span>{/if}
           <div class="pick">
-            {#if m.id === overview.model}
-              <span class="muted">In use</span>
-            {:else if m.availability.state === "available"}
+            {#if !inUse && m.availability.state === "available"}
               <button onclick={() => void use(m)} disabled={busy}>Use for this vault</button>
             {/if}
             {#if d?.state === "running"}
@@ -321,21 +328,14 @@
       Check again
     </button>
   </div>
-</section>
+</div>
 
 <style>
-  section {
+  .model {
     display: flex;
     flex-direction: column;
     gap: 12px;
     padding: 20px;
-    scroll-margin-top: 16px;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
   }
 
   h3 {
@@ -347,6 +347,75 @@
   p {
     margin: 0;
     font-size: 13px;
+  }
+
+  .in-use {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--accent);
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent-soft-text);
+  }
+
+  .in-use-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 15px;
+  }
+
+  .in-use dt {
+    color: inherit;
+    opacity: 0.75;
+  }
+
+  /* An LED: lit for the model in use, half-lit for the one serving during a switch. */
+  .led {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    align-self: center;
+  }
+
+  .led.on {
+    border-color: var(--accent);
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .led.half {
+    border-color: var(--accent);
+    background: linear-gradient(90deg, var(--accent) 50%, transparent 50%);
+  }
+
+  .badge {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    align-self: center;
+  }
+
+  .badge.outline {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
   }
 
   .current {
@@ -378,7 +447,7 @@
   .models {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -389,6 +458,23 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-left-width: 4px;
+    border-radius: 8px;
+  }
+
+  .models li.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .models li.selected strong {
+    color: var(--accent-soft-text);
+  }
+
+  .models li.serving {
+    border-left-color: var(--accent);
   }
 
   .name {
@@ -405,6 +491,10 @@
 
   .unavailable {
     color: var(--danger, var(--muted));
+  }
+
+  .pick:empty {
+    display: none;
   }
 
   .pick {
