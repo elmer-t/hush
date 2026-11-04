@@ -115,6 +115,9 @@ pub struct NewNote<'a> {
 
 /// Select list matching [`NoteSummary::from_row`], for queries aliasing `notes` as `n`.
 pub(super) const SUMMARY_COLUMNS: &str = "n.id, n.folder, n.title, n.author, n.topic, n.created_at, n.updated_at, n.rating, n.read_status";
+/// How many columns [`SUMMARY_COLUMNS`] has: a query that selects more after them reads
+/// those from this index on.
+pub(super) const SUMMARY_COLUMN_COUNT: usize = 9;
 
 impl NoteSummary {
     pub(super) fn from_row(r: &Row) -> rusqlite::Result<Self> {
@@ -127,7 +130,7 @@ impl NoteSummary {
             created_at: r.get(5)?,
             updated_at: r.get(6)?,
             rating: r.get(7)?,
-            read_status: r.get(8)?,
+            read_status: r.get(SUMMARY_COLUMN_COUNT - 1)?,
         })
     }
 }
