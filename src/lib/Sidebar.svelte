@@ -29,6 +29,7 @@
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
+  import { searchScheduler } from "$lib/searchTiming";
   import { currentSearch } from "$lib/currentSearch.svelte";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
@@ -84,7 +85,6 @@
   const selectedId = $derived(selected?.id ?? null);
 
   const PAGE_SIZE = 500;
-  const SEARCH_DEBOUNCE_MS = 150;
   // From this many notes left, the footer says indexing stops while locked.
   const PAUSE_NOTICE_MIN = 10_000;
 
@@ -202,20 +202,14 @@
   });
 
   // Search as you type: any change to the text, filters or folder reruns the query.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let firstRun = true;
+  // Typing waits for a pause; the rest searches at once (see `searchTiming`).
+  const search = searchScheduler(() => {
+    queryVersion++;
+    void loadNotes(true);
+  });
   $effect(() => {
-    JSON.stringify([text, filters, selectedFolder]);
-    clearTimeout(timer);
-    timer = setTimeout(
-      () => {
-        queryVersion++;
-        void loadNotes(true);
-      },
-      firstRun ? 0 : SEARCH_DEBOUNCE_MS,
-    );
-    firstRun = false;
-    return () => clearTimeout(timer);
+    search.change({ text, scope: JSON.stringify([filters, selectedFolder]) });
+    return () => search.cancel();
   });
 
   /** Reloads the folder list, filters and the flat list. The tree's notes are only
@@ -626,6 +620,7 @@
         spellcheck="false"
         bind:this={searchInput}
         bind:value={text}
+        onkeydown={(e) => e.key === "Enter" && search.now()}
       />
       {#if text}
         <button class="ghost small icon" aria-label="Clear search" onclick={() => (text = "")}>
