@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
   import { indexText, indexing } from "$lib/indexing";
+  import { searchSummary } from "$lib/search";
   import {
     api,
     errorMessage,
@@ -28,7 +29,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
-  import { activeFilterCount, emptyFilters, searchSummary, toQuery } from "$lib/search";
+  import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import { currentSearch } from "$lib/currentSearch.svelte";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
   import FolderTree from "$lib/FolderTree.svelte";
