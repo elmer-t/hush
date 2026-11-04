@@ -17,6 +17,8 @@ const display = {
   /** Meaning edges per mode: on in the local graph, off in the global one. */
   meaning: { local: true, global: false },
   tags: false,
+  /** Tag nodes of tags on one note only: off, as most are typos or one-offs. */
+  rareTags: false,
   ghosts: false,
   threshold: 0.75,
   cap: 5000,

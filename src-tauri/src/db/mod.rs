@@ -12,6 +12,7 @@ mod metadata;
 mod notes;
 mod reasons;
 mod recent;
+mod retag;
 mod review;
 mod rules;
 mod schema;
@@ -36,15 +37,16 @@ pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
-pub use notes::{NewNote, Note, NoteSummary};
+pub use notes::{NewNote, Note, NoteSummary, ReadStatus};
 pub use reasons::{MAX_VIA, Reasons};
 pub use recent::{
     DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING,
     RECENT_OPENED_SETTING,
 };
+pub use retag::{RetagEnd, RetagPage, TAG_RULES_PROGRESS_SETTING, TAG_RULES_SETTING};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
 pub use schema::Upgrade;
-pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, SearchHit, SearchPage, SearchQuery};
+pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, ReadFilter, SearchHit, SearchPage, SearchQuery};
 pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
 pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote};
 

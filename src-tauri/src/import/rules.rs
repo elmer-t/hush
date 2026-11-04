@@ -10,6 +10,7 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 use super::dates::parse_loose_date;
+use crate::markdown;
 
 /// Compiled patterns are capped so a pathological rule can't eat memory.
 const REGEX_SIZE_LIMIT: usize = 1 << 20;
@@ -296,7 +297,8 @@ fn map_value(map: &[(String, String)], value: &str) -> String {
         .to_string()
 }
 
-/// Splits a value like `"a, #b c"` into tags, replacing characters tags can't hold.
+/// Splits a value like `"a, #b c"` into tags, replacing characters tags can't hold and
+/// dropping what isn't a tag by the rules notes follow ([`markdown::is_tag`]).
 fn tags_of(value: &str) -> Vec<String> {
     value
         .split([',', ';', ' ', '\t'])
@@ -309,7 +311,7 @@ fn tags_of(value: &str) -> Vec<String> {
                 .collect();
             t.trim_matches(['-', '/']).to_string()
         })
-        .filter(|t| !t.is_empty() && !t.chars().all(|c| c.is_ascii_digit()))
+        .filter(|t| markdown::is_tag(t))
         .collect()
 }
 
@@ -445,8 +447,12 @@ mod tests {
         let out = run(&[date], "", "when: Fri, 12 Mar 2004 07:45:00 +0100", "");
         assert_eq!(out.created_at, Some(1_079_073_900_000));
         let tag = rule(Source::Body, r"tags: (.+)", Target::Tag);
-        assert_eq!(run(std::slice::from_ref(&tag), "", "", "tags: a, #b c/d").tags, ["a", "b", "c/d"]);
-        assert_eq!(run(&[tag], "", "", "tags: !!").warnings, ["rule 'r': '!!' is not a valid tag"]);
+        assert_eq!(run(std::slice::from_ref(&tag), "", "", "tags: aa, #bb c/d").tags, ["aa", "bb", "c/d"]);
+        assert_eq!(run(std::slice::from_ref(&tag), "", "", "tags: !!").warnings, ["rule 'r': '!!' is not a valid tag"]);
+        // The same rules as tags written in a note (`markdown::is_tag`).
+        let out = run(&[tag], "", "", "tags: a, 1st, 1e1e1e, 12, ok");
+        assert_eq!(out.tags, ["ok"]);
+        assert!(out.warnings.is_empty(), "one valid tag is enough");
     }
 
     #[test]

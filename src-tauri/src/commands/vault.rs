@@ -101,6 +101,7 @@ fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, pat
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
     training::start(app, generation);
+    training::start_retag(app, generation);
     activity::start(app, generation);
     // A config write failure must not keep the user out of an unlocked vault.
     let _ = config.update(|c| c.remember(&path));

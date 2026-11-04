@@ -75,7 +75,7 @@
 
   $effect(() => {
     const sc = scope;
-    const options = { meaning, tags: s.tags, ghosts: s.ghosts, threshold: s.threshold, neighbours: NEIGHBOURS, cap: s.cap };
+    const options = { meaning, tags: s.tags, rareTags: s.rareTags, ghosts: s.ghosts, threshold: s.threshold, neighbours: NEIGHBOURS, cap: s.cap };
     void load(sc, options);
   });
 
@@ -468,6 +468,9 @@
     <label class="chk"><input type="checkbox" bind:checked={s.links} /> Links</label>
     <label class="chk"><input type="checkbox" bind:checked={s.meaning[s.mode]} /> Meaning</label>
     <label class="chk"><input type="checkbox" bind:checked={s.tags} /> Tags</label>
+    <label class="chk" title="Also show tags that only one note has">
+      <input type="checkbox" bind:checked={s.rareTags} disabled={!s.tags} /> One-note tags
+    </label>
     <label class="chk"><input type="checkbox" bind:checked={s.ghosts} /> Unresolved</label>
     <label class="ctl" title="Lowest similarity of a meaning edge">
       ≥

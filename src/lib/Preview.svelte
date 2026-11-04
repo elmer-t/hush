@@ -1,8 +1,10 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { untrack } from "svelte";
+  import { findPattern, step, type FindSpec } from "$lib/find";
   import { renderMarkdown } from "$lib/markdown";
   import { diagrams } from "$lib/mermaid";
+  import { clear, findRanges, firstVisible, liveHighlights, paint, reveal } from "$lib/previewFind";
 
   type Props = {
     body: string;
@@ -10,8 +12,14 @@
     large?: boolean;
     /** A `[[wikilink]]` was clicked at viewport position `x`, `y`. */
     onwikilink?: (target: string, x: number, y: number) => void;
+    /** The find bar's query, highlighted in the rendered text; null when the bar is closed. */
+    find?: FindSpec | null;
+    /** Whether this pane leads the find: it then has a current match and reports it. */
+    findLead?: boolean;
+    /** The current match (-1 for none) and the number of matches, after each change. */
+    onfindresult?: (current: number, total: number) => void;
   };
-  let { body, large = false, onwikilink }: Props = $props();
+  let { body, large = false, onwikilink, find = null, findLead = false, onfindresult }: Props = $props();
 
   const html = $derived(renderMarkdown(body));
 
@@ -30,6 +38,53 @@
   });
 
   $effect(() => () => mermaid?.destroy());
+
+  let ranges: Range[] = [];
+  let current = -1;
+  let lastQuery = "";
+
+  // Finds again after every render and query change; the highlights don't alter the DOM.
+  $effect(() => {
+    html;
+    const spec = find;
+    const lead = findLead;
+    untrack(() => {
+      clear(article);
+      const pattern = spec && findPattern(spec.query, spec);
+      ranges = pattern ? findRanges(article, pattern) : [];
+      const key = spec ? JSON.stringify([spec.query, spec.caseSensitive, spec.wholeWord, spec.regexp]) : "";
+      if (!lead || ranges.length === 0) current = -1;
+      else if (key !== lastQuery || current < 0) current = firstVisible(ranges);
+      else current = Math.min(current, ranges.length - 1);
+      const moved = key !== lastQuery;
+      lastQuery = key;
+      paint(ranges, current);
+      if (lead && moved) reveal(ranges[current]);
+      if (lead) onfindresult?.(current, ranges.length);
+    });
+  });
+
+  $effect(() => () => clear(article));
+
+  /** Moves to the next (`dir` 1) or previous (-1) match, wrapping around. */
+  export function findStep(dir: 1 | -1) {
+    if (!findLead || ranges.length === 0) return;
+    current = step(current, ranges.length, dir);
+    clear(article);
+    // The `<mark>` fallback rebuilt the text nodes, so the ranges are found again.
+    const pattern = find && findPattern(find.query, find);
+    if (pattern && !liveHighlights()) ranges = findRanges(article, pattern);
+    paint(ranges, current);
+    reveal(ranges[current]);
+    onfindresult?.(current, ranges.length);
+  }
+
+  /** The text selected in the preview, if any. */
+  export function selectedText(): string {
+    const selection = getSelection();
+    if (!selection || selection.isCollapsed || !article.contains(selection.anchorNode)) return "";
+    return selection.toString();
+  }
 
   // Wikilinks open notes; external links open in the system browser; nothing else navigates.
   function onclick(e: MouseEvent) {

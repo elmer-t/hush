@@ -3,6 +3,7 @@
   import { api, errorMessage, type SuggestionThreshold, type TagInfo } from "$lib/api";
   import DiscoverTags from "$lib/DiscoverTags.svelte";
   import TagTraining from "$lib/TagTraining.svelte";
+  import { groupTags, PAGE_SIZE, shownCount } from "$lib/tagGroups";
 
   type Props = {
     /** Opens the Suggestions view for a tag. */
@@ -11,6 +12,11 @@
   let { onreview }: Props = $props();
 
   let tags = $state<TagInfo[]>([]);
+  // Most-used first, rare ones folded away, a page at a time (see `tagGroups`).
+  const groups = $derived(groupTags(tags, (t) => t));
+  let pages = $state(1);
+  let rarePages = $state(1);
+  let rareOpen = $state(false);
   let loaded = $state(false);
   let error = $state("");
   // The tag whose description was saved last, for a short confirmation next to it.
@@ -98,6 +104,40 @@
   }
 </script>
 
+{#snippet list(items: TagInfo[], pageCount: number, more: () => void)}
+  {@const shown = shownCount(items.length, pageCount)}
+  <ul class="list">
+    {#each items.slice(0, shown) as info (info.tag)}
+      <li>
+        <div class="name">
+          <span class="tag">#{info.tag}</span>
+          <span class="muted count">{info.notes === 1 ? "1 note" : `${info.notes} notes`}</span>
+          {#if savedTag === info.tag}<span class="muted count">Saved.</span>{/if}
+          <button
+            type="button"
+            class="ghost small review"
+            title="Review #{info.tag}'s suggestions across the vault"
+            onclick={() => onreview(info.tag)}
+          >
+            Review suggestions
+          </button>
+        </div>
+        <input
+          value={info.description}
+          placeholder="No description: not suggested"
+          aria-label="Description of {info.tag}"
+          onchange={(e) => saveDescription(info, e.currentTarget.value)}
+        />
+      </li>
+    {/each}
+  </ul>
+  {#if shown < items.length}
+    <button type="button" class="ghost small more" onclick={more}>
+      Show {Math.min(PAGE_SIZE, items.length - shown)} more ({(items.length - shown).toLocaleString()} not shown)
+    </button>
+  {/if}
+{/snippet}
+
 <!-- Settings gives this its "Tags" section header. -->
 <div class="card tags">
   <p class="muted">
@@ -110,31 +150,15 @@
   {#if loaded && tags.length === 0}
     <p class="muted">No tags yet.</p>
   {:else}
-    <ul class="list">
-      {#each tags as info (info.tag)}
-        <li>
-          <div class="name">
-            <span class="tag">#{info.tag}</span>
-            <span class="muted count">{info.notes === 1 ? "1 note" : `${info.notes} notes`}</span>
-            {#if savedTag === info.tag}<span class="muted count">Saved.</span>{/if}
-            <button
-              type="button"
-              class="ghost small review"
-              title="Review #{info.tag}'s suggestions across the vault"
-              onclick={() => onreview(info.tag)}
-            >
-              Review suggestions
-            </button>
-          </div>
-          <input
-            value={info.description}
-            placeholder="No description: not suggested"
-            aria-label="Description of {info.tag}"
-            onchange={(e) => saveDescription(info, e.currentTarget.value)}
-          />
-        </li>
-      {/each}
-    </ul>
+    {@render list(groups.main, pages, () => pages++)}
+    {#if groups.rare.length > 0}
+      <details class="rare" bind:open={rareOpen}>
+        <summary>Rare tags ({groups.rare.length.toLocaleString()})</summary>
+        {#if rareOpen}
+          {@render list(groups.rare, rarePages, () => rarePages++)}
+        {/if}
+      </details>
+    {/if}
   {/if}
 
   <form class="add" onsubmit={addTag}>
@@ -225,6 +249,23 @@
   .review {
     margin-left: auto;
     flex: none;
+  }
+
+  .more {
+    align-self: flex-start;
+  }
+
+  .rare {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .rare summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 10px;
   }
 
   input {

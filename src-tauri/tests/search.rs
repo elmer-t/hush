@@ -1,6 +1,6 @@
 mod common;
 
-use hush_lib::db::{DateField, Facets, NewNote, SearchQuery, Vault};
+use hush_lib::db::{DateField, Facets, NewNote, ReadFilter, ReadStatus, SearchQuery, Vault};
 use hush_lib::markdown::parse_date;
 
 fn titles(vault: &Vault, q: &SearchQuery) -> Vec<String> {
@@ -335,6 +335,103 @@ fn min_rating_filter() {
     assert_eq!(titles(&vault, &q(Some(0), "")).len(), 6, "0 is no filter");
     let rated: Vec<Option<u8>> = vault.search(&q(Some(5), "")).unwrap().into_iter().map(|h| h.note.rating).collect();
     assert_eq!(rated, [Some(5)], "summaries carry the rating");
+}
+
+#[test]
+fn read_status_filter() {
+    let (_dir, mut vault) = common::vault();
+    let mut ids = Vec::new();
+    for (folder, title) in [("a", "Fresh"), ("a", "Half"), ("a", "Done"), ("b", "Other fresh"), ("b", "Other done")] {
+        ids.push(vault.create_note(folder, title, "lighthouse").unwrap());
+    }
+    vault.create_note("a", "Elsewhere", "nothing").unwrap();
+    vault.set_read_status(&[ids[1]], ReadStatus::PartlyRead).unwrap();
+    vault.set_read_status(&[ids[2], ids[4]], ReadStatus::Read).unwrap();
+
+    fn sorted_in(vault: &Vault, filter: Option<ReadFilter>, text: &str, folder: Option<&str>) -> Vec<String> {
+        let q = SearchQuery { read_status: filter, text: text.into(), folder: folder.map(Into::into), ..Default::default() };
+        let mut t = titles(vault, &q);
+        t.sort();
+        t
+    }
+    use ReadFilter::*;
+    assert_eq!(sorted_in(&vault, Some(Unread), "", None), ["Elsewhere", "Fresh", "Other fresh"]);
+    assert_eq!(sorted_in(&vault, Some(PartlyRead), "", None), ["Half"]);
+    assert_eq!(sorted_in(&vault, Some(Read), "", None), ["Done", "Other done"]);
+    assert_eq!(sorted_in(&vault, Some(NotFinished), "", None), ["Elsewhere", "Fresh", "Half", "Other fresh"]);
+    assert_eq!(sorted_in(&vault, None, "", None).len(), 6);
+
+    assert_eq!(sorted_in(&vault, Some(Unread), "lighthouse", None), ["Fresh", "Other fresh"]);
+    assert_eq!(sorted_in(&vault, Some(PartlyRead), "lighthouse", None), ["Half"]);
+    assert_eq!(sorted_in(&vault, Some(Read), "lighthouse", None), ["Done", "Other done"]);
+    assert_eq!(sorted_in(&vault, Some(NotFinished), "lighthouse", None), ["Fresh", "Half", "Other fresh"]);
+
+    assert_eq!(sorted_in(&vault, Some(NotFinished), "", Some("a")), ["Elsewhere", "Fresh", "Half"]);
+    assert_eq!(sorted_in(&vault, Some(Read), "", Some("b")), ["Other done"]);
+    assert_eq!(sorted_in(&vault, Some(Read), "lighthouse", Some("a")), ["Done"]);
+    assert_eq!(sorted_in(&vault, Some(Unread), "lighthouse", Some("b")), ["Other fresh"]);
+
+    // With another filter that picks its own index.
+    vault.update_body(ids[2], "---\nrating: 5\n---\nlighthouse").unwrap();
+    let q = SearchQuery { read_status: Some(Read), min_rating: Some(4), ..Default::default() };
+    assert_eq!(titles(&vault, &q), ["Done"]);
+
+    let statuses: Vec<ReadStatus> =
+        vault.search(&SearchQuery { read_status: Some(Read), ..Default::default() }).unwrap().into_iter().map(|h| h.note.read_status).collect();
+    assert_eq!(statuses, [ReadStatus::Read, ReadStatus::Read], "summaries carry the status");
+    // Trashed notes never match.
+    vault.trash_note(ids[4]).unwrap();
+    assert_eq!(sorted_in(&vault, Some(Read), "", None), ["Done"]);
+}
+
+/// Each read-status filter without search text at 1M notes, 1% partly read and 5% read,
+/// against the same page without a filter (issue #124). Only runs on request:
+///
+/// ```text
+/// cargo test --release --manifest-path src-tauri/Cargo.toml --test search -- --ignored --nocapture read_status
+/// ```
+#[test]
+#[ignore = "timing: builds a 1M-note vault"]
+fn read_status_filter_at_1m_notes() {
+    const NOTES: usize = 1_000_000;
+    let (_dir, mut vault) = common::vault();
+    let notes: Vec<(String, String, String)> =
+        (0..NOTES).map(|i| (format!("f{}", i % 50_000), format!("Note {i}"), format!("note {i}"))).collect();
+    let mut ids = Vec::with_capacity(NOTES);
+    for chunk in notes.chunks(10_000) {
+        let batch: Vec<NewNote> = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, (f, t, b))| NewNote { folder: f, title: t, body: b, created_at: j as i64, updated_at: j as i64 })
+            .collect();
+        ids.extend(vault.import_notes(&batch).unwrap().into_iter().map(|r| r.unwrap()));
+    }
+    let partly: Vec<i64> = ids.iter().copied().step_by(100).collect();
+    let read: Vec<i64> = ids.iter().copied().skip(1).step_by(20).collect();
+    vault.set_read_status(&partly, ReadStatus::PartlyRead).unwrap();
+    vault.set_read_status(&read, ReadStatus::Read).unwrap();
+    for (name, filter, folder) in [
+        ("none", None, None),
+        ("unread", Some(ReadFilter::Unread), None),
+        ("partly read", Some(ReadFilter::PartlyRead), None),
+        ("read", Some(ReadFilter::Read), None),
+        ("not finished", Some(ReadFilter::NotFinished), None),
+        ("none, folder f7", None, Some("f7")),
+        ("not finished, folder f7", Some(ReadFilter::NotFinished), Some("f7")),
+        ("not finished, text \"note 12\"", Some(ReadFilter::NotFinished), None),
+    ] {
+        let text = if name.contains("text") { "note 12" } else { "" };
+        let q = SearchQuery { read_status: filter, folder: folder.map(Into::into), text: text.into(), limit: Some(500), ..Default::default() };
+        let mut times = Vec::new();
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            let hits = vault.search(&q).unwrap();
+            times.push(t.elapsed());
+            assert!(!hits.is_empty(), "{name}");
+        }
+        times.sort();
+        println!("read status {name} at 1M notes: first page median {:?}, all {times:?}", times[2]);
+    }
 }
 
 /// The "★ 4+" filter alone at 1M notes, 1% of them rated (issue #56). Ignored, so it

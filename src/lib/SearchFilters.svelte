@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Facets } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  import { READ_FILTERS } from "$lib/readStatus.svelte";
   import { emptyFilters, type Filters } from "$lib/search";
 
   type Props = { filters: Filters; facets: Facets };
@@ -85,6 +86,13 @@
         <option value={0}>Any</option>
         {#each [1, 2, 3, 4] as n (n)}<option value={n}>★ {n}+</option>{/each}
         <option value={5}>★ 5</option>
+      </select>
+    </label>
+    <label class:set={filters.readStatus}>
+      Read status
+      <select bind:value={filters.readStatus}>
+        <option value="">Any</option>
+        {#each READ_FILTERS as f (f.value)}<option value={f.value}>{f.label}</option>{/each}
       </select>
     </label>
   </div>

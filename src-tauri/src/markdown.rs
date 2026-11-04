@@ -14,6 +14,31 @@ static TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|[\s(,;])#([\p{L}\p{N}_\-/]+)").unwrap());
 static WIKILINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(!?)\[\[([^\[\]\n]+)\]\]").unwrap());
 static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`\n]+`").unwrap());
+/// Bare URLs (`https://…`, `www.…`), whose `#fragment` isn't a tag.
+static URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:[a-z][a-z0-9+.\-]*://|www\.)\S+").unwrap());
+/// HTML tags with their attributes, and `<style>` blocks, as HTML and Evernote exports
+/// leave them: `<font color="#333333">`, `style="color: #fff"`.
+static HTML: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)<style\b[\s\S]*?</style\s*>|</?[a-z][a-z0-9-]*(?:\s[^<>]*)?/?>").unwrap());
+static LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\p{L}").unwrap());
+static ORDINAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^[0-9]+(?:st|nd|rd|th)$").unwrap());
+static HEX_COLOUR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$").unwrap());
+
+/// Bumped whenever the tag rules change ([`is_tag`] or what [`parse`] skips), so the
+/// background re-derive pass (`crate::retag`) runs once more on every vault.
+pub const TAG_RULES_VERSION: u32 = 1;
+
+/// Whether `name` (without the `#`) can be a tag, wherever it was written: inline, in
+/// the frontmatter or by an import rule. It needs a letter and at least two characters,
+/// and isn't an ordinal (`1st`) or a hex colour with a digit in it (`1e1e1e`, `f00`);
+/// all-letter ones (`cafe`, `bad`) can be words and are kept.
+pub fn is_tag(name: &str) -> bool {
+    name.chars().nth(1).is_some()
+        && LETTER.is_match(name)
+        && !ORDINAL.is_match(name)
+        && !(HEX_COLOUR.is_match(name) && name.contains(|c: char| c.is_ascii_digit()))
+}
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Parsed {
@@ -24,7 +49,8 @@ pub struct Parsed {
     /// Unix millis from frontmatter `created` (or `date`).
     pub created_at: Option<i64>,
     pub tags: Vec<String>,
-    /// The subset of `tags` listed in the frontmatter (as opposed to inline `#tags`).
+    /// Every value of the frontmatter `tags`, as written: the frontmatter part of `tags`
+    /// plus any value [`is_tag`] rejects, so rewriting the list never drops one.
     pub frontmatter_tags: Vec<String>,
     /// Every other frontmatter key, lowercased; list values become one pair per item.
     pub attributes: Vec<(String, String)>,
@@ -55,11 +81,13 @@ pub fn parse(body: &str) -> Parsed {
     let in_code = |pos: usize| code.iter().any(|r| r.contains(&pos));
     let content = &body[content_start..];
 
+    let skipped = not_tag_ranges(content, code.iter().map(|r| r.start - content_start..r.end - content_start));
     for caps in TAG.captures_iter(content) {
         let m = caps.get(1).unwrap();
         let tag = m.as_str().trim_end_matches('/');
-        // "#123" is an issue number, not a tag.
-        if in_code(content_start + m.start()) || tag.is_empty() || tag.chars().all(|c| c.is_ascii_digit()) {
+        let hash = m.start() - 1;
+        if in_ranges(&skipped, hash) || !is_tag(tag) || content[..hash].ends_with("](") || is_css_value(content, tag, m.end())
+        {
             continue;
         }
         push_unique(&mut parsed.tags, tag);
@@ -255,8 +283,10 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
                 for tag in values.iter().flat_map(|v| v.split([',', ' '])) {
                     let tag = tag.trim().trim_start_matches('#');
                     if !tag.is_empty() {
-                        push_unique(&mut parsed.tags, tag);
                         push_unique(&mut parsed.frontmatter_tags, tag);
+                    }
+                    if is_tag(tag) {
+                        push_unique(&mut parsed.tags, tag);
                     }
                 }
             }
@@ -339,6 +369,75 @@ fn code_ranges(body: &str, from: usize) -> Vec<Range<usize>> {
     ranges
 }
 
+/// Byte ranges of `content` where a `#word` is never a tag, sorted and merged: `code`
+/// (fenced and inline), indented code blocks, bare URLs and HTML tags.
+fn not_tag_ranges(content: &str, code: impl Iterator<Item = Range<usize>>) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = code.collect();
+    ranges.extend(indented_code(content));
+    ranges.extend(URL.find_iter(content).map(|m| m.range()));
+    // Most notes have no HTML: skip the scan.
+    if content.contains('<') {
+        ranges.extend(HTML.find_iter(content).map(|m| m.range()));
+    }
+    ranges.sort_by_key(|r| r.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+    merged
+}
+
+fn in_ranges(sorted: &[Range<usize>], pos: usize) -> bool {
+    let i = sorted.partition_point(|r| r.end <= pos);
+    sorted.get(i).is_some_and(|r| r.contains(&pos))
+}
+
+/// Indented code blocks: lines indented by a tab or four spaces that follow a blank
+/// line (or another such line). An indented list item, or a line inside a list or a
+/// paragraph, isn't code.
+fn indented_code(content: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let (mut pos, mut after_blank, mut after_code, mut in_list) = (0, true, false, false);
+    for line in content.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\r', '\n']);
+        let start = pos;
+        pos += line.len();
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            after_blank = true;
+            continue;
+        }
+        let indented = text.starts_with('\t') || text.starts_with("    ");
+        let list_item = is_list_item(trimmed);
+        let code = indented && !list_item && !in_list && (after_blank || after_code);
+        if code {
+            ranges.push(start..pos);
+        } else if list_item {
+            in_list = true;
+        } else if !indented {
+            in_list = false;
+        }
+        after_code = code;
+        after_blank = false;
+    }
+    ranges
+}
+
+/// `- x`, `* x`, `+ x`, `1. x`, `1) x`.
+fn is_list_item(line: &str) -> bool {
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    let marker = if rest.len() < line.len() { rest.strip_prefix(['.', ')']) } else { line.strip_prefix(['-', '*', '+']) };
+    marker.is_some_and(|r| r.is_empty() || r.starts_with([' ', '\t']))
+}
+
+/// A hex colour in a CSS declaration (`color: #fff;`), followed by `;` or `}`.
+fn is_css_value(content: &str, tag: &str, end: usize) -> bool {
+    HEX_COLOUR.is_match(tag) && content[end..].trim_start_matches([' ', '\t']).starts_with([';', '}'])
+}
+
 /// Tags are case-sensitive: `jr` and `Jr` are both kept.
 fn push_unique(list: &mut Vec<String>, value: &str) {
     if !list.iter().any(|v| v == value) {
@@ -388,7 +487,7 @@ mod tests {
 
     #[test]
     fn comma_separated_tag_string() {
-        assert_eq!(parse("---\ntags: \"a, #b\"\n---\n").tags, vec!["a", "b"]);
+        assert_eq!(parse("---\ntags: \"aa, #bb\"\n---\n").tags, vec!["aa", "bb"]);
     }
 
     #[test]
@@ -402,6 +501,76 @@ mod tests {
     fn inline_tags() {
         let p = parse("# Heading\n#one and #two/sub, (#three) #123 a#notatag http://x/#anchor #One");
         assert_eq!(p.tags, vec!["one", "two/sub", "three", "One"], "tags are case-sensitive");
+    }
+
+    fn tags(body: &str) -> Vec<String> {
+        parse(body).tags
+    }
+
+    #[test]
+    fn anchor_links_are_not_tags() {
+        assert!(tags("[A](#a) | [Z](#z)").is_empty());
+        assert!(tags("[Intro](#introduction) and [Next](#next-steps)").is_empty(), "longer anchors too");
+    }
+
+    #[test]
+    fn css_colours_are_not_tags() {
+        assert!(tags("color: #fff; border: #1e1e1e").is_empty());
+        assert!(tags("#a0a0a0 and #1E1E1E and #f00 and #12ab").is_empty(), "hex colours with a digit");
+        assert!(tags("<p style=\"color: #cafe\">x</p>").is_empty(), "inside an HTML tag");
+    }
+
+    #[test]
+    fn indented_code_is_skipped() {
+        assert_eq!(tags("Some C:\n\n    #include <stdio.h>\n    #define X 1\n\n#real"), ["real"]);
+        assert!(tags("\tint x; #notatag\n").is_empty(), "a tab counts as indentation");
+        assert_eq!(tags("- item #one\n    - sub #two\n\t- tab #three"), ["one", "two", "three"], "nested list items are not code");
+        assert_eq!(tags("A paragraph\n    still the paragraph #kept"), ["kept"], "indentation can't interrupt a paragraph");
+    }
+
+    #[test]
+    fn numbers_and_ordinals_are_not_tags() {
+        assert!(tags("#1-3, #12/13, #1st #2nd #3rd #4th #1").is_empty());
+        assert_eq!(tags("#2024-review #3d #v2"), ["2024-review", "3d", "v2"], "a letter beyond an ordinal suffix is enough");
+    }
+
+    #[test]
+    fn single_characters_are_not_tags() {
+        assert_eq!(tags("#a #Z #é #ok"), ["ok"]);
+    }
+
+    #[test]
+    fn urls_and_html_attributes_are_skipped() {
+        assert!(tags("see https://example.com/a(#frag) and www.example.com/x,#part").is_empty());
+        assert!(tags("<a href=\"#top\" title=\"x #note\">up</a>").is_empty());
+        assert_eq!(tags("<b>bold</b> #after"), ["after"], "text between HTML tags still counts");
+    }
+
+    #[test]
+    fn real_tags_are_kept() {
+        assert_eq!(
+            tags("#work and #two/sub, (#three) #café #cafe #bad #fff"),
+            ["work", "two/sub", "three", "café", "cafe", "bad", "fff"],
+            "all-letter hex words are words"
+        );
+    }
+
+    #[test]
+    fn frontmatter_tags_follow_the_same_rules() {
+        let p = parse("---\ntags: [1, a, ok, 1e1e1e, 2nd]\n---\n");
+        assert_eq!(p.tags, ["ok"]);
+        assert_eq!(p.frontmatter_tags, ["1", "a", "ok", "1e1e1e", "2nd"], "kept as written, so edits don't drop them");
+        assert!(tags("---\ntag: \"#1, #b\"\n---\n").is_empty());
+    }
+
+    #[test]
+    fn is_tag_rules() {
+        for good in ["ok", "work", "two/sub", "café", "cafe", "bad", "2024-review", "x1", "Ab"] {
+            assert!(is_tag(good), "{good}");
+        }
+        for bad in ["", "a", "1", "123", "1-3", "12/13", "1st", "22ND", "1e1e1e", "a0a0a0", "f00", "12ab", "--", "_/"] {
+            assert!(!is_tag(bad), "{bad}");
+        }
     }
 
     #[test]

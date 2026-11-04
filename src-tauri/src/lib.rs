@@ -8,6 +8,7 @@ pub mod embed;
 pub mod graph;
 pub mod import;
 pub mod markdown;
+pub mod retag;
 pub mod session;
 
 use std::time::Duration;
@@ -135,6 +136,7 @@ pub fn run() {
             commands::notes::move_notes,
             commands::notes::move_folder,
             commands::notes::edit_notes_metadata,
+            commands::notes::set_read_status,
             commands::notes::trash_entries,
             commands::notes::trash_count,
             commands::notes::folder_contents,
