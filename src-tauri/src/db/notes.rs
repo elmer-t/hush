@@ -500,11 +500,15 @@ impl Vault {
 
     /// Every folder that contains at least one note, sorted.
     pub fn folders(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL ORDER BY folder")?;
+        let mut stmt = self.conn.prepare_cached(FOLDERS_QUERY)?;
         let folders = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(folders)
     }
 }
+
+/// Lists folders from the `folders` table, which the triggers keep in step with the live
+/// notes, so the cost follows the number of folders rather than notes.
+const FOLDERS_QUERY: &str = "SELECT path FROM folders ORDER BY path";
 
 /// Matches folder `?1` and every folder below it, case-insensitively like the column, as
 /// one range on the `folder` index rather than a scan: `?2` is `?1/` and `?3` is `?1`
@@ -681,5 +685,196 @@ mod tests {
         vault.close().unwrap();
         let vault = Vault::open(&path, "pass").unwrap();
         assert_eq!(stored_hashsize(&vault), Some(DEFAULT_FTS_BYTES));
+    }
+
+    /// The `folders` table as `(lowercased path, notes)`, and every stored spelling.
+    fn folder_rows(v: &Vault) -> (Vec<(String, i64)>, Vec<String>) {
+        let rows: Vec<(String, i64)> = v
+            .conn
+            .prepare("SELECT path, notes FROM folders ORDER BY path")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let spellings = rows.iter().map(|(p, _)| p.clone()).collect();
+        (rows.into_iter().map(|(p, n)| (p.to_lowercase(), n)).collect(), spellings)
+    }
+
+    /// Asserts the `folders` table holds exactly the live notes per folder, recounted from
+    /// `notes`, and that each stored spelling is one a live note uses.
+    fn assert_folders_match(v: &Vault, step: &str) {
+        let expected: Vec<(String, i64)> = v
+            .conn
+            .prepare("SELECT lower(folder), count(*) FROM notes WHERE deleted_at IS NULL GROUP BY lower(folder) ORDER BY lower(folder)")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let (rows, spellings) = folder_rows(v);
+        assert_eq!(rows, expected, "after {step}");
+        for path in spellings {
+            let used: bool = v
+                .conn
+                .prepare("SELECT 1 FROM notes WHERE folder = ?1 COLLATE BINARY AND deleted_at IS NULL")
+                .unwrap()
+                .exists([&path])
+                .unwrap();
+            assert!(used, "after {step}: stored spelling {path:?} is not used by a live note");
+        }
+        let listed = v.folders().unwrap();
+        let distinct: Vec<String> = expected.iter().map(|(p, _)| p.clone()).collect();
+        assert_eq!(listed.iter().map(|f| f.to_lowercase()).collect::<Vec<_>>(), distinct, "folders() after {step}");
+    }
+
+    /// Every way a note enters, leaves or changes folder keeps the `folders` table's
+    /// counts right: a folder's row goes when its last live note leaves, and trashed
+    /// notes don't count.
+    #[test]
+    fn folders_table_follows_every_write_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        assert_folders_match(&v, "create vault");
+
+        let root = v.create_note("", "Root", "x").unwrap();
+        let a1 = v.create_note("a", "One", "x").unwrap();
+        let a2 = v.create_note("a", "Two", "x").unwrap();
+        let ab = v.create_note("a/b", "Deep", "x").unwrap();
+        let untitled = v.create_untitled("c", "x").unwrap();
+        assert_folders_match(&v, "create");
+        assert_eq!(folder_rows(&v).0, [("".into(), 1), ("a".into(), 2), ("a/b".into(), 1), ("c".into(), 1)]);
+
+        let imported = v
+            .import_notes(&[
+                NewNote { folder: "d", title: "I1", body: "x", created_at: 1, updated_at: 1 },
+                NewNote { folder: "d/e", title: "I2", body: "x", created_at: 1, updated_at: 1 },
+                NewNote { folder: "a", title: "One", body: "taken", created_at: 1, updated_at: 1 },
+            ])
+            .unwrap();
+        assert!(imported[2].is_err(), "a clashing title isn't inserted");
+        assert_folders_match(&v, "import");
+
+        v.move_notes(&[a1], "c").unwrap();
+        assert_folders_match(&v, "move note");
+        v.rename_note(untitled, "f", "Renamed").unwrap();
+        assert_folders_match(&v, "rename into another folder");
+        v.update_body(a2, "edited").unwrap();
+        assert_folders_match(&v, "edit");
+
+        v.move_folder("d", "c").unwrap();
+        assert_folders_match(&v, "move folder into an existing one");
+        v.move_folder("a", "g").unwrap();
+        assert_folders_match(&v, "move folder");
+
+        v.trash_note(root).unwrap();
+        assert_folders_match(&v, "trash note");
+        assert!(folder_rows(&v).0.iter().all(|(p, _)| !p.is_empty()), "the root's last note left");
+        v.restore_note(root).unwrap();
+        assert_folders_match(&v, "restore note");
+
+        v.trash_folder("g").unwrap();
+        assert_folders_match(&v, "trash folder");
+        let group = v
+            .trash_entries(0, 10)
+            .unwrap()
+            .into_iter()
+            .find_map(|e| match e {
+                crate::db::TrashEntry::Folder { deleted_at, .. } => Some(deleted_at),
+                _ => None,
+            })
+            .unwrap();
+        v.restore_folder(group).unwrap();
+        assert_folders_match(&v, "restore folder");
+
+        v.trash_folder("g").unwrap();
+        let group = v
+            .trash_entries(0, 10)
+            .unwrap()
+            .into_iter()
+            .find_map(|e| match e {
+                crate::db::TrashEntry::Folder { deleted_at, .. } => Some(deleted_at),
+                _ => None,
+            })
+            .unwrap();
+        v.delete_trash_folder(group).unwrap();
+        assert_folders_match(&v, "delete trashed folder");
+
+        v.trash_note(a1).unwrap();
+        v.empty_trash().unwrap();
+        assert_folders_match(&v, "empty trash");
+        let live = v.create_note("h", "Live", "x").unwrap();
+        v.delete_note(live).unwrap();
+        assert_folders_match(&v, "delete note");
+        let _ = ab;
+    }
+
+    /// `Projects` and `projects` are one folder with one row; when the spelling the row
+    /// shows is no longer used, it takes a spelling a remaining note uses.
+    #[test]
+    fn case_variant_folders_share_one_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let upper = v.create_note("Projects", "A", "x").unwrap();
+        v.create_note("projects", "B", "x").unwrap();
+        assert_eq!(folder_rows(&v).0, [("projects".into(), 2)]);
+        assert_eq!(v.folders().unwrap(), ["Projects"], "the first spelling stays");
+        v.trash_note(upper).unwrap();
+        assert_eq!(v.folders().unwrap(), ["projects"], "the remaining note's spelling");
+        assert_folders_match(&v, "trash the shown spelling");
+    }
+
+    /// Random creates, moves, renames, trashes, restores and deletes over a few folders
+    /// (with case variants) never let the table drift from a recount.
+    #[test]
+    fn folders_table_survives_random_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        const FOLDERS: [&str; 7] = ["", "a", "A", "a/b", "A/B", "c", "c/d/e"];
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let ids = |v: &Vault, live: bool| -> Vec<i64> {
+            let sql = if live { "SELECT id FROM notes WHERE deleted_at IS NULL" } else { "SELECT id FROM notes WHERE deleted_at IS NOT NULL" };
+            v.conn.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        for step in 0..400 {
+            let live = ids(&v, true);
+            let trashed = ids(&v, false);
+            let op = next(8);
+            let folder = FOLDERS[next(FOLDERS.len())];
+            let _ = match op {
+                0 | 1 => v.create_note(folder, &format!("N{step}"), "x").map(|_| ()),
+                2 if !live.is_empty() => v.move_notes(&[live[next(live.len())]], folder),
+                3 if !live.is_empty() => v.trash_note(live[next(live.len())]),
+                4 if !trashed.is_empty() => v.restore_note(trashed[next(trashed.len())]).map(|_| ()),
+                5 if !live.is_empty() => v.delete_note(live[next(live.len())]),
+                6 if !folder.is_empty() => v.trash_folder(folder).map(|_| ()),
+                7 if !folder.is_empty() => v.move_folder(folder, FOLDERS[next(FOLDERS.len())]).map(|_| ()),
+                _ => Ok(()),
+            };
+            assert_folders_match(&v, &format!("step {step} op {op} {folder:?}"));
+        }
+    }
+
+    /// Listing folders reads the `folders` table, not the notes or their index.
+    #[test]
+    fn folders_reads_the_folders_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let plan: Vec<String> = v
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {FOLDERS_QUERY}"))
+            .unwrap()
+            .query_map([], |r| r.get(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let plan = plan.join("\n");
+        assert!(plan.contains("folders") && !plan.contains("notes"), "{plan}");
     }
 }

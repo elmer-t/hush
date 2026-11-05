@@ -5,6 +5,7 @@
   import Icon from "$lib/Icon.svelte";
   import { readStatusOf } from "$lib/readStatus.svelte";
   import ReadMark from "$lib/ReadMark.svelte";
+  import { collator, folderChildren } from "$lib/folderTree";
   import { normalizeFolder } from "$lib/markdown";
   import { selectionKeys } from "$lib/selection";
 
@@ -76,23 +77,7 @@
     | { kind: "more"; key: string; level: number; folder: string; parent: string };
 
   // Folder path (lowercased) -> its direct subfolders, sorted by name.
-  const children = $derived.by(() => {
-    const map = new Map<string, { path: string; name: string }[]>();
-    const seen = new Set<string>();
-    for (const folder of folders) {
-      const parts = folder.split("/").filter(Boolean);
-      for (let i = 0; i < parts.length; i++) {
-        const path = parts.slice(0, i + 1).join("/");
-        if (seen.has(key(path))) continue;
-        seen.add(key(path));
-        const parent = key(parts.slice(0, i).join("/"));
-        if (!map.has(parent)) map.set(parent, []);
-        map.get(parent)!.push({ path, name: parts[i] });
-      }
-    }
-    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
-    return map;
-  });
+  const children = $derived(folderChildren(folders));
 
   // Only rows inside expanded folders, in display order: subfolders first, then the
   // folder's own notes by title, then a Show more row when it has more.
@@ -107,7 +92,7 @@
       }
       const notes = loaded.get(key(folder));
       if (!notes) return;
-      const sorted = notes.notes.slice().sort((a, b) => a.title.localeCompare(b.title));
+      const sorted = notes.notes.slice().sort((a, b) => collator.compare(a.title, b.title));
       for (const note of sorted) out.push({ kind: "note", key: `n:${note.id}`, level, note, parent });
       if (notes.hasMore) out.push({ kind: "more", key: `m:${key(folder)}`, level, folder, parent });
     };

@@ -30,6 +30,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
+  import { sameFolders } from "$lib/folderTree";
   import { markRead, READ_STATUSES } from "$lib/readStatus.svelte";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import { searchScheduler } from "$lib/searchTiming";
@@ -314,7 +315,10 @@
 
   async function loadFolders() {
     try {
-      folders = await api.folders();
+      const listed = await api.folders();
+      // Most refreshes (a save, a note created in an existing folder) leave the list as
+      // it was; keeping the same array spares rebuilding both trees.
+      if (!sameFolders(listed, folders)) folders = listed;
       const known = new Set(folders.map((f) => f.toLowerCase()));
       emptyFolders = emptyFolders.filter((f) => !known.has(f.toLowerCase()));
     } catch (e) {

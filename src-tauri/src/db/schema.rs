@@ -248,6 +248,47 @@ DROP TABLE rating_moves;
 -- note is unread, so the index only holds marked ones, in the order the search lists them.
 ALTER TABLE notes ADD COLUMN read_status INTEGER NOT NULL DEFAULT 0 CHECK (read_status BETWEEN 0 AND 2);
 CREATE INDEX notes_read ON notes(read_status, updated_at) WHERE read_status > 0;
+"#, r#"
+-- Folders that hold live notes, with how many, so the folder tree is listed from a row
+-- per folder rather than a scan of every note. Paths compare like `notes.folder`
+-- (case-insensitively); a row keeps a spelling some live note in it uses. Only folders
+-- with notes directly in them have a row; their ancestors are implied. The triggers
+-- below are the only writers, so every path that inserts, deletes, trashes, restores or
+-- moves notes keeps it right.
+CREATE TABLE folders (
+    path  TEXT PRIMARY KEY COLLATE NOCASE,
+    notes INTEGER NOT NULL CHECK (notes > 0)
+) WITHOUT ROWID;
+INSERT INTO folders(path, notes)
+    SELECT folder, count(*) FROM notes WHERE deleted_at IS NULL GROUP BY folder;
+
+CREATE TRIGGER folders_note_insert AFTER INSERT ON notes WHEN new.deleted_at IS NULL BEGIN
+    INSERT INTO folders(path, notes) VALUES (new.folder, 1)
+        ON CONFLICT(path) DO UPDATE SET notes = notes + 1;
+END;
+-- Leaving a folder: drop its row with the last note, else count down and, if the row
+-- showed the leaving note's spelling, take one a remaining note uses.
+CREATE TRIGGER folders_note_delete AFTER DELETE ON notes WHEN old.deleted_at IS NULL BEGIN
+    DELETE FROM folders WHERE path = old.folder AND notes = 1;
+    UPDATE folders SET notes = notes - 1,
+        path = CASE WHEN path = old.folder COLLATE BINARY
+            THEN coalesce((SELECT n.folder FROM notes n WHERE n.folder = old.folder AND n.deleted_at IS NULL LIMIT 1), path)
+            ELSE path END
+        WHERE path = old.folder;
+END;
+CREATE TRIGGER folders_note_update AFTER UPDATE OF folder, deleted_at ON notes
+WHEN (old.deleted_at IS NULL) <> (new.deleted_at IS NULL)
+  OR (new.deleted_at IS NULL AND old.folder IS NOT new.folder COLLATE BINARY)
+BEGIN
+    DELETE FROM folders WHERE old.deleted_at IS NULL AND path = old.folder AND notes = 1;
+    UPDATE folders SET notes = notes - 1,
+        path = CASE WHEN path = old.folder COLLATE BINARY
+            THEN coalesce((SELECT n.folder FROM notes n WHERE n.folder = old.folder AND n.deleted_at IS NULL AND n.id <> old.id LIMIT 1), path)
+            ELSE path END
+        WHERE old.deleted_at IS NULL AND path = old.folder;
+    INSERT INTO folders(path, notes) SELECT new.folder, 1 WHERE new.deleted_at IS NULL
+        ON CONFLICT(path) DO UPDATE SET notes = notes + 1;
+END;
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -460,7 +501,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -683,5 +724,41 @@ mod tests {
             .query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'a'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(found, 1, "the full-text index is untouched");
+    }
+
+    /// A vault from before the folders table (version 12) gets one row per folder that
+    /// holds live notes, with their count; trashed notes and case variants don't add rows.
+    #[test]
+    fn folders_migration_counts_live_notes_per_folder() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..12] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 12).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, folder, title, body, created_at, updated_at) VALUES
+                 (1, '', 'R', 'r', 1, 1), (2, 'a', 'A', 'a', 1, 1), (3, 'A', 'B', 'b', 1, 1),
+                 (4, 'a/b', 'C', 'c', 1, 1);
+             INSERT INTO notes(id, folder, title, body, created_at, updated_at, deleted_at) VALUES
+                 (5, 'a/b', 'D', 'd', 1, 1, 9), (6, 'gone', 'E', 'e', 1, 1, 9);",
+        )
+        .unwrap();
+
+        migrate(&mut conn, &mut |_| {}).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        let rows: Vec<(String, i64)> = conn
+            .prepare("SELECT lower(path), notes FROM folders ORDER BY path")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(rows, [("".into(), 1), ("a".into(), 2), ("a/b".into(), 1)]);
+
+        conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 6", []).unwrap();
+        let gone: i64 = conn.query_row("SELECT notes FROM folders WHERE path = 'gone'", [], |r| r.get(0)).unwrap();
+        assert_eq!(gone, 1, "the triggers keep it up from here");
     }
 }
