@@ -610,6 +610,35 @@ fn retag_benchmark() {
     println!("retag job: {} notes checked, {} changed, {}", done.checked, done.changed, secs(start.elapsed()));
 }
 
+/// Listing folders for the folder tree (#129): from the `folders` table, so it should
+/// follow the number of folders, not notes. The first call after opening reads cold
+/// pages. Same environment variables as [`scale_benchmark`]; a kept vault from before
+/// the table gets it on open, so the open time then includes the migration's backfill.
+#[test]
+#[ignore = "scale benchmark: minutes; run with --ignored --nocapture"]
+fn folders_benchmark() {
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
+    let temp = tempfile::tempdir().unwrap();
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    println!("machine: {}", machine());
+    prepare(&path, notes).close().unwrap();
+    let start = Instant::now();
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    println!("open (KDF, and the migration if the vault predates it): {}", ms(start.elapsed()));
+    let mut times = Vec::new();
+    let mut listed = 0;
+    for _ in 0..5 {
+        let t = Instant::now();
+        listed = vault.folders().unwrap().len();
+        times.push(t.elapsed());
+    }
+    println!(
+        "folders(): {listed} folders, first {}, median {}",
+        ms(times[0]),
+        ms(median(times.clone()))
+    );
+}
+
 /// What the UI waits for while the background jobs start up after unlock: every job
 /// the app starts on unlock runs (embedding job with the related-index rebuild and
 /// safety net, tag training, tag re-derive), and the foreground opens a folder page

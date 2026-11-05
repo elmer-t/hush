@@ -1,5 +1,6 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
+  import { folderNodes, type FolderNode } from "$lib/folderTree";
   import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
 
@@ -12,28 +13,9 @@
   };
   let { folders, selected, onselect, oncreate }: Props = $props();
 
-  type Node = { name: string; path: string; children: Node[] };
+  type Node = FolderNode;
 
-  const tree = $derived.by(() => {
-    const root: Node = { name: "", path: "", children: [] };
-    for (const folder of folders) {
-      let node = root;
-      for (const part of folder.split("/").filter(Boolean)) {
-        let child = node.children.find((c) => c.name.toLowerCase() === part.toLowerCase());
-        if (!child) {
-          child = { name: part, path: node.path ? `${node.path}/${part}` : part, children: [] };
-          node.children.push(child);
-        }
-        node = child;
-      }
-    }
-    const sort = (nodes: Node[]) => {
-      nodes.sort((a, b) => a.name.localeCompare(b.name));
-      nodes.forEach((n) => sort(n.children));
-    };
-    sort(root.children);
-    return root.children;
-  });
+  const tree = $derived(folderNodes(folders));
 
   const expanded = new SvelteSet<string>();
   let naming = $state(false);
