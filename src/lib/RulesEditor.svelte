@@ -369,9 +369,12 @@
   }
 
   .sticky {
+    /* Sticky pins to the scroll container's padding edge; pull it down through
+       that padding so the bar sits on the window's bottom edge. */
     position: sticky;
-    bottom: 0;
-    padding: 0.6rem 0;
+    bottom: calc(-1 * var(--page-pad-bottom, 0px));
+    margin-bottom: calc(-1 * var(--page-pad-bottom, 0px));
+    padding: 0.6rem 0 calc(0.6rem + var(--page-pad-bottom, 0px));
     background: var(--surface);
     border-top: 1px solid var(--border);
   }

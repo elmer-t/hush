@@ -1138,8 +1138,10 @@
   }
 
   .page {
+    /* Read by sticky footers (RulesEditor) to dock flush with the bottom edge. */
+    --page-pad-bottom: 48px;
     overflow-y: auto;
-    padding: 32px 16px 48px;
+    padding: 32px 16px var(--page-pad-bottom);
   }
 
   .page[hidden] {
