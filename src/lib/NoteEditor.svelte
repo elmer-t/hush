@@ -19,7 +19,7 @@
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
-    /** A `[[wikilink]]` in the preview was clicked. */
+    /** A `[[wikilink]]` in the preview or the Live view was clicked. */
     onwikilink: (target: string, x: number, y: number) => void;
   };
   let {
@@ -337,7 +337,14 @@
 
   <div class="panes" class:live>
     <div class="source">
-      <MarkdownEditor bind:this={editor} doc={initial.body} {mode} {onchange} onfindresult={editorFindResult} />
+      <MarkdownEditor
+        bind:this={editor}
+        doc={initial.body}
+        {mode}
+        {onchange}
+        onfindresult={editorFindResult}
+        {onwikilink}
+      />
     </div>
     {#if !live}
       <div class="rendered">

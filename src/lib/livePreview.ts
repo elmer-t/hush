@@ -12,6 +12,7 @@ import {
 import { buildLive, frontmatterView, inlineHandlers, type LiveSpec } from "$lib/liveDecorations";
 import { blockHandlers } from "$lib/liveBlocks";
 import { liveBlocks, liveWidget } from "$lib/liveBlocksView";
+import { liveMermaid } from "$lib/liveMermaid";
 import { wikilinkMarkdown } from "$lib/wikilink";
 
 /**
@@ -190,5 +191,5 @@ const theme = EditorView.theme({
 
 /** Everything the Live editor adds on top of the shared editor setup. */
 export function livePreview(): Extension {
-  return [liveLanguage(), inline, frontmatter, theme, liveBlocks()];
+  return [liveLanguage(), inline, frontmatter, theme, liveMermaid(), liveBlocks()];
 }

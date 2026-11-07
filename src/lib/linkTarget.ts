@@ -113,3 +113,23 @@ export function describeWikilink(target: string, r: WikiResolution, max: number)
       return fit("Note: ", target);
   }
 }
+
+/**
+ * How long the bar's text may be in a window `width` wide, and whether it sits on the right
+ * because the pointer at `x`, `y` is where it would sit (bottom left).
+ */
+export function barLayout(width: number, height: number, x?: number, y?: number): { max: number; right: boolean } {
+  // About 7px a character in the bar's font; it takes at most half the window.
+  const max = Math.max(24, Math.floor(width / 2 / 7) - 2);
+  const right = x !== undefined && y !== undefined && y > height - 48 && x < width / 2;
+  return { max, right };
+}
+
+/** What the bar shows for a link (see `linkOpen.ts`); `r` is used for a wikilink. */
+export function describeLink(
+  link: { kind: "wiki"; target: string } | { kind: "href"; href: string; text: string },
+  r: WikiResolution,
+  max: number,
+): LinkTarget {
+  return link.kind === "wiki" ? describeWikilink(link.target, r, max) : describeHref(link.href, link.text, max);
+}
