@@ -54,7 +54,8 @@ let queue: Promise<unknown> = Promise.resolve();
 let renders = 0;
 
 // A purifier of our own: mermaid adds hooks to the shared DOMPurify instance while it renders.
-const purifier = DOMPurify(window);
+// Made on first use, so the module can be imported where there is no `window` (the unit tests).
+let purifier: ReturnType<typeof DOMPurify> | null = null;
 
 function token(style: CSSStyleDeclaration, name: string): string {
   return style.getPropertyValue(name).trim();
@@ -117,6 +118,7 @@ function load(): Promise<Mermaid> {
  * still go; labels in `foreignObject` stay.
  */
 function sanitizeSvg(svg: string): string {
+  purifier ??= DOMPurify(window);
   return purifier.sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true, html: true },
     ADD_TAGS: ["style", "foreignObject"],
@@ -312,6 +314,57 @@ export function diagrams(root: HTMLElement) {
       scheme.removeEventListener("change", onScheme);
       observer?.disconnect();
       for (const timer of timers) clearTimeout(timer);
+    },
+  };
+}
+
+/**
+ * One diagram in one element, for the Live editor (#136), through the same render queue and
+ * cache as the preview. `set` shows a cached rendering at once; otherwise the element keeps its
+ * last rendering, faded, (or shows the source, muted) until the new one is ready. `typing`
+ * waits for the same quiet time as the preview does. `onShow` runs after each change of
+ * content, so the editor can measure the new height.
+ */
+export function diagram(block: HTMLElement, onShow: () => void = () => {}) {
+  let wanted = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function put(source: string, result: Result) {
+    show(block, source, result);
+    onShow();
+  }
+
+  return {
+    set(source: string, typing = false) {
+      const theme = readTheme();
+      const key = `${theme.key}\n${source}`;
+      if (key === wanted) return;
+      wanted = key;
+      clearTimeout(timer);
+      const hit = cached(key);
+      if (hit) return put(source, hit);
+      if (block.dataset.state === "done" || block.dataset.state === "error") {
+        block.dataset.stale = "";
+      } else {
+        const pre = document.createElement("pre");
+        pre.className = "mermaid-source";
+        const code = document.createElement("code");
+        code.textContent = source;
+        pre.append(code);
+        block.replaceChildren(pre);
+        onShow();
+      }
+      block.dataset.state = "pending";
+      const run = () =>
+        void render(source, theme).then((result) => {
+          if (wanted === key) put(source, result);
+        });
+      if (typing) timer = setTimeout(run, DEBOUNCE_MS);
+      else run();
+    },
+    destroy() {
+      clearTimeout(timer);
+      wanted = "";
     },
   };
 }
