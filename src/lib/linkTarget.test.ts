@@ -98,3 +98,25 @@ describe("describeWikilink", () => {
     expect(text(describeWikilink("Foo", { kind: "missing" }, 80))).toBe("No note Foo (click to create)");
   });
 });
+
+describe("the shared bar (#137)", () => {
+  it("describes a link as the preview always has", async () => {
+    const { describeLink } = await import("./linkTarget");
+    const href = "https://evil.example/a/very/long/path?with=query";
+    expect(describeLink({ kind: "href", href, text: "mybank.com" }, { kind: "pending" }, 40)).toEqual(
+      describeHref(href, "mybank.com", 40),
+    );
+    const r = { kind: "unique", folder: "a/b", title: "Note" } as const;
+    expect(describeLink({ kind: "wiki", target: "Note" }, r, 40)).toEqual(describeWikilink("Note", r, 40));
+  });
+
+  it("sizes and places the bar for the window", async () => {
+    const { barLayout } = await import("./linkTarget");
+    expect(barLayout(1400, 900)).toEqual({ max: 98, right: false });
+    expect(barLayout(200, 900).max).toBe(24);
+    // The pointer is where the bar would sit (bottom left), so it moves right.
+    expect(barLayout(1400, 900, 100, 880).right).toBe(true);
+    expect(barLayout(1400, 900, 900, 880).right).toBe(false);
+    expect(barLayout(1400, 900, 100, 500).right).toBe(false);
+  });
+});
