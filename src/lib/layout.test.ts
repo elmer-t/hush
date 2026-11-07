@@ -10,6 +10,7 @@ import {
   jobsWidth,
   KEYS,
   LEFT,
+  loadEditorMode,
   loadStored,
   loadWidth,
   oneOf,
@@ -63,6 +64,34 @@ describe("loadStored", () => {
     expect(loadStored(KEYS.previewOnly, false, isBoolean)).toBe(false);
     expect(() => saveStored(KEYS.previewOnly, true)).not.toThrow();
     expect(loadWidth(LEFT)).toBe(LEFT.default);
+  });
+});
+
+describe("loadEditorMode", () => {
+  it("is Source with nothing stored", () => {
+    fakeStorage();
+    expect(loadEditorMode()).toBe("source");
+  });
+
+  it("carries the old Preview-only choice over until a mode is saved", () => {
+    const data = fakeStorage();
+    data.set(KEYS.previewOnly, "true");
+    expect(loadEditorMode()).toBe("live");
+    data.set(KEYS.previewOnly, "false");
+    expect(loadEditorMode()).toBe("source");
+    saveStored(KEYS.editorMode, "live");
+    expect(loadEditorMode()).toBe("live");
+    data.set(KEYS.previewOnly, "true");
+    saveStored(KEYS.editorMode, "source");
+    expect(loadEditorMode()).toBe("source");
+  });
+
+  it("ignores an unknown stored mode, and unavailable storage", () => {
+    const data = fakeStorage();
+    data.set(KEYS.editorMode, '"split"');
+    expect(loadEditorMode()).toBe("source");
+    fakeStorage(true);
+    expect(loadEditorMode()).toBe("source");
   });
 });
 

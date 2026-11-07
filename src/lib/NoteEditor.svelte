@@ -6,6 +6,7 @@
   import FindBar from "$lib/FindBar.svelte";
   import { findPattern, formatCount, type FindSpec } from "$lib/find";
   import Icon from "$lib/Icon.svelte";
+  import type { EditorMode } from "$lib/layout";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
   import Preview from "$lib/Preview.svelte";
@@ -13,8 +14,8 @@
   type Props = {
     opened: OpenedNote;
     focusTitle: boolean;
-    /** The remembered "Preview only" choice, shared across notes for the session. */
-    previewOnly: boolean;
+    /** The remembered editor mode, Source or Live, shared across notes. */
+    mode: EditorMode;
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
@@ -24,7 +25,7 @@
   let {
     opened,
     focusTitle,
-    previewOnly = $bindable(),
+    mode = $bindable(),
     onsaved,
     onrenamed,
     ondeleted,
@@ -42,9 +43,9 @@
   let title = $state(initial.title);
   let folder = $state(initial.folder);
   let committed = { title: initial.title, folder: initial.folder };
-  // A new note opens in split view so it can be typed in, without changing the remembered choice.
-  let forceSplit = $state(untrack(() => focusTitle));
-  const showPreviewOnly = $derived(previewOnly && !forceSplit);
+  // Live is editable, so a new note opens in the remembered mode too.
+  const live = $derived(mode === "live");
+  const toggleKey = /Mac/.test(navigator.userAgent) ? "⌘E" : "Ctrl+E";
   let status = $state<"saved" | "pending" | "saving" | "failed">("saved");
   let error = $state("");
   let editor = $state<ReturnType<typeof MarkdownEditor>>();
@@ -52,8 +53,8 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<void> = Promise.resolve();
 
-  // Find in note. The bar drives the editor's search in split view, and the preview's in
-  // "Preview only"; in split view the preview highlights the same query too.
+  // Find in note. The bar drives the editor's search in both modes; in Source the preview
+  // beside it highlights the same query too.
   let findOpen = $state(false);
   let replacing = $state(false);
   let find = $state<FindSpec>({ query: "", caseSensitive: false, wholeWord: false, regexp: false, replace: "" });
@@ -71,7 +72,7 @@
   });
 
   $effect(() => {
-    const spec = showPreviewOnly ? null : activeFind;
+    const spec = activeFind;
     untrack(() => editor?.setFind(spec));
     if (!spec) untrack(() => (findResult = { current: -1, total: 0 }));
   });
@@ -82,9 +83,9 @@
     if (!findOpen) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (selected && !selected.includes("\n")) find.query = selected;
     findOpen = true;
-    if (replace && !showPreviewOnly) replacing = true;
+    if (replace) replacing = true;
     await tick();
-    await findBar?.focus(replace && !showPreviewOnly ? "replace" : "find");
+    await findBar?.focus(replace ? "replace" : "find");
   }
 
   /** Closes the find bar, clears the highlights and gives focus back to where it was. */
@@ -94,21 +95,15 @@
     const target = returnFocus;
     returnFocus = null;
     if (target?.isConnected && target.offsetParent !== null) target.focus();
-    else if (!showPreviewOnly) editor?.focus();
+    else editor?.focus();
   }
 
   function findStep(dir: 1 | -1) {
-    if (!activeFind) return;
-    if (showPreviewOnly) preview?.findStep(dir);
-    else editor?.findStep(dir);
+    if (activeFind) editor?.findStep(dir);
   }
 
   function editorFindResult(current: number, total: number) {
-    if (!showPreviewOnly) findResult = { current, total };
-  }
-
-  function previewFindResult(current: number, total: number) {
-    if (showPreviewOnly) findResult = { current, total };
+    findResult = { current, total };
   }
 
   // F3 anywhere in the note, and Esc in its panes, while the bar is open (the bar's own fields
@@ -203,9 +198,13 @@
     }
   }
 
-  function setPreviewOnly(only: boolean) {
-    previewOnly = only;
-    forceSplit = false;
+  function setMode(next: EditorMode) {
+    mode = next;
+  }
+
+  /** Switches between Source and Live (Ctrl+E). */
+  export function toggleMode() {
+    setMode(live ? "source" : "live");
   }
 
   let menuOpen = $state(false);
@@ -278,13 +277,13 @@
         {statusText}
       </span>
       <div class="segmented" role="group" aria-label="Editor view">
-        <button aria-pressed={!showPreviewOnly} onclick={() => setPreviewOnly(false)}>
+        <button aria-pressed={!live} title="Markdown source beside a preview ({toggleKey})" onclick={() => setMode("source")}>
           <Icon name="split" size={14} />
-          Split
+          Source
         </button>
-        <button aria-pressed={showPreviewOnly} onclick={() => setPreviewOnly(true)}>
+        <button aria-pressed={live} title="Edit the formatted note ({toggleKey})" onclick={() => setMode("live")}>
           <Icon name="eye" size={14} />
-          Preview
+          Live
         </button>
       </div>
       <div class="menu" onfocusout={closeMenuOnLeave}>
@@ -326,7 +325,7 @@
       bind:this={findBar}
       bind:spec={find}
       bind:replacing
-      canReplace={!showPreviewOnly}
+      canReplace
       count={findCount}
       onstep={findStep}
       onreplace={(all) => editor?.replaceMatch(all)}
@@ -336,21 +335,15 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  <div class="panes" class:preview-only={showPreviewOnly}>
+  <div class="panes" class:live>
     <div class="source">
-      <MarkdownEditor bind:this={editor} doc={initial.body} {onchange} onfindresult={editorFindResult} />
+      <MarkdownEditor bind:this={editor} doc={initial.body} {mode} {onchange} onfindresult={editorFindResult} />
     </div>
-    <div class="rendered">
-      <Preview
-        bind:this={preview}
-        {body}
-        large={showPreviewOnly}
-        {onwikilink}
-        find={activeFind}
-        findLead={showPreviewOnly}
-        onfindresult={previewFindResult}
-      />
-    </div>
+    {#if !live}
+      <div class="rendered">
+        <Preview bind:this={preview} {body} {onwikilink} find={activeFind} />
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -482,12 +475,13 @@
     border-right: 1px solid var(--border);
   }
 
-  /* The editor stays mounted so its undo history survives toggling. */
-  .preview-only {
+  /* Live is the same editor, reconfigured, so its undo history survives toggling. */
+  .live {
     grid-template-columns: 1fr;
   }
 
-  .preview-only .source {
-    display: none;
+  .live .source {
+    background: none;
+    border-right: none;
   }
 </style>
