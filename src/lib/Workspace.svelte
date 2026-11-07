@@ -33,6 +33,7 @@
     isBoolean,
     KEYS,
     LEFT,
+    loadEditorMode,
     loadStored,
     loadWidth,
     oneOf,
@@ -94,7 +95,7 @@
   let meta = $state<NoteMeta | null>(null);
   let focusTitle = $state(false);
   // The editor mode, shared across notes.
-  let previewOnly = $state(loadStored(KEYS.previewOnly, false, isBoolean));
+  let editorMode = $state(loadEditorMode());
   let error = $state("");
   let editor = $state<ReturnType<typeof NoteEditor>>();
   let sidebar = $state<ReturnType<typeof Sidebar>>();
@@ -139,7 +140,7 @@
   );
 
   // Each layout change is stored when it happens, so auto-lock or a crash loses nothing.
-  $effect(() => saveStored(KEYS.previewOnly, previewOnly));
+  $effect(() => saveStored(KEYS.editorMode, editorMode));
   $effect(() => saveStored(KEYS.showLeft, showLeft));
   $effect(() => saveStored(KEYS.showRight, showRight));
   $effect(() => saveStored(KEYS.showInternals, showInternals));
@@ -310,6 +311,13 @@
       e.preventDefault();
       e.stopPropagation();
       void editor.openFind(replaceKey);
+      return;
+    }
+    // Source / Live: Ctrl+E (Cmd+E on a Mac, where Ctrl+E is the end of the line).
+    if (mod && !e.altKey && (e.code === "KeyE" || e.key.toLowerCase() === "e") && view === "note" && editor) {
+      e.preventDefault();
+      e.stopPropagation();
+      editor.toggleMode();
       return;
     }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
@@ -895,7 +903,7 @@
             bind:this={editor}
             {opened}
             {focusTitle}
-            bind:previewOnly
+            bind:mode={editorMode}
             onsaved={saved}
             onrenamed={renamed}
             ondeleted={deleted}

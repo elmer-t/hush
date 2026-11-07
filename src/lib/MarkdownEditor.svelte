@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { EditorSelection, EditorState } from "@codemirror/state";
+  import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
   import { EditorView, drawSelection, highlightActiveLine, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -21,15 +21,20 @@
     setSearchQuery,
   } from "@codemirror/search";
   import type { FindSpec } from "$lib/find";
+  import type { EditorMode } from "$lib/layout";
+  import { frontmatterRange } from "$lib/liveDecorations";
+  import { livePreview } from "$lib/livePreview";
   import { tags as t } from "@lezer/highlight";
 
   type Props = {
     doc: string;
+    /** Source (the monospaced markdown) or Live (formatted in place, #134); same document and history. */
+    mode?: EditorMode;
     onchange: (doc: string) => void;
     /** The current find match (-1 for none) and the number of matches, while find is on. */
     onfindresult?: (current: number, total: number) => void;
   };
-  let { doc, onchange, onfindresult }: Props = $props();
+  let { doc, mode = "source", onchange, onfindresult }: Props = $props();
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -44,17 +49,21 @@
     { tag: [t.processingInstruction, t.meta, t.contentSeparator, t.quote, t.list], color: "var(--muted)" },
   ]);
 
-  const theme = EditorView.theme({
+  const sourceTheme = EditorView.theme({
     "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--code)" },
-    "&.cm-focused": { outline: "none" },
     ".cm-scroller": { fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.75" },
     ".cm-content": { padding: "20px 0", caretColor: "var(--text)" },
     ".cm-line": { padding: "0 24px" },
     ".cm-cursor": { borderLeftColor: "var(--text)" },
+    ".cm-activeLine": { backgroundColor: "var(--hover)" },
+  });
+
+  // Both modes.
+  const theme = EditorView.theme({
+    "&.cm-focused": { outline: "none" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "var(--selection)",
     },
-    ".cm-activeLine": { backgroundColor: "var(--hover)" },
     // Find: the note's find bar drives CodeMirror's search, whose own panel stays hidden.
     ".cm-panels": { display: "none" },
     "& .cm-searchMatch": { backgroundColor: "var(--mark)", color: "var(--mark-text)", borderRadius: "2px" },
@@ -63,6 +72,13 @@
       color: "var(--mark-current-text)",
     },
   });
+
+  // The mode's own extensions; switching them keeps the document, selection and undo history.
+  const modeConfig = new Compartment();
+  const modeExtensions = (m: EditorMode): Extension =>
+    m === "live"
+      ? livePreview()
+      : [highlightActiveLine(), markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), sourceTheme];
 
   // The find bar replaces CodeMirror's panel: Ctrl+F and Esc are handled by the note.
   const findKeys = searchKeymap.filter((b) => b.key !== "Mod-f" && b.key !== "Escape");
@@ -83,19 +99,24 @@
     onfindresult(current, total);
   }
 
+  let shownMode: EditorMode = untrack(() => mode);
+
   onMount(() => {
+    const initial = untrack(() => doc);
+    // Live starts below the frontmatter, so it opens collapsed.
+    const fm = shownMode === "live" ? frontmatterRange(EditorState.create({ doc: initial }).doc) : null;
+    const start = fm ? Math.min(fm.to + 1, initial.length) : 0;
     view = new EditorView({
       parent: host,
       state: EditorState.create({
-        doc: untrack(() => doc),
+        doc: initial,
+        selection: EditorSelection.cursor(start),
         extensions: [
           history(),
           drawSelection(),
-          highlightActiveLine(),
           highlightSelectionMatches(),
           EditorView.lineWrapping,
-          markdown({ base: markdownLanguage }),
-          syntaxHighlighting(highlight),
+          modeConfig.of(modeExtensions(shownMode)),
           theme,
           search({ top: true, createPanel: () => ({ dom: document.createElement("div") }) }),
           keymap.of([...defaultKeymap, ...historyKeymap, ...findKeys, indentWithTab]),
@@ -109,6 +130,24 @@
       }),
     });
     return () => view?.destroy();
+  });
+
+  // The line at the top of the editor, before the layout around it changes with the mode.
+  let anchor = 0;
+  $effect.pre(() => {
+    if (mode !== shownMode && view) untrack(() => (anchor = view!.lineBlockAtHeight(view!.scrollDOM.scrollTop).from));
+  });
+
+  // Switches the mode and keeps that line at the top. Only the display changes: no document change.
+  $effect(() => {
+    const next = mode;
+    if (next === shownMode || !view) return;
+    shownMode = next;
+    untrack(() =>
+      view!.dispatch({
+        effects: [modeConfig.reconfigure(modeExtensions(next)), EditorView.scrollIntoView(anchor, { y: "start" })],
+      }),
+    );
   });
 
   /** Replaces the document with `next` as one undoable change covering only what differs. */

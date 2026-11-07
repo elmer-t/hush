@@ -87,6 +87,9 @@ export function fitWidths(
 
 /** localStorage keys of the layout values other than the widths. */
 export const KEYS = {
+  /** Source or Live (#134). */
+  editorMode: "hush.layout.editorMode",
+  /** Before #134: whether the read-only Preview was shown alone. Read once, by `loadEditorMode`. */
   previewOnly: "hush.layout.previewOnly",
   showLeft: "hush.layout.showLeft",
   showRight: "hush.layout.showRight",
@@ -125,6 +128,17 @@ export function saveStored(key: string, value: unknown) {
   } catch {
     // Storage can be unavailable; the value then lasts until the window closes.
   }
+}
+
+export type EditorMode = "source" | "live";
+
+/**
+ * The remembered editor mode. With none stored yet, the old "Preview only" choice carries
+ * over: Preview only becomes Live, which replaces it, and Split becomes Source.
+ */
+export function loadEditorMode(): EditorMode {
+  const mode = loadStored<EditorMode | null>(KEYS.editorMode, null, oneOf("source", "live"));
+  return mode ?? (loadStored(KEYS.previewOnly, false, isBoolean) ? "live" : "source");
 }
 
 /**
