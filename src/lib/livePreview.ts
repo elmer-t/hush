@@ -9,7 +9,9 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import { buildLive, frontmatterView, type LiveSpec } from "$lib/liveDecorations";
+import { buildLive, frontmatterView, inlineHandlers, type LiveSpec } from "$lib/liveDecorations";
+import { blockHandlers } from "$lib/liveBlocks";
+import { liveBlocks, liveWidget } from "$lib/liveBlocksView";
 import { wikilinkMarkdown } from "$lib/wikilink";
 
 /**
@@ -42,11 +44,16 @@ function toDecoration(spec: LiveSpec): Range<Decoration> {
       if (!d) marks.set(spec.class, (d = Decoration.mark({ class: spec.class })));
       return d.range(spec.from, spec.to);
     }
+    case "widget":
+      return liveWidget(spec.widget).range(spec.from, spec.to);
   }
 }
 
+/** Inline formatting (#134) and block elements (#135). */
+const liveHandlers = { ...inlineHandlers, ...blockHandlers };
+
 function decorate(view: EditorView): DecorationSet {
-  return Decoration.set(buildLive(view.state, view.visibleRanges).map(toDecoration), true);
+  return Decoration.set(buildLive(view.state, view.visibleRanges, liveHandlers).map(toDecoration), true);
 }
 
 const inline = ViewPlugin.fromClass(
@@ -183,5 +190,5 @@ const theme = EditorView.theme({
 
 /** Everything the Live editor adds on top of the shared editor setup. */
 export function livePreview(): Extension {
-  return [liveLanguage(), inline, frontmatter, theme];
+  return [liveLanguage(), inline, frontmatter, theme, liveBlocks()];
 }
