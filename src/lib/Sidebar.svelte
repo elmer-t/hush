@@ -3,7 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
   import { indexText, indexing } from "$lib/indexing";
-  import { searchSummary } from "$lib/search";
+  import { resultCount, resultOrder, scopeLabel, searchSummary } from "$lib/search";
   import {
     api,
     errorMessage,
@@ -15,6 +15,7 @@
     type NoteSummary,
     type ReadStatus,
     type SearchHit,
+    type SearchScope,
     type SidebarView,
   } from "$lib/api";
   import {
@@ -32,7 +33,7 @@
   import { inFolder } from "$lib/markdown";
   import { sameFolders, subtreeSizes, type FolderSize } from "$lib/folderTree";
   import { markRead, READ_STATUSES } from "$lib/readStatus.svelte";
-  import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
+  import { activeFilterCount, emptyFilters, searchFolder, searchKey, searchPlaceholder, toQuery } from "$lib/search";
   import { searchScheduler } from "$lib/searchTiming";
   import { currentSearch } from "$lib/currentSearch.svelte";
   import { MODEL_FEATURES, model, reducedText } from "$lib/modelStatus.svelte";
@@ -112,6 +113,9 @@
   // Stored in the vault (a folder path is note data), read once after the folders load.
   let selectedFolder = $state<string | null>(null);
   let folderRestored = false;
+  // Whether a search is limited to `selectedFolder` or covers the whole vault. Separate
+  // from the folder, which also says where new notes go. Stored in the vault.
+  let scope = $state<SearchScope>("folder");
   let text = $state("");
   let filters = $state(emptyFilters());
   let showFilters = $state(false);
@@ -156,6 +160,8 @@
   const sizes = $derived(subtreeSizes(folderSizes));
   const filterCount = $derived(activeFilterCount(filters));
   const searching = $derived(text.trim() !== "" || filterCount > 0);
+  // The folder the list is limited to now: null while a whole-vault search runs.
+  const queryFolder = $derived(searchFolder(selectedFolder, scope, searching));
 
   // The background indexing job (embeddings): a progress line while it works.
   let indexStatus = $state<IndexStatus>({ state: "idle" });
@@ -168,6 +174,7 @@
   onMount(() => {
     void Promise.all([loadFolders(), loadFacets()]).then(restoreFolder);
     api.sidebarView().then((v) => (view = v), () => {});
+    api.sidebarSearchScope().then((s) => (scope = s), () => {});
     api.recentOpenedCollapsed().then((c) => (recentCollapsed = c), () => {});
     const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
     api.indexStatus().then((s) => (indexStatus = s), () => {});
@@ -206,21 +213,35 @@
     api.setSidebarView(next).catch((e) => (error = errorMessage(e)));
   }
 
-  // A new search, or another folder in the Recent list, shows other notes. In the tree
-  // the folder is only the target for new notes, so the selection stays.
+  function setScope(next: SearchScope) {
+    scope = next;
+    api.setSidebarSearchScope(next).catch((e) => (error = errorMessage(e)));
+  }
+
+  /** Enter searches without waiting; Alt+F switches between this folder and the whole vault. */
+  function searchKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") search.now();
+    else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyF" && selectedFolder !== null) {
+      e.preventDefault();
+      setScope(scope === "folder" ? "vault" : "folder");
+    }
+  }
+
+  // A new search, another search scope, or another folder in the Recent list, shows other
+  // notes. In the tree the folder is only the target for new notes, so the selection stays.
   $effect(() => {
-    JSON.stringify([text, filters, view === "recent" ? selectedFolder : null]);
+    JSON.stringify([text, filters, scope, view === "recent" ? selectedFolder : null]);
     untrack(clearSelection);
   });
 
-  // Search as you type: any change to the text, filters or folder reruns the query.
+  // Search as you type: any change to the text, filters, folder or scope reruns the query.
   // Typing waits for a pause; the rest searches at once (see `searchTiming`).
   const search = searchScheduler(() => {
     queryVersion++;
     void loadNotes(true);
   });
   $effect(() => {
-    search.change({ text, scope: JSON.stringify([filters, selectedFolder]) });
+    search.change({ text, scope: searchKey(filters, selectedFolder, scope) });
     return () => search.cancel();
   });
 
@@ -359,7 +380,7 @@
     const run = reset ? ++generation : generation;
     loading = true;
     try {
-      const query = toQuery(text, selectedFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
+      const query = toQuery(text, queryFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
       if (reset) currentSearch.query = searching ? query : null;
       const result = await api.searchNotes(query);
       if (run !== generation || result.cancelled) return;
@@ -674,12 +695,13 @@
       <Icon name="search" />
       <input
         type="search"
-        placeholder="Search notes"
-        aria-label="Search notes"
+        placeholder={searchPlaceholder(selectedFolder, scope)}
+        aria-label={searchPlaceholder(selectedFolder, scope)}
+        title={selectedFolder !== null && scope === "folder" ? `Search ${selectedFolder}` : undefined}
         spellcheck="false"
         bind:this={searchInput}
         bind:value={text}
-        onkeydown={(e) => e.key === "Enter" && search.now()}
+        onkeydown={searchKeydown}
       />
       {#if text}
         <button class="ghost small icon" aria-label="Clear search" onclick={() => (text = "")}>
@@ -718,7 +740,20 @@
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   {#if searching}
-    <p class="summary">{searchSummary(hits.length, hasMore, text, newestFirst)}</p>
+    <div class="summary" role="status" aria-label={searchSummary(hits.length, hasMore, text, newestFirst, queryFolder)}>
+      <p>
+        {resultCount(hits.length, hasMore)} in
+        <span class="scope" title={queryFolder ?? undefined}>{scopeLabel(queryFolder)}</span>{resultOrder(text, newestFirst)}
+      </p>
+      {#if selectedFolder !== null}
+        <div class="segmented scope-switch" role="group" aria-label="Search scope" title="Alt+F switches while typing">
+          <button aria-pressed={scope === "folder"} title="Search {selectedFolder}" onclick={() => setScope("folder")}>
+            This folder
+          </button>
+          <button aria-pressed={scope === "vault"} onclick={() => setScope("vault")}>Whole vault</button>
+        </div>
+      {/if}
+    </div>
   {/if}
   {#if !searching && recentOpened.length > 0}
     <RecentlyOpened
@@ -762,7 +797,7 @@
     </div>
   {:else}
     {#if view === "recent"}
-      <div class="folders">
+      <div class="folders" class:unscoped={searching && queryFolder === null && selectedFolder !== null}>
         <FolderTree
           folders={allFolders}
           {sizes}
@@ -786,7 +821,8 @@
           onselectall={selectAll}
           onclearselection={clearSelection}
           onmore={() => void loadNotes(false)}
-          emptyText={searching ? "No matching notes." : "No notes here yet."}
+          emptyText={!searching ? "No notes here yet." : queryFolder !== null ? `No matching notes in ${scopeLabel(queryFolder)}.` : "No matching notes."}
+          emptyAction={searching && queryFolder !== null ? { label: "Search the whole vault", run: () => setScope("vault") } : null}
         />
       {/key}
     </div>
@@ -1035,10 +1071,35 @@
   }
 
   .summary {
-    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
     padding: 4px 16px 6px;
     font-size: 12px;
     color: var(--muted);
+  }
+
+  .summary p {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .summary .scope {
+    color: var(--text);
+  }
+
+  .scope-switch button {
+    min-height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  /* A whole-vault search: the folder highlight is not a filter now. */
+  .folders.unscoped :global(.row.selected) {
+    opacity: 0.55;
   }
 
   .folders {

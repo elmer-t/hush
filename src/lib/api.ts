@@ -126,6 +126,8 @@ export type DateField = "created" | "updated";
  * tag's suggestions across the vault.
  */
 export type SidebarView = "tree" | "recent" | "suggestions";
+/** What a sidebar search covers: the selected folder or the whole vault. */
+export type SearchScope = "folder" | "vault";
 
 /** Mirrors `db::ReviewOrder`. */
 export type ReviewOrder = "mostLikely" | "needsReview";
@@ -275,6 +277,8 @@ export const api = {
   graphScope: () => invoke<StoredGraphScope | null>("graph_scope"),
   setGraphScope: (scope: StoredGraphScope) => invoke<void>("set_graph_scope", { scope }),
   setSidebarView: (view: SidebarView) => invoke<void>("set_sidebar_view", { view }),
+  sidebarSearchScope: () => invoke<SearchScope>("sidebar_search_scope"),
+  setSidebarSearchScope: (scope: SearchScope) => invoke<void>("set_sidebar_search_scope", { scope }),
   /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
   confirmTrash: () => invoke<boolean>("confirm_trash"),
   setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),

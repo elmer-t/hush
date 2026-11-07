@@ -94,6 +94,22 @@ pub fn set_sidebar_view(session: State<'_, Session>, view: String) -> Result<()>
     Ok(session.with_vault(|v| v.set_setting(SIDEBAR_VIEW_SETTING, view))?)
 }
 
+/// What a sidebar search covers: `"folder"` (the selected folder, the default) or
+/// `"vault"`, stored in the vault next to the view.
+pub const SIDEBAR_SEARCH_SCOPE_SETTING: &str = "sidebar_search_scope";
+
+#[tauri::command(async)]
+pub fn sidebar_search_scope(session: State<'_, Session>) -> Result<String> {
+    let scope = session.with_vault(|v| v.setting(SIDEBAR_SEARCH_SCOPE_SETTING))?;
+    Ok(if scope.as_deref() == Some("vault") { "vault" } else { "folder" }.into())
+}
+
+#[tauri::command(async)]
+pub fn set_sidebar_search_scope(session: State<'_, Session>, scope: String) -> Result<()> {
+    let scope = if scope == "vault" { "vault" } else { "folder" };
+    Ok(session.with_vault(|v| v.set_setting(SIDEBAR_SEARCH_SCOPE_SETTING, scope))?)
+}
+
 /// Whether moving notes to the trash asks first: `"false"` turns it off; anything else, or
 /// no value, leaves it on.
 pub const CONFIRM_TRASH_SETTING: &str = "confirm_trash";

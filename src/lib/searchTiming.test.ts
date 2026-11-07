@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { searchScheduler, TYPING_DELAY_MS } from "$lib/searchTiming";
+import { emptyFilters, searchKey } from "$lib/search";
 
 describe("searchScheduler", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -97,5 +98,19 @@ describe("searchScheduler", () => {
     vi.advanceTimersByTime(1000);
     s.now();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("switching only the search scope searches at once, also while typing", () => {
+    const { run, s } = started();
+    const f = emptyFilters();
+    s.change({ text: "mee", scope: searchKey(f, "Projects", "folder") });
+    vi.advanceTimersByTime(TYPING_DELAY_MS);
+    run.mockClear();
+    s.change({ text: "mee", scope: searchKey(f, "Projects", "vault") });
+    vi.advanceTimersByTime(0);
+    expect(run).toHaveBeenCalledOnce();
+    s.change({ text: "mee", scope: searchKey(f, "Projects", "folder") });
+    vi.advanceTimersByTime(0);
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });
