@@ -10,6 +10,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { buildLive, frontmatterView, type LiveSpec } from "$lib/liveDecorations";
+import { liveMermaid } from "$lib/liveMermaid";
 import { wikilinkMarkdown } from "$lib/wikilink";
 
 /**
@@ -183,5 +184,5 @@ const theme = EditorView.theme({
 
 /** Everything the Live editor adds on top of the shared editor setup. */
 export function livePreview(): Extension {
-  return [liveLanguage(), inline, frontmatter, theme];
+  return [liveLanguage(), inline, frontmatter, theme, liveMermaid()];
 }
