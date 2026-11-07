@@ -1,4 +1,4 @@
-import { HIGHLIGHT_END, HIGHLIGHT_START, type DateField, type ReadFilter, type SearchQuery } from "$lib/api";
+import { HIGHLIGHT_END, HIGHLIGHT_START, type DateField, type ReadFilter, type SearchQuery, type SearchScope } from "$lib/api";
 
 /** What the filters panel edits. Dates are `YYYY-MM-DD` from date inputs, or empty. */
 export type Filters = {
@@ -68,10 +68,64 @@ function splitOnce(s: string, sep: string): [string, string] {
   return at < 0 ? [s, ""] : [s.slice(0, at), s.slice(at + sep.length)];
 }
 
-/** The line above the results: how many there are and, for a text search, their order.
- *  A very broad search lists the newest matches rather than ranking them (`newestFirst`). */
-export function searchSummary(count: number, hasMore: boolean, text: string, newestFirst: boolean): string {
+/** The folder a query is limited to. Whole-vault scope only applies to a search: without
+ *  text or filters the list still browses the selected folder. */
+export function searchFolder(selected: string | null, scope: SearchScope, searching: boolean): string | null {
+  return searching && scope === "vault" ? null : selected;
+}
+
+/** Everything but the text that a search depends on, as one key for `searchScheduler`. */
+export function searchKey(f: Filters, selected: string | null, scope: SearchScope): string {
+  return JSON.stringify([f, selected, scope]);
+}
+
+/** `path` in at most `max` characters: the first segment, `…`, and as many trailing
+ *  segments as fit; the last segment is always kept whole. */
+export function shortPath(path: string, max = 24): string {
+  if (path.length <= max) return path;
+  const parts = path.split("/");
+  const last = parts[parts.length - 1];
+  let tail = last;
+  for (let i = parts.length - 2; i > 0; i--) {
+    const next = `${parts[i]}/${tail}`;
+    if (`${parts[0]}/…/${next}`.length > max) break;
+    tail = next;
+  }
+  const head = `${parts[0]}/…/${tail}`;
+  return parts.length > 2 && head.length <= max ? head : `…/${last}`;
+}
+
+/** Where a search looks, as shown after `in`. */
+export function scopeLabel(folder: string | null): string {
+  return folder === null ? "whole vault" : shortPath(folder);
+}
+
+/** The idle search box names the folder a search would be limited to. */
+export function searchPlaceholder(selected: string | null, scope: SearchScope): string {
+  return selected !== null && scope === "folder" ? `Search ${shortPath(selected)}` : "Search notes";
+}
+
+/** `42 results`, `50+ results`, `1 result`. */
+export function resultCount(count: number, hasMore: boolean): string {
   const noun = count === 1 && !hasMore ? "result" : "results";
-  const order = text.trim() ? (newestFirst ? " · newest first" : " · best match first") : "";
-  return `${count.toLocaleString()}${hasMore ? "+" : ""} ${noun}${order}`;
+  return `${count.toLocaleString()}${hasMore ? "+" : ""} ${noun}`;
+}
+
+/** ` · newest first` or ` · best match first` for a text search, else nothing.
+ *  A very broad search lists the newest matches rather than ranking them (`newestFirst`). */
+export function resultOrder(text: string, newestFirst: boolean): string {
+  return text.trim() ? (newestFirst ? " · newest first" : " · best match first") : "";
+}
+
+/** The line above the results: how many there are, where the search looked (`folder`,
+ *  null for the whole vault; left out to omit it) and, for a text search, their order. */
+export function searchSummary(
+  count: number,
+  hasMore: boolean,
+  text: string,
+  newestFirst: boolean,
+  folder?: string | null,
+): string {
+  const where = folder === undefined ? "" : ` in ${scopeLabel(folder)}`;
+  return `${resultCount(count, hasMore)}${where}${resultOrder(text, newestFirst)}`;
 }

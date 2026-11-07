@@ -20,8 +20,10 @@
     /** Asks for the next page when the user nears the end of the list. */
     onmore: () => void;
     emptyText: string;
+    /** A button under the empty text, such as widening the search. */
+    emptyAction?: { label: string; run: () => void } | null;
   };
-  let { hits, selectedId, picked, hasMore, onselect, onselectall, onclearselection, onmore, emptyText }: Props = $props();
+  let { hits, selectedId, picked, hasMore, onselect, onselectall, onclearselection, onmore, emptyText, emptyAction = null }: Props = $props();
 
   // Rows have a fixed height, so only the visible slice (plus a margin) is rendered.
   // Rows grow to fit two lines of snippet whenever any hit has one.
@@ -47,6 +49,9 @@
 >
   {#if hits.length === 0}
     <p class="muted empty">{emptyText}</p>
+    {#if emptyAction}
+      <p class="empty-action"><button class="small" onclick={emptyAction.run}>{emptyAction.label}</button></p>
+    {/if}
   {/if}
   <div class="spacer" style:height="{hits.length * rowHeight}px">
     {#each hits.slice(first, last) as { note, snippet }, i (note.id)}
@@ -98,6 +103,11 @@
   }
 
   .empty {
+    padding: 4px 8px;
+    margin: 0;
+  }
+
+  .empty-action {
     padding: 4px 8px;
     margin: 0;
   }
