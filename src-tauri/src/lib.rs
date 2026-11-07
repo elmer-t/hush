@@ -110,6 +110,7 @@ pub fn run() {
             commands::vault::change_passphrase,
             commands::vault::exit_app,
             commands::notes::folders,
+            commands::notes::folder_sizes,
             commands::notes::folder_notes,
             commands::notes::sidebar_view,
             commands::notes::set_sidebar_view,

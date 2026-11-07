@@ -1,5 +1,6 @@
 // Typed wrappers around the Rust commands. The backend owns all vault access.
 import { invoke } from "@tauri-apps/api/core";
+import type { FolderSize } from "$lib/folderTree";
 
 export type VaultInfo = { path: string; name: string };
 export type RecentVault = { path: string; name: string; exists: boolean };
@@ -16,6 +17,9 @@ export type NoteSummary = {
   readStatus: ReadStatus;
   createdAt: number;
   updatedAt: number;
+  /** UTF-8 bytes of the body. Set on the explorer tree's pages and on a saved note's
+   * summary; search hits and other lists leave it out. */
+  size?: number;
 };
 
 /** Mirrors `db::ReadStatus`: marked by hand, stored in the vault (not the frontmatter). */
@@ -166,7 +170,8 @@ export type SearchResult = { hits: SearchHit[]; newestFirst: boolean; cancelled:
 
 /** Emitted while opening a vault runs a schema upgrade that rebuilds derived data. */
 export const VAULT_UPGRADE_EVENT = "vault-upgrade";
-export type VaultUpgrade = { done: number; total: number };
+/** `step`: which upgrade is running, so the unlock screen can say what it does. */
+export type VaultUpgrade = { step: "searchIndex" | "folderSizes"; done: number; total: number };
 export const HIGHLIGHT_START = "\u0002";
 export const HIGHLIGHT_END = "\u0003";
 
@@ -255,6 +260,9 @@ export const api = {
   changePassphrase: (current: string, next: string) => invoke<void>("change_passphrase", { current, new: next }),
 
   folders: () => invoke<string[]>("folders"),
+  /** Each folder's own byte total (not its subfolders'), apart from `folders` so a save
+   * only changes numbers, not the tree. */
+  folderSizes: () => invoke<FolderSize[]>("folder_sizes"),
   /** Notes directly in `folder` ("" for the root), sorted by title. */
   folderNotes: (folder: string, offset: number, limit: number) =>
     invoke<NoteSummary[]>("folder_notes", { folder, offset, limit }),

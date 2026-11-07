@@ -8,9 +8,12 @@
   import { collator, folderChildren } from "$lib/folderTree";
   import { normalizeFolder } from "$lib/markdown";
   import { selectionKeys } from "$lib/selection";
+  import { formatSize } from "$lib/size";
 
   type Props = {
     folders: string[];
+    /** Bytes per folder and below it, by lowercased path; "" is the vault. */
+    sizes: ReadonlyMap<string, number>;
     /** The folder New note and + Folder use; `null` is the top level. */
     selectedFolder: string | null;
     /** The open note, highlighted and revealed. */
@@ -39,6 +42,7 @@
   };
   let {
     folders,
+    sizes,
     selectedFolder,
     selectedNote,
     onselectfolder,
@@ -379,6 +383,7 @@
       </button>
     {/if}
     <span class="spacer"></span>
+    <span class="size" title="All notes">{formatSize(sizes.get("") ?? 0)}</span>
     <button
       class="ghost small icon"
       onclick={() => (naming = true)}
@@ -444,6 +449,7 @@
           <span class="twisty"><Icon name={row.open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={2} /></span>
           <span class="glyph"><Icon name="folder" /></span>
           <span class="name">{row.name}</span>
+          {#if sizes.has(key(row.path))}<span class="size">{formatSize(sizes.get(key(row.path)) ?? 0)}</span>{/if}
         </div>
       {:else if row.kind === "note"}
         <div
@@ -471,6 +477,7 @@
           <span class="name">{row.note.title}</span>
           {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
           <ReadMark status={readStatusOf(row.note)} />
+          {#if row.note.size !== undefined}<span class="size">{formatSize(row.note.size)}</span>{/if}
         </div>
       {:else}
         <div
@@ -612,6 +619,22 @@
     font-size: 12px;
     color: var(--accent);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Right-aligned at the row's end, muted, digits of equal width so the column lines up.
+     It never shrinks: the name truncates first. */
+  .size {
+    flex: none;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .row.selected .size,
+  .row.picked .size {
+    color: inherit;
+    opacity: 0.75;
   }
 
   .row.selected .rating,

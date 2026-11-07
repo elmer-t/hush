@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{FolderContents, MetadataEdit, MetadataEditReport, Note, NoteSummary, ReadStatus, TrashEntry, Vault};
+use crate::db::{FolderContents, FolderSize, MetadataEdit, MetadataEditReport, Note, NoteSummary, ReadStatus, TrashEntry, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -57,6 +57,13 @@ pub(super) fn opened(vault: &Vault, id: i64) -> crate::db::Result<OpenedNote> {
 #[tauri::command(async)]
 pub fn folders(session: State<'_, Session>) -> Result<Vec<String>> {
     Ok(session.with_vault(|v| v.folders())?)
+}
+
+/// Each folder's own byte total, apart from [`folders`] so the tree only rebuilds when
+/// the paths change.
+#[tauri::command(async)]
+pub fn folder_sizes(session: State<'_, Session>) -> Result<Vec<FolderSize>> {
+    Ok(session.with_vault(|v| v.folder_sizes())?)
 }
 
 /// The left pane's view: `"tree"`, `"recent"` or `"suggestions"`, stored in the vault.
