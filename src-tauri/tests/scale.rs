@@ -637,6 +637,44 @@ fn folders_benchmark() {
         ms(times[0]),
         ms(median(times.clone()))
     );
+    let folders_median = median(times);
+
+    // Sizes for the tree (#133): the same rows with their stored byte totals, so the
+    // same budget as the list itself, not a sum over note bodies.
+    let mut times = Vec::new();
+    let mut sizes = Vec::new();
+    for _ in 0..5 {
+        let t = Instant::now();
+        sizes = vault.folder_sizes().unwrap();
+        times.push(t.elapsed());
+    }
+    let sizes_median = median(times.clone());
+    let total: u64 = sizes.iter().map(|s| s.bytes).sum();
+    println!(
+        "folder_sizes(): {} folders, {total} bytes in all, first {}, median {}",
+        sizes.len(),
+        ms(times[0]),
+        ms(sizes_median)
+    );
+    assert_eq!(sizes.len(), listed);
+    assert!(
+        sizes_median <= folders_median * 3 + Duration::from_millis(20),
+        "folder_sizes() {} should cost about what folders() {} does",
+        ms(sizes_median),
+        ms(folders_median)
+    );
+
+    // A page of the biggest folder's notes, each with its size measured from the body.
+    let biggest = sizes.iter().max_by_key(|s| s.bytes).map(|s| s.path.clone()).unwrap_or_default();
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        let t = Instant::now();
+        let page = vault.folder_notes(&biggest, 0, 500).unwrap();
+        times.push(t.elapsed());
+        assert!(page.iter().all(|n| n.size.is_some()));
+    }
+    println!("folder_notes() page of 500 with sizes in {biggest:?}: first {}, median {}", ms(times[0]), ms(median(times.clone())));
+    assert!(median(times) < Duration::from_millis(250), "a tree page stays well under a frame budget's worth of waiting");
 }
 
 /// What the UI waits for while the background jobs start up after unlock: every job

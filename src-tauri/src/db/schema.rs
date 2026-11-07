@@ -289,6 +289,53 @@ BEGIN
     INSERT INTO folders(path, notes) SELECT new.folder, 1 WHERE new.deleted_at IS NULL
         ON CONFLICT(path) DO UPDATE SET notes = notes + 1;
 END;
+"#, r#"
+-- Folder sizes: the UTF-8 bytes of the live notes' bodies directly in each folder, for
+-- the folder tree; subtree totals are added up from these rows. `octet_length` is the
+-- body's length in the vault's encoding, UTF-8. The column starts at 0 and is filled
+-- afterwards (by `fill_folder_sizes`, in batches, with progress); nothing existing
+-- changes. The triggers are replaced to keep `bytes` along with `notes`, and a new one
+-- follows edits. A body edit is counted by exactly one of them: by
+-- `folders_note_update` when the same statement also moves or trashes the note, else
+-- by `folders_note_body`.
+ALTER TABLE folders ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0;
+
+DROP TRIGGER folders_note_insert;
+DROP TRIGGER folders_note_delete;
+DROP TRIGGER folders_note_update;
+CREATE TRIGGER folders_note_insert AFTER INSERT ON notes WHEN new.deleted_at IS NULL BEGIN
+    INSERT INTO folders(path, notes, bytes) VALUES (new.folder, 1, octet_length(new.body))
+        ON CONFLICT(path) DO UPDATE SET notes = notes + 1, bytes = bytes + excluded.bytes;
+END;
+CREATE TRIGGER folders_note_delete AFTER DELETE ON notes WHEN old.deleted_at IS NULL BEGIN
+    DELETE FROM folders WHERE path = old.folder AND notes = 1;
+    UPDATE folders SET notes = notes - 1, bytes = bytes - octet_length(old.body),
+        path = CASE WHEN path = old.folder COLLATE BINARY
+            THEN coalesce((SELECT n.folder FROM notes n WHERE n.folder = old.folder AND n.deleted_at IS NULL LIMIT 1), path)
+            ELSE path END
+        WHERE path = old.folder;
+END;
+CREATE TRIGGER folders_note_update AFTER UPDATE OF folder, deleted_at ON notes
+WHEN (old.deleted_at IS NULL) <> (new.deleted_at IS NULL)
+  OR (new.deleted_at IS NULL AND old.folder IS NOT new.folder COLLATE BINARY)
+BEGIN
+    DELETE FROM folders WHERE old.deleted_at IS NULL AND path = old.folder AND notes = 1;
+    UPDATE folders SET notes = notes - 1, bytes = bytes - octet_length(old.body),
+        path = CASE WHEN path = old.folder COLLATE BINARY
+            THEN coalesce((SELECT n.folder FROM notes n WHERE n.folder = old.folder AND n.deleted_at IS NULL AND n.id <> old.id LIMIT 1), path)
+            ELSE path END
+        WHERE old.deleted_at IS NULL AND path = old.folder;
+    INSERT INTO folders(path, notes, bytes) SELECT new.folder, 1, octet_length(new.body) WHERE new.deleted_at IS NULL
+        ON CONFLICT(path) DO UPDATE SET notes = notes + 1, bytes = bytes + excluded.bytes;
+END;
+-- An edit of a live note that stays in its folder (spelled the same): the complement of
+-- `folders_note_update`'s condition for live notes.
+CREATE TRIGGER folders_note_body AFTER UPDATE OF body ON notes
+WHEN old.deleted_at IS NULL AND new.deleted_at IS NULL AND old.folder IS new.folder COLLATE BINARY
+  AND octet_length(old.body) <> octet_length(new.body)
+BEGIN
+    UPDATE folders SET bytes = bytes + octet_length(new.body) - octet_length(old.body) WHERE path = new.folder;
+END;
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -296,9 +343,26 @@ const FTS_PREFIX_VERSION: usize = 9;
 /// Notes indexed per step while refilling, between progress reports.
 const FTS_FILL_BATCH: i64 = 2_000;
 
+/// The migration that adds `folders.bytes`; [`fill_folder_sizes`] fills it.
+const FOLDER_SIZES_VERSION: usize = 14;
+/// Notes measured per step while filling folder sizes, between progress reports.
+/// Larger than [`FTS_FILL_BATCH`]: a step only reads bodies, it writes a row per folder.
+const SIZES_FILL_BATCH: i64 = 10_000;
+
+/// Which migration that takes a while is running, so the unlock screen can say what it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpgradeStep {
+    /// Rebuilding the full-text index.
+    SearchIndex,
+    /// Measuring note sizes for the folder tree.
+    FolderSizes,
+}
+
 /// How far a migration that takes a while has got, for the unlock screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Upgrade {
+    pub step: UpgradeStep,
     pub done: usize,
     pub total: usize,
 }
@@ -312,12 +376,41 @@ fn fill_fts(tx: &Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
     )?;
     let mut last = tx.prepare("SELECT max(id) FROM (SELECT id FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2)")?;
     let (mut after, mut done) = (0i64, 0usize);
-    progress(Upgrade { done, total: total as usize });
+    let report = |done| Upgrade { step: UpgradeStep::SearchIndex, done, total: total as usize };
+    progress(report(done));
     loop {
         let Some(next) = last.query_row(params![after, FTS_FILL_BATCH], |r| r.get::<_, Option<i64>>(0))? else { break };
         done += stmt.execute(params![after, FTS_FILL_BATCH])?;
         after = next;
-        progress(Upgrade { done, total: total as usize });
+        progress(report(done));
+    }
+    Ok(())
+}
+
+/// Adds every live note's body length to its folder's `bytes`, a batch of notes (by id)
+/// at a time. `total` counts trashed notes too, since each batch walks them: the count
+/// moves at an even pace whatever is in the trash.
+fn fill_folder_sizes(tx: &Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
+    let total = tx.query_row("SELECT count(*) FROM notes", [], |r| r.get::<_, i64>(0))? as usize;
+    // Grouped like the `folders` key (the column's NOCASE), so each folder row matches
+    // one group.
+    let mut add = tx.prepare(
+        "UPDATE folders SET bytes = folders.bytes + s.bytes
+         FROM (SELECT folder, sum(octet_length(body)) AS bytes FROM notes
+               WHERE id > ?1 AND id <= ?2 AND deleted_at IS NULL GROUP BY folder) AS s
+         WHERE folders.path = s.folder",
+    )?;
+    let mut last = tx.prepare("SELECT max(id), count(*) FROM (SELECT id FROM notes WHERE id > ?1 ORDER BY id LIMIT ?2)")?;
+    let (mut after, mut done) = (0i64, 0usize);
+    let report = |done| Upgrade { step: UpgradeStep::FolderSizes, done, total };
+    progress(report(done));
+    loop {
+        let (next, count) = last.query_row(params![after, SIZES_FILL_BATCH], |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, i64>(1)?)))?;
+        let Some(next) = next else { break };
+        add.execute(params![after, next])?;
+        done += count as usize;
+        after = next;
+        progress(report(done));
     }
     Ok(())
 }
@@ -339,6 +432,9 @@ pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) 
         }
         if i + 1 == FTS_PREFIX_VERSION {
             fill_fts(&tx, progress)?;
+        }
+        if i + 1 == FOLDER_SIZES_VERSION {
+            fill_folder_sizes(&tx, progress)?;
         }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
     }
@@ -501,7 +597,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -587,8 +683,11 @@ mod tests {
         }
         let mut reports = Vec::new();
         migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
-        assert_eq!(reports.first(), Some(&Upgrade { done: 0, total: 4_500 }));
-        assert_eq!(reports.last(), Some(&Upgrade { done: 4_500, total: 4_500 }));
+        // Later migrations report their own step; only the index's counts here.
+        reports.retain(|u| u.step == UpgradeStep::SearchIndex);
+        let at = |done| Upgrade { step: UpgradeStep::SearchIndex, done, total: 4_500 };
+        assert_eq!(reports.first(), Some(&at(0)));
+        assert_eq!(reports.last(), Some(&at(4_500)));
         assert_eq!(reports.len(), 4, "start + three batches of 2,000");
 
         let count = |q: &str| -> i64 {
@@ -760,5 +859,70 @@ mod tests {
         conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 6", []).unwrap();
         let gone: i64 = conn.query_row("SELECT notes FROM folders WHERE path = 'gone'", [], |r| r.get(0)).unwrap();
         assert_eq!(gone, 1, "the triggers keep it up from here");
+    }
+
+    /// A vault from before folder sizes (version 13) gets each folder's byte total
+    /// filled from its live notes, equal to a direct SUM over them, with progress in
+    /// batches; trashed notes don't count and the triggers keep it right from there.
+    #[test]
+    fn folder_sizes_migration_backfills_live_bytes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..13] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 13).unwrap();
+        const NOTES: i64 = 25_000;
+        let folders = ["", "a", "A", "a/b", "ünï/cødé", "c/d/e"];
+        {
+            let mut insert = conn
+                .prepare("INSERT INTO notes(folder, title, body, created_at, updated_at, deleted_at) VALUES (?1, ?2, ?3, 1, 1, ?4)")
+                .unwrap();
+            for i in 0..NOTES {
+                let folder = folders[i as usize % folders.len()];
+                let body = format!("{} é🙂 {i}", "word ".repeat((i % 37) as usize));
+                insert.execute(params![folder, format!("Note {i}"), body, (i % 11 == 0).then_some(5)]).unwrap();
+            }
+        }
+        let direct = |conn: &Connection| -> Vec<(String, i64)> {
+            conn.prepare(
+                "SELECT lower(folder), sum(length(CAST(body AS BLOB))) FROM notes WHERE deleted_at IS NULL
+                 GROUP BY lower(folder) ORDER BY lower(folder)",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+        };
+        let stored = |conn: &Connection| -> Vec<(String, i64)> {
+            conn.prepare("SELECT lower(path), bytes FROM folders ORDER BY lower(path)")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+
+        let mut reports = Vec::new();
+        migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+        assert_eq!(stored(&conn), direct(&conn));
+        assert!(stored(&conn).iter().all(|(_, b)| *b > 0));
+
+        assert!(reports.iter().all(|u| u.step == UpgradeStep::FolderSizes));
+        let at = |done| Upgrade { step: UpgradeStep::FolderSizes, done, total: NOTES as usize };
+        assert_eq!(reports.first(), Some(&at(0)));
+        assert_eq!(reports.last(), Some(&at(NOTES as usize)));
+        let batches = (NOTES as usize).div_ceil(SIZES_FILL_BATCH as usize);
+        assert_eq!(reports.len(), 1 + batches, "start + one report per batch");
+        assert!(reports.windows(2).all(|w| w[0].done < w[1].done));
+
+        conn.execute("UPDATE notes SET body = body || 'ß' WHERE id = 2", []).unwrap();
+        conn.execute("UPDATE notes SET deleted_at = NULL WHERE id = 1", []).unwrap();
+        conn.execute("UPDATE notes SET folder = 'moved' WHERE id = 3", []).unwrap();
+        conn.execute("DELETE FROM notes WHERE id = 4", []).unwrap();
+        assert_eq!(stored(&conn), direct(&conn), "the triggers keep it up from here");
     }
 }

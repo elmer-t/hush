@@ -30,7 +30,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ExplorerTree from "$lib/ExplorerTree.svelte";
   import { inFolder } from "$lib/markdown";
-  import { sameFolders } from "$lib/folderTree";
+  import { sameFolders, subtreeSizes, type FolderSize } from "$lib/folderTree";
   import { markRead, READ_STATUSES } from "$lib/readStatus.svelte";
   import { activeFilterCount, emptyFilters, toQuery } from "$lib/search";
   import { searchScheduler } from "$lib/searchTiming";
@@ -103,6 +103,10 @@
   // Tree until the vault's stored choice has loaded.
   let view = $state<SidebarView>("tree");
   let folders = $state<string[]>([]);
+  // Each folder's own bytes, loaded with the folder list but kept apart from it: a save
+  // changes these numbers and not the paths, so the trees aren't rebuilt for it.
+  let folderSizes = $state<FolderSize[]>([]);
+  let sizesGeneration = 0;
   // Folders made in the tree that have no notes yet; they exist only until the vault locks.
   let emptyFolders = $state<string[]>([]);
   // Stored in the vault (a folder path is note data), read once after the folders load.
@@ -148,6 +152,8 @@
   let recentCollapsed = $state(false);
 
   const allFolders = $derived([...folders, ...emptyFolders]);
+  // Folder (lowercased, "" for the vault) -> bytes in it and below it.
+  const sizes = $derived(subtreeSizes(folderSizes));
   const filterCount = $derived(activeFilterCount(filters));
   const searching = $derived(text.trim() !== "" || filterCount > 0);
 
@@ -289,6 +295,7 @@
   /** Keeps the list in step with a just-saved note. */
   export function noteSaved(summary: NoteSummary) {
     updateNote(summary);
+    void loadSizes();
     if (searching) {
       // Keep the ranking stable while typing; the next search re-checks the match.
       hits = hits.map((h) => (h.note.id === summary.id ? { ...h, note: summary } : h));
@@ -314,6 +321,7 @@
   });
 
   async function loadFolders() {
+    const sized = loadSizes();
     try {
       const listed = await api.folders();
       // Most refreshes (a save, a note created in an existing folder) leave the list as
@@ -321,6 +329,18 @@
       if (!sameFolders(listed, folders)) folders = listed;
       const known = new Set(folders.map((f) => f.toLowerCase()));
       emptyFolders = emptyFolders.filter((f) => !known.has(f.toLowerCase()));
+    } catch (e) {
+      error = errorMessage(e);
+    }
+    await sized;
+  }
+
+  /** Reloads the folder sizes; an answer overtaken by a newer load is dropped. */
+  async function loadSizes() {
+    const run = ++sizesGeneration;
+    try {
+      const listed = await api.folderSizes();
+      if (run === sizesGeneration) folderSizes = listed;
     } catch (e) {
       error = errorMessage(e);
     }
@@ -722,6 +742,7 @@
       <ExplorerTree
         bind:this={explorer}
         folders={allFolders}
+        {sizes}
         {selectedFolder}
         selectedNote={selected}
         onselectfolder={(f) => (selectedFolder = f)}
@@ -744,6 +765,7 @@
       <div class="folders">
         <FolderTree
           folders={allFolders}
+          {sizes}
           selected={selectedFolder}
           onselect={(f) => (selectedFolder = f)}
           oncreate={addFolder}

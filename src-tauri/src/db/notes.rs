@@ -46,6 +46,20 @@ pub struct NoteSummary {
     pub read_status: ReadStatus,
     pub created_at: i64,
     pub updated_at: i64,
+    /// UTF-8 bytes of the body. Only set where it is cheap: the explorer tree's pages
+    /// ([`Vault::folder_notes`]) and a just-read note ([`Note::summary`]); search hits and
+    /// other lists leave it out rather than read every body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// A folder with live notes directly in it, and the UTF-8 bytes of their bodies. Kept
+/// apart from [`Vault::folders`] so a save, which changes sizes, leaves the folder list
+/// (and the tree built from it) as it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FolderSize {
+    pub path: String,
+    pub bytes: u64,
 }
 
 /// How far the reader got through a note, marked by hand. Stored in the vault, not in
@@ -99,6 +113,7 @@ impl Note {
             read_status: self.read_status,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            size: Some(self.body.len() as u64),
         }
     }
 }
@@ -131,6 +146,7 @@ impl NoteSummary {
             updated_at: r.get(6)?,
             rating: r.get(7)?,
             read_status: r.get(SUMMARY_COLUMN_COUNT - 1)?,
+            size: None,
         })
     }
 }
@@ -455,11 +471,14 @@ impl Vault {
     /// subfolders, sorted by title case-insensitively. For the explorer tree, which
     /// loads one folder at a time.
     pub fn folder_notes(&self, folder: &str, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
+        // The size is measured here, one page at a time, rather than stored.
         let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT {SUMMARY_COLUMNS} FROM notes n WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
+            "SELECT {SUMMARY_COLUMNS}, octet_length(n.body) FROM notes n WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
         ))?;
         let notes = stmt
-            .query_map(params![markdown::normalize_folder(folder), limit, offset], NoteSummary::from_row)?
+            .query_map(params![markdown::normalize_folder(folder), limit, offset], |r| {
+                Ok(NoteSummary { size: Some(r.get::<_, i64>(SUMMARY_COLUMN_COUNT)? as u64), ..NoteSummary::from_row(r)? })
+            })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(notes)
     }
@@ -504,11 +523,23 @@ impl Vault {
         let folders = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(folders)
     }
+
+    /// The same folders as [`Vault::folders`], in the same order, each with the bytes of
+    /// the live notes directly in it (not its subfolders; the tree adds those up).
+    pub fn folder_sizes(&self) -> Result<Vec<FolderSize>> {
+        let mut stmt = self.conn.prepare_cached(FOLDER_SIZES_QUERY)?;
+        let sizes = stmt
+            .query_map([], |r| Ok(FolderSize { path: r.get(0)?, bytes: r.get::<_, i64>(1)?.max(0) as u64 }))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(sizes)
+    }
 }
 
 /// Lists folders from the `folders` table, which the triggers keep in step with the live
 /// notes, so the cost follows the number of folders rather than notes.
 const FOLDERS_QUERY: &str = "SELECT path FROM folders ORDER BY path";
+/// [`FOLDERS_QUERY`] with the stored byte totals, also from the table alone.
+const FOLDER_SIZES_QUERY: &str = "SELECT path, bytes FROM folders ORDER BY path";
 
 /// Matches folder `?1` and every folder below it, case-insensitively like the column, as
 /// one range on the `folder` index rather than a scan: `?2` is `?1/` and `?3` is `?1`
@@ -726,6 +757,28 @@ mod tests {
         let listed = v.folders().unwrap();
         let distinct: Vec<String> = expected.iter().map(|(p, _)| p.clone()).collect();
         assert_eq!(listed.iter().map(|f| f.to_lowercase()).collect::<Vec<_>>(), distinct, "folders() after {step}");
+        assert_sizes_match(v, step);
+    }
+
+    /// Asserts `folder_sizes()` gives each folder the UTF-8 byte length of its live notes'
+    /// bodies, summed here in Rust from the bodies rather than by the triggers' SQL.
+    fn assert_sizes_match(v: &Vault, step: &str) {
+        let mut expected = std::collections::BTreeMap::<String, u64>::new();
+        let bodies: Vec<(String, String)> = v
+            .conn
+            .prepare("SELECT folder, body FROM notes WHERE deleted_at IS NULL")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        for (folder, body) in bodies {
+            *expected.entry(folder.to_lowercase()).or_default() += body.len() as u64;
+        }
+        let sizes: Vec<(String, u64)> = v.folder_sizes().unwrap().into_iter().map(|s| (s.path.to_lowercase(), s.bytes)).collect();
+        assert_eq!(sizes, expected.into_iter().collect::<Vec<_>>(), "folder_sizes() after {step}");
+        let listed: Vec<String> = v.folder_sizes().unwrap().into_iter().map(|s| s.path).collect();
+        assert_eq!(listed, v.folders().unwrap(), "folder_sizes() lists folders() in its order and spelling, after {step}");
     }
 
     /// Every way a note enters, leaves or changes folder keeps the `folders` table's
@@ -737,18 +790,18 @@ mod tests {
         let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
         assert_folders_match(&v, "create vault");
 
-        let root = v.create_note("", "Root", "x").unwrap();
-        let a1 = v.create_note("a", "One", "x").unwrap();
+        let root = v.create_note("", "Root", "root body").unwrap();
+        let a1 = v.create_note("a", "One", "één — ünïcode").unwrap();
         let a2 = v.create_note("a", "Two", "x").unwrap();
-        let ab = v.create_note("a/b", "Deep", "x").unwrap();
-        let untitled = v.create_untitled("c", "x").unwrap();
+        let ab = v.create_note("a/b", "Deep", &"deep ".repeat(300)).unwrap();
+        let untitled = v.create_untitled("c", "🙂 four-byte").unwrap();
         assert_folders_match(&v, "create");
         assert_eq!(folder_rows(&v).0, [("".into(), 1), ("a".into(), 2), ("a/b".into(), 1), ("c".into(), 1)]);
 
         let imported = v
             .import_notes(&[
-                NewNote { folder: "d", title: "I1", body: "x", created_at: 1, updated_at: 1 },
-                NewNote { folder: "d/e", title: "I2", body: "x", created_at: 1, updated_at: 1 },
+                NewNote { folder: "d", title: "I1", body: "imported", created_at: 1, updated_at: 1 },
+                NewNote { folder: "d/e", title: "I2", body: "imported ±", created_at: 1, updated_at: 1 },
                 NewNote { folder: "a", title: "One", body: "taken", created_at: 1, updated_at: 1 },
             ])
             .unwrap();
@@ -759,8 +812,12 @@ mod tests {
         assert_folders_match(&v, "move note");
         v.rename_note(untitled, "f", "Renamed").unwrap();
         assert_folders_match(&v, "rename into another folder");
-        v.update_body(a2, "edited").unwrap();
-        assert_folders_match(&v, "edit");
+        v.update_body(a2, &"grown ".repeat(1_000)).unwrap();
+        assert_folders_match(&v, "edit that grows");
+        v.update_body(a2, "ß").unwrap();
+        assert_folders_match(&v, "edit that shrinks");
+        v.update_body(a2, "").unwrap();
+        assert_folders_match(&v, "edit to empty");
 
         v.move_folder("d", "c").unwrap();
         assert_folders_match(&v, "move folder into an existing one");
@@ -845,16 +902,20 @@ mod tests {
         for step in 0..400 {
             let live = ids(&v, true);
             let trashed = ids(&v, false);
-            let op = next(8);
+            let op = next(9);
             let folder = FOLDERS[next(FOLDERS.len())];
             let _ = match op {
-                0 | 1 => v.create_note(folder, &format!("N{step}"), "x").map(|_| ()),
+                0 | 1 => v.create_note(folder, &format!("N{step}"), &"x".repeat(next(40))).map(|_| ()),
                 2 if !live.is_empty() => v.move_notes(&[live[next(live.len())]], folder),
                 3 if !live.is_empty() => v.trash_note(live[next(live.len())]),
                 4 if !trashed.is_empty() => v.restore_note(trashed[next(trashed.len())]).map(|_| ()),
                 5 if !live.is_empty() => v.delete_note(live[next(live.len())]),
                 6 if !folder.is_empty() => v.trash_folder(folder).map(|_| ()),
                 7 if !folder.is_empty() => v.move_folder(folder, FOLDERS[next(FOLDERS.len())]).map(|_| ()),
+                8 if !live.is_empty() => {
+                    let body = "é".repeat(next(50));
+                    v.update_body(live[next(live.len())], &body)
+                }
                 _ => Ok(()),
             };
             assert_folders_match(&v, &format!("step {step} op {op} {folder:?}"));
@@ -876,5 +937,62 @@ mod tests {
             .collect();
         let plan = plan.join("\n");
         assert!(plan.contains("folders") && !plan.contains("notes"), "{plan}");
+    }
+
+    /// Folder sizes read the `folders` table too, never the note bodies.
+    #[test]
+    fn folder_sizes_read_the_folders_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let plan: Vec<String> = v
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {FOLDER_SIZES_QUERY}"))
+            .unwrap()
+            .query_map([], |r| r.get(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let plan = plan.join("\n");
+        assert!(plan.contains("folders") && !plan.contains("notes"), "{plan}");
+    }
+
+    /// A folder's size is the UTF-8 bytes of its live notes' bodies; edits that grow or
+    /// shrink a note, and changing only the case of its folder, keep it exact.
+    #[test]
+    fn folder_sizes_count_utf8_bytes_of_live_bodies() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let sizes = |v: &Vault| v.folder_sizes().unwrap().into_iter().map(|s| (s.path, s.bytes)).collect::<Vec<_>>();
+        let a = v.create_note("Docs", "A", "héllo").unwrap(); // 6 bytes
+        let b = v.create_note("Docs", "B", "🙂").unwrap(); // 4 bytes
+        assert_eq!(sizes(&v), [("Docs".to_string(), 10)]);
+        v.update_body(a, &"x".repeat(2_000)).unwrap();
+        assert_eq!(sizes(&v), [("Docs".to_string(), 2_004)]);
+        v.update_body(a, "").unwrap();
+        assert_eq!(sizes(&v), [("Docs".to_string(), 4)]);
+        v.move_notes(&[a, b], "docs").unwrap();
+        let lower = |v: &Vault| sizes(v).into_iter().map(|(p, n)| (p.to_lowercase(), n)).collect::<Vec<_>>();
+        assert_eq!(lower(&v), [("docs".to_string(), 4)], "only the case changed");
+        v.move_folder("docs", "Archive").unwrap();
+        assert_eq!(sizes(&v), [("Archive/docs".to_string(), 4)]);
+        v.trash_note(b).unwrap();
+        assert_eq!(sizes(&v), [("Archive/docs".to_string(), 0)], "a trashed note isn't counted");
+        v.trash_note(a).unwrap();
+        assert_eq!(sizes(&v), [], "the folder's row goes with its last note");
+        v.restore_note(b).unwrap();
+        assert_eq!(sizes(&v), [("Archive/docs".to_string(), 4)]);
+    }
+
+    /// Notes listed for the tree carry their size; other summaries don't read the body.
+    #[test]
+    fn folder_notes_carry_each_notes_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let id = v.create_note("a", "A", "naïve").unwrap();
+        v.create_note("a", "B", "").unwrap();
+        let listed = v.folder_notes("a", 0, 10).unwrap();
+        assert_eq!(listed.iter().map(|n| n.size).collect::<Vec<_>>(), [Some(6), Some(0)]);
+        assert_eq!(v.note(id).unwrap().summary().size, Some(6), "a saved note's summary has its size");
+        assert_eq!(v.note_summaries(&[id]).unwrap()[0].size, None);
     }
 }

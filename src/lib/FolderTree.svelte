@@ -3,15 +3,18 @@
   import { folderNodes, type FolderNode } from "$lib/folderTree";
   import Icon from "$lib/Icon.svelte";
   import { normalizeFolder } from "$lib/markdown";
+  import { formatSize } from "$lib/size";
 
   type Props = {
     folders: string[];
+    /** Bytes per folder and below it, by lowercased path; "" is the vault. */
+    sizes: ReadonlyMap<string, number>;
     /** `null` is "All notes". */
     selected: string | null;
     onselect: (folder: string | null) => void;
     oncreate: (folder: string) => void;
   };
-  let { folders, selected, onselect, oncreate }: Props = $props();
+  let { folders, sizes, selected, onselect, oncreate }: Props = $props();
 
   type Node = FolderNode;
 
@@ -81,6 +84,7 @@
       <div class="row" class:selected={selected === null}>
         <span class="twisty"></span>
         <button class="name" onclick={() => select(null)}>All notes</button>
+        <span class="size">{formatSize(sizes.get("") ?? 0)}</span>
       </div>
     </li>
     {@render branch(tree, 0)}
@@ -107,6 +111,9 @@
           <Icon name="folder" />
           <span>{node.name}</span>
         </button>
+        {#if sizes.has(node.path.toLowerCase())}
+          <span class="size">{formatSize(sizes.get(node.path.toLowerCase()) ?? 0)}</span>
+        {/if}
       </div>
       {#if node.children.length > 0 && expanded.has(node.path)}
         <ul>{@render branch(node.children, depth + 1)}</ul>
@@ -185,6 +192,21 @@
     gap: 6px;
     padding: 0 8px 0 0;
     text-align: left;
+  }
+
+  /* Muted, right-aligned at the row's end; the name truncates before it does. */
+  .size {
+    flex: none;
+    padding-right: 8px;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .row.selected .size {
+    color: inherit;
+    opacity: 0.75;
   }
 
   .name :global(svg) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { folderChildren, folderNodes, sameFolders } from "$lib/folderTree";
+import { folderChildren, folderNodes, sameFolders, subtreeSizes } from "$lib/folderTree";
 
 describe("folderChildren", () => {
   it("adds ancestors that hold no notes and sorts each folder's children by name", () => {
@@ -58,5 +58,53 @@ describe("sameFolders", () => {
     expect(sameFolders(["a", "b"], ["b", "a"])).toBe(false);
     expect(sameFolders(["a"], ["a", "b"])).toBe(false);
     expect(sameFolders([], [])).toBe(true);
+  });
+});
+
+describe("subtreeSizes", () => {
+  it("rolls each folder's bytes up to every ancestor, implied ones too", () => {
+    const totals = subtreeSizes([
+      { path: "", bytes: 1 },
+      { path: "a", bytes: 2 },
+      { path: "a/b/c", bytes: 5 },
+      { path: "d/e/f", bytes: 7 },
+    ]);
+    expect(Object.fromEntries(totals)).toEqual({
+      "": 15,
+      a: 7,
+      "a/b": 5,
+      "a/b/c": 5,
+      d: 7,
+      "d/e": 7,
+      "d/e/f": 7,
+    });
+  });
+
+  it("keys paths case-insensitively and skips empty segments, like the tree", () => {
+    const totals = subtreeSizes([
+      { path: "Projects", bytes: 3 },
+      { path: "projects/Plan", bytes: 4 },
+      { path: "x//y/", bytes: 6 },
+    ]);
+    expect(totals.get("projects")).toBe(7);
+    expect(totals.get("projects/plan")).toBe(4);
+    expect(totals.get("x")).toBe(6);
+    expect(totals.get("x/y")).toBe(6);
+    expect(totals.get("")).toBe(13);
+  });
+
+  it("gives an empty vault a zero total", () => {
+    expect(Object.fromEntries(subtreeSizes([]))).toEqual({ "": 0 });
+  });
+
+  it("rolls up 50,000 deep folders quickly", () => {
+    const sizes = Array.from({ length: 50_000 }, (_, i) => ({ path: `A/B ${i % 100}/C ${i}`, bytes: 10 }));
+    const start = performance.now();
+    const totals = subtreeSizes(sizes);
+    const elapsed = performance.now() - start;
+    expect(totals.get("")).toBe(500_000);
+    expect(totals.get("a")).toBe(500_000);
+    expect(totals.get("a/b 7")).toBe(5_000);
+    expect(elapsed).toBeLessThan(200);
   });
 });

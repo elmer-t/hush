@@ -260,7 +260,8 @@
         </button>
         {#if busy && showUpgrade && upgrade && upgrade.total > 0}
           <p class="muted upgrade" role="status">
-            Upgrading the search index: {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
+            {upgrade.step === "folderSizes" ? "Measuring note sizes for the folder tree" : "Upgrading the search index"}:
+            {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
             of {upgrade.total.toLocaleString()} notes). This happens once.
           </p>
         {/if}

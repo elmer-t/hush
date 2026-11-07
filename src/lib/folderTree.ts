@@ -54,3 +54,28 @@ export function folderNodes(folders: readonly string[]): FolderNode[] {
 export function sameFolders(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((f, i) => f === b[i]);
 }
+
+/** A folder's own byte total, as `folder_sizes` lists it: notes directly in it only. */
+export type FolderSize = { path: string; bytes: number };
+
+/**
+ * Lowercased folder path ("" is the vault) -> the bytes of every note in it and below
+ * it. Ancestors with no notes of their own get a total too. One pass over the list,
+ * each folder adding to its ancestors, so the cost follows folders times depth.
+ */
+export function subtreeSizes(sizes: readonly FolderSize[]): Map<string, number> {
+  const totals = new Map<string, number>([["", 0]]);
+  for (const { path: folder, bytes } of sizes) {
+    totals.set("", totals.get("")! + bytes);
+    const path = CLEAN.test(folder) ? folder : folder.split("/").filter(Boolean).join("/");
+    if (!path) continue;
+    let k = key(path);
+    for (;;) {
+      totals.set(k, (totals.get(k) ?? 0) + bytes);
+      const slash = k.lastIndexOf("/");
+      if (slash < 0) break;
+      k = k.slice(0, slash);
+    }
+  }
+  return totals;
+}
