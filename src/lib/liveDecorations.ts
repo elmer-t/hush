@@ -22,7 +22,15 @@ export type LiveSpec =
   /** Text shown with a class, and attributes for later link handling. */
   | { kind: "mark"; from: number; to: number; class: string; attributes?: Record<string, string> }
   /** A class on the line starting at `from`. */
-  | { kind: "line"; from: number; class: string };
+  | { kind: "line"; from: number; class: string }
+  /** Source text shown as a small widget (`liveBlocks.ts`). Never spans a line break. */
+  | { kind: "widget"; from: number; to: number; widget: LiveWidget };
+
+/** What an inline widget shows: a list bullet, a task checkbox (its `[` at `from + marker`), a rule. */
+export type LiveWidget =
+  | { type: "bullet" }
+  | { type: "task"; checked: boolean; marker: number }
+  | { type: "rule" };
 
 export class BuildContext {
   readonly specs: LiveSpec[] = [];
@@ -57,6 +65,10 @@ export class BuildContext {
 
   line(from: number, cls: string) {
     this.specs.push({ kind: "line", from: this.state.doc.lineAt(from).from, class: cls });
+  }
+
+  widget(from: number, to: number, widget: LiveWidget) {
+    if (to > from) this.specs.push({ kind: "widget", from, to, widget });
   }
 
   /** Markdown syntax: hidden, or shown muted while its span is `revealed`. */
