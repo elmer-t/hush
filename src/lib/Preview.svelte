@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { untrack } from "svelte";
-  import { api } from "$lib/api";
   import { findPattern, step, type FindSpec } from "$lib/find";
   import { renderMarkdown } from "$lib/markdown";
   import { diagrams } from "$lib/mermaid";
-  import { describeHref, describeWikilink, type LinkTarget, type WikiResolution } from "$lib/linkTarget";
+  import LinkBar from "$lib/LinkBar.svelte";
+  import { linkOfElement, openLink } from "$lib/linkOpen";
   import { clear, findRanges, firstVisible, liveHighlights, paint, reveal } from "$lib/previewFind";
 
   type Props = {
@@ -93,69 +92,28 @@
     const link = (e.target as Element).closest("a");
     if (!link) return;
     e.preventDefault();
-    const target = link.classList.contains("wikilink") ? link.dataset.target : undefined;
-    if (target) {
-      onwikilink?.(target, e.clientX, e.clientY);
-      return;
-    }
-    // Links in diagrams are SVG `<a>` elements, which may only carry `xlink:href`.
-    const href = link.getAttribute("href") ?? link.getAttribute("xlink:href") ?? "";
-    if (/^(https?:|mailto:)/i.test(href)) void openUrl(href);
+    openLink(linkOfElement(link), e.clientX, e.clientY, onwikilink);
   }
 
   // The link bar (#131): where the hovered or focused link goes, at the bottom of the window.
-  let bar = $state<{ target: LinkTarget; right: boolean } | null>(null);
-  let barLink: Element | null = null;
-  let resolved = new Map<string, Promise<WikiResolution>>();
+  let linkBar: ReturnType<typeof LinkBar>;
 
   // A re-render may drop or change the link under the pointer, and notes may have been made since.
   $effect(() => {
     html;
     untrack(() => {
-      hideBar();
-      resolved = new Map();
+      linkBar?.hide();
+      linkBar?.reset();
     });
   });
 
-  function resolveWiki(target: string): Promise<WikiResolution> {
-    let p = resolved.get(target);
-    if (!p) {
-      p = api.resolveLink(target).then(
-        (l): WikiResolution =>
-          l.resolution.kind === "unique"
-            ? { kind: "unique", folder: l.notes[0]?.folder ?? "", title: l.notes[0]?.title ?? target }
-            : l.resolution.kind === "ambiguous"
-              ? { kind: "ambiguous", count: l.resolution.ids.length }
-              : { kind: "missing" },
-        (): WikiResolution => ({ kind: "pending" }),
-      );
-      resolved.set(target, p);
-    }
-    return p;
-  }
-
   /** Shows the bar for `link`; on the right when the pointer at `x`, `y` is where it would sit. */
   function showBar(link: Element, x?: number, y?: number) {
-    barLink = link;
-    // About 7px a character in the bar's font; it takes at most half the window.
-    const max = Math.max(24, Math.floor(window.innerWidth / 2 / 7) - 2);
-    const right = x !== undefined && y !== undefined && y > window.innerHeight - 48 && x < window.innerWidth / 2;
-    const wiki = link.classList.contains("wikilink") ? (link as HTMLElement).dataset.target : undefined;
-    if (wiki) {
-      bar = { target: describeWikilink(wiki, { kind: "pending" }, max), right };
-      void resolveWiki(wiki).then((r) => {
-        if (barLink === link) bar = { target: describeWikilink(wiki, r, max), right };
-      });
-      return;
-    }
-    const href = link.getAttribute("href") ?? link.getAttribute("xlink:href") ?? "";
-    bar = { target: describeHref(href, link.textContent ?? "", max), right };
+    linkBar.show(link, linkOfElement(link), x, y);
   }
 
-  function hideBar() {
-    barLink = null;
-    bar = null;
-  }
+  const hideBar = () => linkBar?.hide();
+  const barLink = () => linkBar?.shown() ?? null;
 
   function linkAt(node: EventTarget | null): Element | null {
     return node instanceof Element ? node.closest("a") : null;
@@ -163,11 +121,11 @@
 
   function onmouseover(e: MouseEvent) {
     const link = linkAt(e.target);
-    if (link && link !== barLink) showBar(link, e.clientX, e.clientY);
+    if (link && link !== barLink()) showBar(link, e.clientX, e.clientY);
   }
 
   function onmouseout(e: MouseEvent) {
-    if (barLink && linkAt(e.relatedTarget) !== barLink) hideBar();
+    if (barLink() && linkAt(e.relatedTarget) !== barLink()) hideBar();
   }
 
   function onfocusin(e: FocusEvent) {
@@ -176,13 +134,9 @@
   }
 
   function onfocusout(e: FocusEvent) {
-    if (linkAt(e.relatedTarget) !== barLink) hideBar();
+    if (linkAt(e.relatedTarget) !== barLink()) hideBar();
   }
-
-  $effect(() => hideBar);
 </script>
-
-<svelte:window onblur={hideBar} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions, a11y_mouse_events_have_key_events -->
 <article
@@ -199,61 +153,9 @@
   {@html html}
 </article>
 
-{#if bar}
-  <div class="link-bar" class:right={bar.right} aria-hidden="true">
-    {#if bar.target.warning}<span class="warning">⚠ {bar.target.warning}</span>{/if}
-    <span class="url">{#each bar.target.parts as part}<span class:muted={part.muted}>{part.text}</span>{/each}</span>
-  </div>
-{/if}
+<LinkBar bind:this={linkBar} />
 
 <style>
-  .link-bar {
-    position: fixed;
-    left: 0;
-    bottom: 0;
-    z-index: 1000;
-    display: flex;
-    gap: 8px;
-    max-width: 50vw;
-    padding: 3px 8px;
-    font-family: var(--sans);
-    font-size: 12px;
-    line-height: 18px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: none;
-    border-bottom: none;
-    border-top-right-radius: 4px;
-    box-shadow: var(--shadow);
-    white-space: nowrap;
-    pointer-events: none;
-  }
-
-  .link-bar.right {
-    left: auto;
-    right: 0;
-    border-left: 1px solid var(--border);
-    border-right: none;
-    border-top-right-radius: 0;
-    border-top-left-radius: 4px;
-  }
-
-  .link-bar .url {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .link-bar .muted {
-    color: var(--muted);
-  }
-
-  .link-bar .warning {
-    flex: none;
-    color: var(--danger);
-    font-weight: 600;
-  }
-
   .preview {
     padding: 24px 36px;
     font-family: var(--serif);

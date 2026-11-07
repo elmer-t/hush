@@ -22,7 +22,10 @@
   } from "@codemirror/search";
   import type { FindSpec } from "$lib/find";
   import type { EditorMode } from "$lib/layout";
+  import LinkBar from "$lib/LinkBar.svelte";
+  import { openLink } from "$lib/linkOpen";
   import { frontmatterRange } from "$lib/liveDecorations";
+  import { liveLinks } from "$lib/liveLinks";
   import { livePreview } from "$lib/livePreview";
   import { tags as t } from "@lezer/highlight";
 
@@ -33,8 +36,19 @@
     onchange: (doc: string) => void;
     /** The current find match (-1 for none) and the number of matches, while find is on. */
     onfindresult?: (current: number, total: number) => void;
+    /** A `[[wikilink]]` in the Live view was clicked at viewport position `x`, `y`. */
+    onwikilink?: (target: string, x: number, y: number) => void;
   };
-  let { doc, mode = "source", onchange, onfindresult }: Props = $props();
+  let { doc, mode = "source", onchange, onfindresult, onwikilink }: Props = $props();
+
+  // Links in Live open as in the preview, and show where they go in the shared link bar (#137).
+  let linkBar: ReturnType<typeof LinkBar>;
+  const links = liveLinks((link, x, y) => openLink(link, x, y, onwikilink), {
+    show: (el, link, x, y) => linkBar?.show(el, link, x, y),
+    hide: () => linkBar?.hide(),
+    shown: () => linkBar?.shown() ?? null,
+    reset: () => linkBar?.reset(),
+  });
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -77,7 +91,7 @@
   const modeConfig = new Compartment();
   const modeExtensions = (m: EditorMode): Extension =>
     m === "live"
-      ? livePreview()
+      ? [livePreview(), links]
       : [highlightActiveLine(), markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), sourceTheme];
 
   // The find bar replaces CodeMirror's panel: Ctrl+F and Esc are handled by the note.
@@ -233,6 +247,7 @@
 </script>
 
 <div class="editor" bind:this={host}></div>
+<LinkBar bind:this={linkBar} />
 
 <style>
   .editor {
