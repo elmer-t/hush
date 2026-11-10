@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hush_lib::db::{NewNote, ReadFilter, SearchMode, SearchQuery, Vault};
+use hush_lib::db::{NewNote, NoteFilter, ReadFilter, SearchMode, SearchQuery, Vault};
 use hush_lib::discover::{self, Options};
 use hush_lib::embed::job::{self, EmbedderSource};
 use hush_lib::embed::onnx::OnnxEmbedder;
@@ -544,7 +544,10 @@ fn scale_benchmark() {
             let mut count = 0;
             for _ in 0..SEARCH_RUNS {
                 let start = Instant::now();
-                count = session.with_vault(|v| v.search_filter_ids(&query)).unwrap().unwrap().len();
+                count = match session.with_vault(|v| v.search_filter_ids(&query)).unwrap().unwrap() {
+                    NoteFilter::Only(ids) => ids.len(),
+                    NoteFilter::Except(ids) => ids.len(),
+                };
                 runs.push(start.elapsed());
             }
             allowed_ids.push((label, median(runs), count));
@@ -593,7 +596,7 @@ fn scale_benchmark() {
         println!("9. meaning search, {label}: median {}, worst {} ({hits} hits shown; query embedding not included)", ms(*median), ms(*worst));
     }
     for (label, median, count) in &allowed_ids {
-        println!("9. allowed ids for {label}: median {} ({count} ids)", ms(*median));
+        println!("9. allowed ids for {label}: median {} ({count} ids listed)", ms(*median));
     }
     match query_embedding {
         Some((median, worst)) => println!("9. real model query embedding (own 2-thread CPU session): median {}, worst {}", ms(median), ms(worst)),
