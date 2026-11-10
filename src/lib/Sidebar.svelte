@@ -409,12 +409,13 @@
       const query = toQuery(text, queryFolder, filters, reset ? 0 : hits.length, PAGE_SIZE, searchMode);
       if (reset) currentSearch.query = searching ? query : null;
       // The first meaning search after unlock loads the model for its query: say so.
+      let waiting = true;
       if (reset && searchMode === "meaning" && text.trim().length > 1) {
         void api.meaningModelLoaded().then((loaded) => {
-          if (run === generation && !loaded) loadingModel = true;
+          if (run === generation && waiting && !loaded) loadingModel = true;
         }, () => {});
       }
-      const result = await api.searchNotes(query);
+      const result = await api.searchNotes(query).finally(() => (waiting = false));
       if (run === generation) loadingModel = false;
       if (run !== generation || result.cancelled) return;
       const page = result.hits;
