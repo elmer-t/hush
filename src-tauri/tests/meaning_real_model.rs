@@ -1,9 +1,9 @@
 //! Search by meaning (#146) with the real bundled model. Needs the files from
 //! `npm run fetch-model`; skipped without them. Prints hit@10 for hand-written queries
 //! on the fixture vault, and how much weaker a paragraph matches once it is one part of
-//! a long note (a note's vector is the mean of its chunks).
+//! a long note (a note's vector is the mean of its chunks; ignored, slow).
 //!
-//! `cargo test --release --test meaning_real_model -- --nocapture`
+//! `cargo test --release --test meaning_real_model -- --include-ignored --nocapture`
 
 mod common;
 
@@ -102,7 +102,7 @@ fn filler(seed: usize, words: usize) -> String {
     while out.split_whitespace().count() < words {
         out.push_str(FILLER[i % FILLER.len()]);
         out.push(if i % 5 == 4 { '\n' } else { ' ' });
-        i = i * 7 + 3;
+        i = (i * 7 + 3) % 1_000_003;
     }
     out
 }
@@ -222,8 +222,31 @@ fn measure_meaning_search_on_the_fixture_vault() {
         println!("unrelated {query:40} best cosine {best:.3}, notes over the threshold {found}");
     }
 
-    // A paragraph inside a long note: the note's vector is the mean of its chunks, so
-    // the paragraph weighs less the longer the note is.
+    // Most fixture queries must be found; this guards the threshold and the fusion.
+    assert!(hits * 4 >= QUERIES.len() * 3, "hit@10 {hits} of {}", QUERIES.len());
+}
+
+/// How much weaker a paragraph matches once it is one part of a long note: a note's
+/// vector is the mean of its chunks (#146 asks for this before per-chunk vectors).
+#[test]
+#[ignore = "needs the real model; slow; prints measurements"]
+fn measure_a_paragraph_inside_long_notes() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+    let d = embed::descriptor(embed::DEFAULT_MODEL).unwrap();
+    if !dir.join(d.model.name).is_file() || !dir.join(d.tokenizer.name).is_file() {
+        panic!("model files missing in {}; run `npm run fetch-model`", dir.display());
+    }
+    let model = Arc::new(OnnxEmbedder::load(&dir, d).unwrap());
+    let source = Real(model.clone());
+
+    let (vault_dir, vault) = common::vault();
+    vault.set_embedding_model(d.id).unwrap();
+    let session = Session::default();
+    let generation = session.unlock(vault, vault_dir.path().join("vault.hush")).unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault");
+    import::run(&session, &fixture, "", false, &AtomicBool::new(false), |_| {}).unwrap();
+    index(&session, generation, &source);
+
     println!("\n== one paragraph inside a long note (cosine of the query to the note; rank among {} filler notes)", 30);
     session
         .with_vault(|v| {
@@ -277,6 +300,4 @@ fn measure_meaning_search_on_the_fixture_vault() {
     }
     println!("3,000-word notes found in the top 10: {long_hits} of {}", NEEDLES.len());
 
-    // Most fixture queries must be found; this guards the threshold and the fusion.
-    assert!(hits * 4 >= QUERIES.len() * 3, "hit@10 {hits} of {}", QUERIES.len());
 }
