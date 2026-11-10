@@ -46,7 +46,7 @@ pub use recent::{
 pub use retag::{RetagEnd, RetagPage, TAG_RULES_PROGRESS_SETTING, TAG_RULES_SETTING};
 pub use review::{REVIEW_MIN_PROBABILITY, ReviewNote, ReviewOrder, SuggestionReview, review_min_score, sort_review};
 pub use schema::{Upgrade, UpgradeStep};
-pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, RANK_LIMIT, ReadFilter, SearchHit, SearchMode, SearchPage, SearchQuery, Why};
+pub use search::{DateField, Facets, HIGHLIGHT_END, HIGHLIGHT_START, NoteFilter, RANK_LIMIT, ReadFilter, SearchHit, SearchMode, SearchPage, SearchQuery, Why};
 pub use tags::{SUGGEST_THRESHOLD_SETTING, SUGGESTIONS_PER_NOTE, TagFeedback, TagInfo, TagSuggestion};
 pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_SETTING, TrashEntry, TrashedNote};
 
