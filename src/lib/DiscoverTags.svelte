@@ -47,7 +47,9 @@
   let searchLabel = $derived.by(() => {
     const q = currentSearch.query;
     if (!q) return "";
-    return q.text.trim() ? `“${q.text.trim()}”` : "the filtered list";
+    // Discover groups the words search's results, also while the sidebar searches by meaning.
+    const words = q.mode === "meaning" ? " (words)" : "";
+    return q.text.trim() ? `“${q.text.trim()}”${words}` : "the filtered list";
   });
 
   function open() {

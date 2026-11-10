@@ -20,6 +20,7 @@ use crate::embed::related::{self, RelatedNote};
 use crate::embed::onnx::{Device, OnnxEmbedder};
 use crate::embed::models::{self, Availability, FileChecks, LoadState, ModelDirs, ModelStatus, ModelTracker, SwitchError};
 use crate::embed::{self, EmbedError, Embedder};
+use crate::meaning::QueryModels;
 use crate::session::Session;
 
 /// Emitted with an [`IndexStatus`] whenever it changes.
@@ -60,6 +61,7 @@ impl Indexer {
                 gpu_off: AtomicBool::new(gpu_off),
                 gpu: Mutex::default(),
                 loaded: Mutex::default(),
+                query: Mutex::default(),
                 tracker: ModelTracker::default(),
                 checks: FileChecks::default(),
             },
@@ -85,6 +87,11 @@ pub(super) struct LocalModels {
     /// Where the last model loaded, and why a GPU model isn't on the GPU.
     gpu: Mutex<GpuState>,
     loaded: Mutex<HashMap<(&'static str, usize, Device), Arc<dyn Embedder>>>,
+    /// A second, small CPU session of the ready model for search queries (#146): the
+    /// job's session runs one batch at a time behind a lock (ort's `Session::run` takes
+    /// `&mut self`), so a query would wait for the batch running, and a GPU session
+    /// can't be shared with the job's runs either.
+    query: Mutex<Option<(&'static str, Arc<dyn Embedder>)>>,
     pub(super) tracker: ModelTracker,
     pub(super) checks: FileChecks,
 }
@@ -180,6 +187,10 @@ impl LocalModels {
     /// Drops `model` from memory (its files are being removed).
     pub(super) fn unload(&self, model: &str) {
         self.loaded.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| k.0 != model);
+        let mut query = self.query.lock().unwrap_or_else(|e| e.into_inner());
+        if query.as_ref().is_some_and(|(id, _)| *id == model) {
+            *query = None;
+        }
     }
 
     /// Sends the model status when `changed`.
@@ -196,6 +207,36 @@ impl Indexer {
     pub fn model_state(&self, model: &str) -> (bool, usize, usize) {
         let (threads, cores) = self.models.threads();
         (self.models.is_loaded(model), threads, cores)
+    }
+}
+
+/// Threads of the query session: a query is one short chunk, so more threads mostly
+/// add start-up cost, and the job keeps the other cores.
+const QUERY_THREADS: usize = 2;
+
+impl QueryModels for LocalModels {
+    fn query_loaded(&self, model: &str) -> bool {
+        self.query.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|(id, _)| *id == model)
+    }
+
+    fn query_embedder(&self, model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        let descriptor = embed::descriptor(model).ok_or_else(|| EmbedError::UnknownModel(model.to_string()))?;
+        // Held while loading, so two searches don't load it twice.
+        let mut query = self.query.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((id, e)) = query.as_ref() {
+            if *id == descriptor.id {
+                return Ok(e.clone());
+            }
+        }
+        *query = None;
+        let dir = self
+            .checks
+            .locate(&self.dirs, descriptor)
+            .1
+            .unwrap_or_else(|| self.dirs.search(descriptor)[0].to_path_buf());
+        let embedder: Arc<dyn Embedder> = Arc::new(OnnxEmbedder::load_on(&dir, descriptor, QUERY_THREADS, Device::Cpu)?);
+        *query = Some((descriptor.id, embedder.clone()));
+        Ok(embedder)
     }
 }
 

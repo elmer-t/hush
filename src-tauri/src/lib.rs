@@ -8,6 +8,7 @@ pub mod embed;
 pub mod graph;
 pub mod import;
 pub mod markdown;
+pub mod meaning;
 pub mod retag;
 pub mod session;
 
@@ -116,6 +117,8 @@ pub fn run() {
             commands::notes::set_sidebar_view,
             commands::notes::sidebar_search_scope,
             commands::notes::set_sidebar_search_scope,
+            commands::notes::sidebar_search_mode,
+            commands::notes::set_sidebar_search_mode,
             commands::notes::confirm_trash,
             commands::notes::set_confirm_trash,
             commands::notes::create_note,
@@ -154,6 +157,7 @@ pub fn run() {
             commands::notes::default_author,
             commands::notes::set_default_author,
             commands::search::search_notes,
+            commands::search::meaning_model_loaded,
             commands::search::search_facets,
             commands::search::attribute_values,
             commands::import::start_import,

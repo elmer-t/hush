@@ -110,6 +110,22 @@ pub fn set_sidebar_search_scope(session: State<'_, Session>, scope: String) -> R
     Ok(session.with_vault(|v| v.set_setting(SIDEBAR_SEARCH_SCOPE_SETTING, scope))?)
 }
 
+/// How a sidebar search finds notes: `"words"` (the default) or `"meaning"` (#146),
+/// stored in the vault next to the scope.
+pub const SIDEBAR_SEARCH_MODE_SETTING: &str = "sidebar_search_mode";
+
+#[tauri::command(async)]
+pub fn sidebar_search_mode(session: State<'_, Session>) -> Result<String> {
+    let mode = session.with_vault(|v| v.setting(SIDEBAR_SEARCH_MODE_SETTING))?;
+    Ok(if mode.as_deref() == Some("meaning") { "meaning" } else { "words" }.into())
+}
+
+#[tauri::command(async)]
+pub fn set_sidebar_search_mode(session: State<'_, Session>, mode: String) -> Result<()> {
+    let mode = if mode == "meaning" { "meaning" } else { "words" };
+    Ok(session.with_vault(|v| v.set_setting(SIDEBAR_SEARCH_MODE_SETTING, mode))?)
+}
+
 /// Whether moving notes to the trash asks first: `"false"` turns it off; anything else, or
 /// no value, leaves it on.
 pub const CONFIRM_TRASH_SETTING: &str = "confirm_trash";

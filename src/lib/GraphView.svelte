@@ -437,7 +437,9 @@
         <select bind:value={s.scopeKind}>
           <option value="folder">Folder</option>
           <option value="tag">Tag</option>
-          <option value="search" disabled={!currentSearch.query}>Current search</option>
+          <option value="search" disabled={!currentSearch.query}>
+            {currentSearch.query?.mode === "meaning" ? "Current search (words)" : "Current search"}
+          </option>
           <option value="all">Whole vault</option>
         </select>
       </label>

@@ -215,7 +215,7 @@ pub fn sort_review(scores: &mut [(i64, f32)], order: ReviewOrder, doubt: f32) {
 
 /// The first [`EXCERPT_CHARS`] characters of the body without frontmatter, whitespace
 /// collapsed; `…` when cut.
-fn excerpt(body: &str) -> String {
+pub(super) fn excerpt(body: &str) -> String {
     let text = match markdown::split_frontmatter(body) {
         Some((_, offset)) => &body[offset..],
         None => body,

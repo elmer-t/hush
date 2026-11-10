@@ -3,7 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { listen } from "@tauri-apps/api/event";
   import { indexText, indexing } from "$lib/indexing";
-  import { resultCount, resultOrder, scopeLabel, searchSummary } from "$lib/search";
+  import { meaningCoverage, meaningOff, resultCount, resultOrder, scopeLabel, searchSummary } from "$lib/search";
   import {
     api,
     errorMessage,
@@ -15,6 +15,7 @@
     type NoteSummary,
     type ReadStatus,
     type SearchHit,
+    type SearchMode,
     type SearchScope,
     type SidebarView,
   } from "$lib/api";
@@ -116,6 +117,8 @@
   // Whether a search is limited to `selectedFolder` or covers the whole vault. Separate
   // from the folder, which also says where new notes go. Stored in the vault.
   let scope = $state<SearchScope>("folder");
+  // Words (full-text) or meaning (vectors and words fused, #146). Stored in the vault.
+  let mode = $state<SearchMode>("words");
   let text = $state("");
   let filters = $state(emptyFilters());
   let showFilters = $state(false);
@@ -123,6 +126,15 @@
   let hits = $state<SearchHit[]>([]);
   // Too many matches to rank: the list shows the newest ones.
   let newestFirst = $state(false);
+  // How the last meaning search came out: whether it used the vectors, where its list
+  // was cut, and why it searched by words only.
+  let meaningResult = $state<{ byMeaning: boolean; top: number | null; wordsOnly: string | null }>({
+    byMeaning: false,
+    top: null,
+    wordsOnly: null,
+  });
+  // A meaning search is waiting for the model to load for its query.
+  let loadingModel = $state(false);
   let hasMore = $state(false);
   let error = $state("");
   // Bumped when the query changes, so the list starts again at the top.
@@ -162,6 +174,10 @@
   const searching = $derived(text.trim() !== "" || filterCount > 0);
   // The folder the list is limited to now: null while a whole-vault search runs.
   const queryFolder = $derived(searchFolder(selectedFolder, scope, searching));
+  // Why Meaning can't be picked now; the stored choice is kept and applies again later.
+  const meaningReason = $derived(meaningOff(model.status));
+  const searchMode = $derived<SearchMode>(mode === "meaning" && meaningReason === null ? "meaning" : "words");
+  const coverage = $derived(searchMode === "meaning" && text.trim() ? meaningCoverage(model.status, model.index) : null);
 
   // The background indexing job (embeddings): a progress line while it works.
   let indexStatus = $state<IndexStatus>({ state: "idle" });
@@ -175,6 +191,7 @@
     void Promise.all([loadFolders(), loadFacets()]).then(restoreFolder);
     api.sidebarView().then((v) => (view = v), () => {});
     api.sidebarSearchScope().then((s) => (scope = s), () => {});
+    api.sidebarSearchMode().then((m) => (mode = m), () => {});
     api.recentOpenedCollapsed().then((c) => (recentCollapsed = c), () => {});
     const unlisten = listen<IndexStatus>(INDEX_STATUS_EVENT, (e) => (indexStatus = e.payload));
     api.indexStatus().then((s) => (indexStatus = s), () => {});
@@ -218,19 +235,28 @@
     api.setSidebarSearchScope(next).catch((e) => (error = errorMessage(e)));
   }
 
-  /** Enter searches without waiting; Alt+F switches between this folder and the whole vault. */
+  function setMode(next: SearchMode) {
+    mode = next;
+    api.setSidebarSearchMode(next).catch((e) => (error = errorMessage(e)));
+  }
+
+  /** Enter searches without waiting; Alt+F switches between this folder and the whole
+   *  vault; Alt+M between words and meaning. */
   function searchKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") search.now();
     else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyF" && selectedFolder !== null) {
       e.preventDefault();
       setScope(scope === "folder" ? "vault" : "folder");
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyM" && (mode === "meaning" || meaningReason === null)) {
+      e.preventDefault();
+      setMode(mode === "meaning" ? "words" : "meaning");
     }
   }
 
   // A new search, another search scope, or another folder in the Recent list, shows other
   // notes. In the tree the folder is only the target for new notes, so the selection stays.
   $effect(() => {
-    JSON.stringify([text, filters, scope, view === "recent" ? selectedFolder : null]);
+    JSON.stringify([text, filters, scope, searchMode, view === "recent" ? selectedFolder : null]);
     untrack(clearSelection);
   });
 
@@ -241,7 +267,7 @@
     void loadNotes(true);
   });
   $effect(() => {
-    search.change({ text, scope: searchKey(filters, selectedFolder, scope) });
+    search.change({ text, scope: searchKey(filters, selectedFolder, scope, searchMode) });
     return () => search.cancel();
   });
 
@@ -380,14 +406,23 @@
     const run = reset ? ++generation : generation;
     loading = true;
     try {
-      const query = toQuery(text, queryFolder, filters, reset ? 0 : hits.length, PAGE_SIZE);
+      const query = toQuery(text, queryFolder, filters, reset ? 0 : hits.length, PAGE_SIZE, searchMode);
       if (reset) currentSearch.query = searching ? query : null;
-      const result = await api.searchNotes(query);
+      // The first meaning search after unlock loads the model for its query: say so.
+      let waiting = true;
+      if (reset && searchMode === "meaning" && text.trim().length > 1) {
+        void api.meaningModelLoaded().then((loaded) => {
+          if (run === generation && waiting && !loaded) loadingModel = true;
+        }, () => {});
+      }
+      const result = await api.searchNotes(query).finally(() => (waiting = false));
+      if (run === generation) loadingModel = false;
       if (run !== generation || result.cancelled) return;
       const page = result.hits;
       if (reset) {
         hits = page;
         newestFirst = result.newestFirst;
+        meaningResult = { byMeaning: result.byMeaning, top: result.top, wordsOnly: result.wordsOnly };
       } else {
         const seen = new Set(hits.map((h) => h.note.id));
         hits = [...hits, ...page.filter((h) => !seen.has(h.note.id))];
@@ -740,11 +775,32 @@
   </div>
   {#if error}<p class="error">{error}</p>{/if}
   {#if searching}
-    <div class="summary" role="status" aria-label={searchSummary(hits.length, hasMore, text, newestFirst, queryFolder)}>
+    <div class="summary" role="status" aria-label={searchSummary(hits.length, hasMore, text, newestFirst, queryFolder, meaningResult)}>
       <p>
         {resultCount(hits.length, hasMore)} in
-        <span class="scope" title={queryFolder ?? undefined}>{scopeLabel(queryFolder)}</span>{resultOrder(text, newestFirst)}
+        <span class="scope" title={queryFolder ?? undefined}>{scopeLabel(queryFolder)}</span>{resultOrder(text, newestFirst, meaningResult)}
+        {#if loadingModel}<span class="note">· Loading model…</span>{/if}
+        {#if searchMode === "meaning" && meaningResult.wordsOnly && text.trim()}
+          <span class="note">· by words: {meaningResult.wordsOnly}</span>
+        {/if}
+        {#if coverage}<span class="note coverage">· {coverage}</span>{/if}
       </p>
+      <div
+        class="segmented mode-switch"
+        role="group"
+        aria-label="Search mode"
+        title={meaningReason ?? "Alt+M switches while typing"}
+      >
+        <button aria-pressed={searchMode === "words"} onclick={() => setMode("words")}>Words</button>
+        <button
+          aria-pressed={searchMode === "meaning"}
+          disabled={meaningReason !== null}
+          title={meaningReason ?? "Find notes by what they are about, as well as by their words"}
+          onclick={() => setMode("meaning")}
+        >
+          Meaning
+        </button>
+      </div>
       {#if selectedFolder !== null}
         <div class="segmented scope-switch" role="group" aria-label="Search scope" title="Alt+F switches while typing">
           <button aria-pressed={scope === "folder"} title="Search {selectedFolder}" onclick={() => setScope("folder")}>
@@ -1091,7 +1147,8 @@
     color: var(--text);
   }
 
-  .scope-switch button {
+  .scope-switch button,
+  .mode-switch button {
     min-height: 22px;
     padding: 0 8px;
     font-size: 11px;

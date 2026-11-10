@@ -4,7 +4,7 @@
   import Icon from "$lib/Icon.svelte";
   import { readStatusOf } from "$lib/readStatus.svelte";
   import ReadMark from "$lib/ReadMark.svelte";
-  import { highlightParts } from "$lib/search";
+  import { highlightParts, whyLabel } from "$lib/search";
   import { selectionKeys } from "$lib/selection";
 
   type Props = {
@@ -54,7 +54,7 @@
     {/if}
   {/if}
   <div class="spacer" style:height="{hits.length * rowHeight}px">
-    {#each hits.slice(first, last) as { note, snippet }, i (note.id)}
+    {#each hits.slice(first, last) as { note, snippet, why }, i (note.id)}
       <button
         class="item"
         class:selected={note.id === selectedId}
@@ -77,7 +77,13 @@
             <ReadMark status={readStatusOf(note)} />
             <span class="date">{shortDate(note.updatedAt)}</span>
           </span>
-          <span class="folder">{note.folder || "vault root"}</span>
+          <span class="where">
+            <span class="folder">{note.folder || "vault root"}</span>
+            {#if why}
+              {@const label = whyLabel(why)}
+              <span class="why {label.text}" title={label.title}>{label.text}</span>
+            {/if}
+          </span>
           {#if snippet}
             <span class="snippet">
               {#each highlightParts(snippet) as part, j (j)}
@@ -206,6 +212,36 @@
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--muted);
+  }
+
+  .where {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .where .folder {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Which side of a meaning search found the note; the cosine is on hover. */
+  .why {
+    flex: none;
+    padding: 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 15px;
+    color: var(--muted);
+  }
+
+  .why.meaning,
+  .why.both {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .snippet {

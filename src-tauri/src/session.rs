@@ -221,16 +221,39 @@ impl Session {
         &self,
         f: impl FnOnce(&mut Vault, &dyn Fn() -> bool) -> db::Result<Option<T>>,
     ) -> Result<Option<T>, SessionError> {
+        let ticket = self.begin_search();
+        self.run_search(ticket, f)
+    }
+
+    /// Starts a search that does work before it needs the vault (a meaning search
+    /// embeds its query first): cancels any older search, as [`Session::search`] does,
+    /// and returns the ticket for [`Session::run_search`] and [`Session::search_is_current`].
+    pub fn begin_search(&self) -> u64 {
         let ticket = self.searches.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(handle) = self.running_search.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             handle.interrupt();
         }
+        ticket
+    }
+
+    /// Whether search `ticket` is still the newest.
+    pub fn search_is_current(&self, ticket: u64) -> bool {
+        self.searches.load(Ordering::SeqCst) == ticket
+    }
+
+    /// Runs part `f` of search `ticket` on the vault, as [`Session::search`] does; `None`
+    /// once a newer search started.
+    pub fn run_search<T>(
+        &self,
+        ticket: u64,
+        f: impl FnOnce(&mut Vault, &dyn Fn() -> bool) -> db::Result<Option<T>>,
+    ) -> Result<Option<T>, SessionError> {
         let result = self.with_vault(|v| {
-            if self.searches.load(Ordering::SeqCst) != ticket {
+            if !self.search_is_current(ticket) {
                 return Ok(None);
             }
             *self.running_search.lock().unwrap_or_else(|e| e.into_inner()) = Some(v.interrupt_handle());
-            let stop = || self.searches.load(Ordering::SeqCst) != ticket;
+            let stop = || !self.search_is_current(ticket);
             let result = f(v, &stop);
             // Cleared before the vault is released, so the next user of the connection
             // can't be interrupted.

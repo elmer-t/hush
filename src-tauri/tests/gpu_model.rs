@@ -234,3 +234,29 @@ fn index_a_vault_on_the_gpu() {
     session.lock();
     println!("vault: {}", path.display());
 }
+
+/// Issue #146: search queries are embedded on a small CPU session of the ready model
+/// while the notes' vectors may come from the GPU. Prints how close a query's CPU vector
+/// is to its GPU vector (and so how much the cosines to GPU-made note vectors shift).
+#[test]
+#[ignore = "needs the fp16 model files and a GPU; prints measurements"]
+fn measure_query_vectors_on_the_gpu_and_the_cpu() {
+    let Some((dir, d)) = model() else { return };
+    let gpu = match OnnxEmbedder::load_on(&dir, d, threads(), Device::Gpu) {
+        Ok(m) => m,
+        Err(e) => {
+            println!("SKIPPED: the GPU couldn't load the model: {e}");
+            return;
+        }
+    };
+    let cpu = OnnxEmbedder::load_on(&dir, d, 2, Device::Cpu).unwrap();
+    let queries = ["times I felt stuck at work", "ferry timetable", "budget review with the lighthouse keepers", "x y"];
+    let mut min = f32::MAX;
+    for q in queries {
+        let c = embed::cosine(&gpu.embed_query(q).unwrap(), &cpu.embed_query(q).unwrap());
+        println!("{q:45} GPU vs CPU query vector: cosine {c:.7}");
+        min = min.min(c);
+    }
+    println!("GPU vs CPU query vectors: min cosine {min:.7}");
+    assert!(min >= 0.999, "the GPU's query vectors differ from the CPU's: {min}");
+}

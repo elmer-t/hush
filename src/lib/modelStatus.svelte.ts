@@ -36,4 +36,4 @@ export function reducedText(): string | null {
 }
 
 /** What doesn't work without a ready model (the rest of Hush does). */
-export const MODEL_FEATURES = "related notes, tag suggestions, tag classifiers and Discover tags";
+export const MODEL_FEATURES = "related notes, search by meaning, tag suggestions, tag classifiers and Discover tags";

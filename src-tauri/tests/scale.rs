@@ -21,11 +21,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hush_lib::db::{NewNote, SearchQuery, Vault};
+use hush_lib::db::{NewNote, ReadFilter, SearchMode, SearchQuery, Vault};
 use hush_lib::discover::{self, Options};
 use hush_lib::embed::job::{self, EmbedderSource};
 use hush_lib::embed::onnx::OnnxEmbedder;
 use hush_lib::embed::{self, EmbedError, Embedder, related};
+use hush_lib::meaning::{self, QueryModels};
 use hush_lib::session::Session;
 
 const MODEL: &str = "fake-384";
@@ -243,6 +244,16 @@ impl EmbedderSource for Counting {
     }
 }
 
+impl QueryModels for Counting {
+    fn query_embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        Ok(Arc::new(Fake))
+    }
+
+    fn query_loaded(&self, _model: &str) -> bool {
+        true
+    }
+}
+
 /// Resident memory from `/proc/self/status` in kB (`VmRSS` now, `VmHWM` peak). Linux only.
 fn memory_kb(field: &str) -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -443,6 +454,8 @@ fn scale_benchmark() {
     let mut discover_time = Duration::ZERO;
     let mut discover_peak = None;
     let mut discovered = (0, 0);
+    let mut meaning_runs: Vec<(String, Duration, Duration, usize)> = Vec::new();
+    let mut allowed_ids: Vec<(String, Duration, usize)> = Vec::new();
     let mut peak = None;
     std::thread::scope(|s| {
         s.spawn(|| job::run(&session, g, &source, POLL, |_| {}));
@@ -484,8 +497,61 @@ fn scale_benchmark() {
         discover_time = start.elapsed();
         discover_peak = memory_kb("VmHWM:").zip(before).map(|(p, b)| p.saturating_sub(b));
         discovered = (d.notes, d.groups.len());
+
+        // 9. Search by meaning (#146): the fake embeds the query, so this is the index
+        // scan, the exact rerank, the words side and the fusion; the real model's query
+        // embedding is measured below. Vault-wide, then in a folder holding about 10%
+        // of the notes (the top-level folder closest to that).
+        let folders = session.with_vault(|v| v.folders()).unwrap();
+        let mut tops: Vec<&str> = folders.iter().map(|f| f.split('/').next().unwrap()).collect();
+        tops.sort_unstable();
+        tops.dedup();
+        let tenth = tops
+            .iter()
+            .map(|f| (session.with_vault(|v| v.count_in_folder(f)).unwrap(), *f))
+            .min_by_key(|(n, _)| n.abs_diff(notes / 10))
+            .unwrap();
+        let meaning_query = |folder: Option<&str>, read: Option<ReadFilter>| SearchQuery {
+            text: two.clone(),
+            mode: SearchMode::Meaning,
+            folder: folder.map(Into::into),
+            read_status: read,
+            ..Default::default()
+        };
+        let cases = [
+            ("vault-wide".to_string(), meaning_query(None, None)),
+            (format!("folder {:?} ({} notes, {:.0}%)", tenth.1, tenth.0, tenth.0 as f64 * 100.0 / notes as f64), meaning_query(Some(tenth.1), None)),
+        ];
+        for (label, query) in &cases {
+            let mut runs = Vec::new();
+            let mut hits = 0;
+            for _ in 0..SEARCH_RUNS {
+                let start = Instant::now();
+                let page = meaning::search(&session, &source, query).unwrap().unwrap();
+                runs.push(start.elapsed());
+                assert!(page.by_meaning, "{:?}", page.words_only);
+                hits = page.hits.len();
+            }
+            let worst = *runs.iter().max().unwrap();
+            meaning_runs.push((label.clone(), median(runs), worst, hits));
+        }
+        // The allowed-id query alone, for the folder and for a filter nearly every note passes.
+        for (label, query) in [
+            (format!("folder {:?}", tenth.1), meaning_query(Some(tenth.1), None)),
+            ("read status \"not finished\" (nearly every note)".to_string(), meaning_query(None, Some(ReadFilter::NotFinished))),
+        ] {
+            let mut runs = Vec::new();
+            let mut count = 0;
+            for _ in 0..SEARCH_RUNS {
+                let start = Instant::now();
+                count = session.with_vault(|v| v.search_filter_ids(&query)).unwrap().unwrap().len();
+                runs.push(start.elapsed());
+            }
+            allowed_ids.push((label, median(runs), count));
+        }
         session.lock();
     });
+    let query_embedding = real_query_embedding();
 
     // 6. The real model, if its files are there.
     let throughput = real_model_throughput(&path, notes);
@@ -523,6 +589,40 @@ fn scale_benchmark() {
         discovered.1,
         discover_peak.map_or(String::new(), |p| format!(", peak RSS {} above the start", mb(p)))
     );
+    for (label, median, worst, hits) in &meaning_runs {
+        println!("9. meaning search, {label}: median {}, worst {} ({hits} hits shown; query embedding not included)", ms(*median), ms(*worst));
+    }
+    for (label, median, count) in &allowed_ids {
+        println!("9. allowed ids for {label}: median {} ({count} ids)", ms(*median));
+    }
+    match query_embedding {
+        Some((median, worst)) => println!("9. real model query embedding (own 2-thread CPU session): median {}, worst {}", ms(median), ms(worst)),
+        None => println!("9. real model query embedding: SKIPPED (model files missing; run `npm run fetch-model`)"),
+    }
+}
+
+/// How long the bundled model takes to embed a search query on a 2-thread CPU session
+/// of its own, as the app's query session runs it; `None` without the files.
+fn real_query_embedding() -> Option<(Duration, Duration)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+    let d = embed::descriptor(embed::DEFAULT_MODEL)?;
+    if !dir.join(d.model.name).is_file() {
+        return None;
+    }
+    let model = OnnxEmbedder::load_with_threads(&dir, d, 2).ok()?;
+    model.embed_query("warm up").ok()?;
+    let mut runs: Vec<Duration> = ["times I felt stuck at work", "ferry timetable", "budget review with the lighthouse keepers"]
+        .iter()
+        .cycle()
+        .take(30)
+        .map(|q| {
+            let start = Instant::now();
+            model.embed_query(q).unwrap();
+            start.elapsed()
+        })
+        .collect();
+    runs.sort();
+    Some((runs[runs.len() / 2], runs[runs.len() - 1]))
 }
 
 struct Throughput {
