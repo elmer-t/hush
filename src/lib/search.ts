@@ -1,4 +1,15 @@
-import { HIGHLIGHT_END, HIGHLIGHT_START, type DateField, type ReadFilter, type SearchQuery, type SearchScope } from "$lib/api";
+import {
+  HIGHLIGHT_END,
+  HIGHLIGHT_START,
+  type DateField,
+  type IndexStatus,
+  type ModelStatus,
+  type ReadFilter,
+  type SearchMode,
+  type SearchQuery,
+  type SearchScope,
+  type SearchWhy,
+} from "$lib/api";
 
 /** What the filters panel edits. Dates are `YYYY-MM-DD` from date inputs, or empty. */
 export type Filters = {
@@ -33,9 +44,17 @@ function localDay(date: string, days = 0): number | null {
   return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days).getTime() : null;
 }
 
-export function toQuery(text: string, folder: string | null, f: Filters, offset: number, limit: number): SearchQuery {
+export function toQuery(
+  text: string,
+  folder: string | null,
+  f: Filters,
+  offset: number,
+  limit: number,
+  mode: SearchMode = "words",
+): SearchQuery {
   return {
     text,
+    mode,
     tags: [...f.tags],
     topic: f.topic || null,
     author: f.author || null,
@@ -75,8 +94,8 @@ export function searchFolder(selected: string | null, scope: SearchScope, search
 }
 
 /** Everything but the text that a search depends on, as one key for `searchScheduler`. */
-export function searchKey(f: Filters, selected: string | null, scope: SearchScope): string {
-  return JSON.stringify([f, selected, scope]);
+export function searchKey(f: Filters, selected: string | null, scope: SearchScope, mode: SearchMode = "words"): string {
+  return JSON.stringify([f, selected, scope, mode]);
 }
 
 /** `path` in at most `max` characters: the first segment, `…`, and as many trailing
@@ -111,10 +130,39 @@ export function resultCount(count: number, hasMore: boolean): string {
   return `${count.toLocaleString()}${hasMore ? "+" : ""} ${noun}`;
 }
 
+/** How a meaning search came out (see `SearchResult`). */
+export type MeaningResult = { byMeaning: boolean; top: number | null };
+
 /** ` · newest first` or ` · best match first` for a text search, else nothing.
- *  A very broad search lists the newest matches rather than ranking them (`newestFirst`). */
-export function resultOrder(text: string, newestFirst: boolean): string {
+ *  A very broad search lists the newest matches rather than ranking them (`newestFirst`).
+ *  A meaning search that used the vectors says ` · by meaning`, and where its list was cut. */
+export function resultOrder(text: string, newestFirst: boolean, meaning?: MeaningResult): string {
+  if (meaning?.byMeaning) return ` · by meaning${meaning.top !== null ? `, top ${meaning.top.toLocaleString()}` : ""}`;
   return text.trim() ? (newestFirst ? " · newest first" : " · best match first") : "";
+}
+
+/** The marker on a meaning search's hit, and its hover text with the cosine. */
+export function whyLabel(why: SearchWhy): { text: string; title: string } {
+  const cosine = why.cosine === null ? "" : `, cosine ${why.cosine.toFixed(3)}`;
+  if (why.words && why.cosine !== null) return { text: "both", title: `Found by its words and by meaning${cosine}` };
+  if (why.words) return { text: "words", title: "Found by its words" };
+  return { text: "meaning", title: `Found by meaning${cosine}` };
+}
+
+/** Why the Meaning mode can't be picked now (the model's reduced state), or null. */
+export function meaningOff(status: ModelStatus | null): string | null {
+  return status?.reduced ? `Search by meaning is off: ${status.reduced.message}` : null;
+}
+
+/** While indexing runs: how much of the vault a meaning search covers. Null once every
+ *  note has its full vector, and during a model switch (the old model's vectors serve
+ *  every note while the counts are the new model's). */
+export function meaningCoverage(status: ModelStatus | null, index: IndexStatus): string | null {
+  if (!status || status.reduced || status.readyModel === null || status.readyModel !== status.model) return null;
+  if (index.state !== "indexing" || (index.done >= index.total && index.complete >= index.done)) return null;
+  const n = (x: number) => x.toLocaleString();
+  const partial = index.done - index.complete;
+  return `meaning covers ${n(index.done)} of ${n(index.total)} notes${partial > 0 ? ` (first part only for ${n(partial)})` : ""}`;
 }
 
 /** The line above the results: how many there are, where the search looked (`folder`,
@@ -125,7 +173,8 @@ export function searchSummary(
   text: string,
   newestFirst: boolean,
   folder?: string | null,
+  meaning?: MeaningResult,
 ): string {
   const where = folder === undefined ? "" : ` in ${scopeLabel(folder)}`;
-  return `${resultCount(count, hasMore)}${where}${resultOrder(text, newestFirst)}`;
+  return `${resultCount(count, hasMore)}${where}${resultOrder(text, newestFirst, meaning)}`;
 }

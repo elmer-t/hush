@@ -128,6 +128,8 @@ export type DateField = "created" | "updated";
 export type SidebarView = "tree" | "recent" | "suggestions";
 /** What a sidebar search covers: the selected folder or the whole vault. */
 export type SearchScope = "folder" | "vault";
+/** How a sidebar search finds notes: by their words, or by meaning and words fused (#146). */
+export type SearchMode = "words" | "meaning";
 
 /** Mirrors `db::ReviewOrder`. */
 export type ReviewOrder = "mostLikely" | "needsReview";
@@ -148,6 +150,8 @@ export type SuggestionReview = {
 /** Mirrors `db::SearchQuery`. Dates are Unix millis; `from` is inclusive, `to` exclusive. */
 export type SearchQuery = {
   text: string;
+  /** Left out: words. */
+  mode?: SearchMode;
   tags: string[];
   topic: string | null;
   author: string | null;
@@ -164,11 +168,23 @@ export type SearchQuery = {
   offset: number;
 };
 
-/** `snippet` marks matches with the control characters below. */
-export type SearchHit = { note: NoteSummary; snippet: string | null };
+/** Which side of a meaning search found a note: its words, its vector (with the cosine), or both. */
+export type SearchWhy = { words: boolean; cosine: number | null };
+/** `snippet` marks matches with the control characters below; a hit found by meaning
+ * alone has the start of its body. `why` is set in meaning mode only. */
+export type SearchHit = { note: NoteSummary; snippet: string | null; why?: SearchWhy };
 /** `newestFirst`: too many notes matched to rank them, so these are the newest matches.
+ * `byMeaning`: a meaning search used the note vectors; `top`: its list was cut at this
+ * many notes; `wordsOnly`: why a meaning search found notes by their words only.
  * `cancelled`: a newer search replaced this one; drop the result. */
-export type SearchResult = { hits: SearchHit[]; newestFirst: boolean; cancelled: boolean };
+export type SearchResult = {
+  hits: SearchHit[];
+  newestFirst: boolean;
+  byMeaning: boolean;
+  top: number | null;
+  wordsOnly: string | null;
+  cancelled: boolean;
+};
 
 /** Emitted while opening a vault runs a schema upgrade that rebuilds derived data. */
 export const VAULT_UPGRADE_EVENT = "vault-upgrade";
@@ -279,6 +295,8 @@ export const api = {
   setSidebarView: (view: SidebarView) => invoke<void>("set_sidebar_view", { view }),
   sidebarSearchScope: () => invoke<SearchScope>("sidebar_search_scope"),
   setSidebarSearchScope: (scope: SearchScope) => invoke<void>("set_sidebar_search_scope", { scope }),
+  sidebarSearchMode: () => invoke<SearchMode>("sidebar_search_mode"),
+  setSidebarSearchMode: (mode: SearchMode) => invoke<void>("set_sidebar_search_mode", { mode }),
   /** Whether moving notes to the trash asks first (on unless turned off in Settings). */
   confirmTrash: () => invoke<boolean>("confirm_trash"),
   setConfirmTrash: (confirm: boolean) => invoke<void>("set_confirm_trash", { confirm }),
@@ -337,6 +355,8 @@ export const api = {
   setDefaultAuthor: (author: string) => invoke<void>("set_default_author", { author }),
 
   searchNotes: (query: SearchQuery) => invoke<SearchResult>("search_notes", { query }),
+  /** Whether a meaning search can embed its query at once (else it loads the model first). */
+  meaningModelLoaded: () => invoke<boolean>("meaning_model_loaded"),
   searchFacets: () => invoke<Facets>("search_facets"),
   attributeValues: (key: string) => invoke<string[]>("attribute_values", { key }),
 

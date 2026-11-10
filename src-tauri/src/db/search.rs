@@ -21,6 +21,18 @@ pub enum DateField {
     Updated,
 }
 
+/// How the sidebar search finds notes (#146).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchMode {
+    /// By the words in the notes (full-text search).
+    #[default]
+    Words,
+    /// By meaning and words fused (see `meaning`). Only the app's command runs it:
+    /// [`Vault::search_page`] treats it as `Words`.
+    Meaning,
+}
+
 /// The search's read status filter. `NotFinished` is unread or partly read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +47,7 @@ pub enum ReadFilter {
 #[serde(rename_all = "camelCase", default)]
 pub struct SearchQuery {
     pub text: String,
+    pub mode: SearchMode,
     /// All must match; a tag also matches its nested tags (`journal` matches `journal/2019`).
     pub tags: Vec<String>,
     pub topic: Option<String>,
@@ -60,7 +73,21 @@ pub struct SearchQuery {
 pub struct SearchHit {
     pub note: NoteSummary,
     /// Part of the body around the first match; `None` when the body has no match.
+    /// A hit found by meaning alone has the start of its body instead.
     pub snippet: Option<String>,
+    /// Why a meaning search found the note; `None` in words mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<Why>,
+}
+
+/// Which side of a meaning search found a note (see `meaning::fuse`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Why {
+    /// Its words match the query.
+    pub words: bool,
+    /// Its vector is close to the query's: the cosine.
+    pub cosine: Option<f32>,
 }
 
 /// Above this many matches a search lists the newest matches (by creation) instead of
@@ -75,6 +102,20 @@ pub struct SearchPage {
     /// More than [`RANK_LIMIT`] notes matched, so the hits are the newest matches,
     /// not the most relevant.
     pub newest_first: bool,
+    /// A meaning search used the note vectors (else it found notes by their words).
+    #[serde(default)]
+    pub by_meaning: bool,
+    /// The fused list of a meaning search was cut at this many notes.
+    pub top: Option<usize>,
+    /// Why a meaning search found notes by their words only.
+    pub words_only: Option<String>,
+}
+
+impl SearchPage {
+    /// A page of a words search.
+    pub fn words(hits: Vec<SearchHit>, newest_first: bool) -> Self {
+        Self { hits, newest_first, by_meaning: false, top: None, words_only: None }
+    }
 }
 
 /// The values the search filters can pick from: only those used by at least one note.
@@ -112,10 +153,99 @@ impl Vault {
             args.push(offset.into());
             let mut stmt = self.conn.prepare(&sql)?;
             let hits = stmt
-                .query_map(params_from_iter(args), |r| Ok(SearchHit { note: NoteSummary::from_row(r)?, snippet: None }))?
+                .query_map(params_from_iter(args), |r| Ok(SearchHit { note: NoteSummary::from_row(r)?, snippet: None, why: None }))?
                 .collect::<rusqlite::Result<_>>()?;
-            return Ok(Some(SearchPage { hits, newest_first: false }));
+            return Ok(Some(SearchPage::words(hits, false)));
         };
+        let Some(ranked) = self.word_ranking(q, &fts, &filters, &args, limit, offset, stop)? else { return Ok(None) };
+        let Some(hits) = self.word_hits(&fts, &ranked, stop)? else { return Ok(None) };
+        Ok(Some(SearchPage::words(hits, ranked.newest_first)))
+    }
+
+    /// The full-text matches of `q` (whose text must have words) from `offset`, at most
+    /// `limit`, best first (or newest first above [`RANK_LIMIT`] matches), and whether
+    /// they are newest first: the words side of a meaning search. `None` when `stop`
+    /// said so.
+    pub fn search_word_ids(&self, q: &SearchQuery, limit: u32, stop: &dyn Fn() -> bool) -> Result<Option<(Vec<i64>, bool)>> {
+        let Some(fts) = fts_query(&q.text) else { return Ok(Some((Vec::new(), false))) };
+        let (filters, args) = filters(q);
+        Ok(self
+            .word_ranking(q, &fts, &filters, &args, i64::from(limit), 0, stop)?
+            .map(|r| (r.rows.iter().map(|(id, _)| *id).collect(), r.newest_first)))
+    }
+
+    /// The live notes passing `q`'s filters and folder (not its text), for a meaning
+    /// search to score only those; `None` when `q` has no filter and no folder, so every
+    /// live note passes.
+    pub fn search_filter_ids(&self, q: &SearchQuery) -> Result<Option<Vec<i64>>> {
+        let (filters, args) = filters(q);
+        if filters.len() == 1 {
+            return Ok(None);
+        }
+        let mut sql = "SELECT n.id FROM notes n WHERE 1".to_string();
+        for f in &filters {
+            sql.push_str(" AND ");
+            sql.push_str(f);
+        }
+        let mut stmt = self.conn.prepare(&sql)?;
+        let ids = stmt.query_map(params_from_iter(args), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(Some(ids))
+    }
+
+    /// The search hits of a meaning search's fused notes (one page of them), in order:
+    /// a words hit with its snippet as in a words search, a hit by meaning alone with
+    /// the start of its body. Notes trashed meanwhile are left out. `None` when `stop`
+    /// said so.
+    pub fn meaning_hits(&self, q: &SearchQuery, fused: &[crate::meaning::FusedHit], stop: &dyn Fn() -> bool) -> Result<Option<Vec<SearchHit>>> {
+        let fts = fts_query(&q.text);
+        let phrase = phrase_query(&q.text);
+        let ids: Vec<i64> = fused.iter().map(|h| h.id).collect();
+        let mut snippet = self.conn.prepare_cached(
+            "SELECT snippet(notes_fts, 1, char(2), char(3), '…', 16) FROM notes_fts
+             WHERE notes_fts MATCH ?1 AND rowid = ?2",
+        )?;
+        let mut body = self.conn.prepare_cached("SELECT substr(body, 1, 4000) FROM notes WHERE id = ?1")?;
+        let mut hits = Vec::with_capacity(ids.len());
+        for (note, why) in self.note_summaries(&ids)?.into_iter().filter_map(|n| {
+            let h = fused.iter().find(|h| h.id == n.id)?;
+            Some((n, Why { words: h.words, cosine: h.cosine }))
+        }) {
+            if stop() {
+                return Ok(None);
+            }
+            let mut text = None;
+            if why.words {
+                // A phrase match shows the phrase, as in a words search.
+                for matching in phrase.iter().chain(fts.iter()) {
+                    let found: Option<String> = snippet.query_row(params![matching, note.id], |r| r.get(0)).optional()?;
+                    text = found.and_then(|s| clean_snippet(&s));
+                    if text.is_some() {
+                        break;
+                    }
+                }
+            }
+            if text.is_none() {
+                let start: Option<String> = body.query_row([note.id], |r| r.get(0)).optional()?;
+                text = start.map(|b| super::review::excerpt(&b)).filter(|e| !e.is_empty());
+            }
+            hits.push(SearchHit { note, snippet: text, why: Some(why) });
+        }
+        Ok(Some(hits))
+    }
+
+    /// The full-text ranking of `fts` with `filters` (from [`filters`]): one page of
+    /// note ids with whether each matched as a phrase.
+    #[allow(clippy::too_many_arguments)]
+    fn word_ranking(
+        &self,
+        q: &SearchQuery,
+        fts: &str,
+        filters: &[String],
+        args: &[Value],
+        limit: i64,
+        offset: i64,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Option<WordRanking>> {
 
         // Matching ids first, from the full-text index alone where possible: joining
         // every match to `notes` costs more than finding it. Only the trash filter
@@ -126,13 +256,13 @@ impl Vault {
                 .to_string()
         } else {
             let mut from = "FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid WHERE notes_fts MATCH ?".to_string();
-            for f in &filters {
+            for f in filters {
                 from.push_str(" AND ");
                 from.push_str(f);
             }
             from
         };
-        let mut args_with_text = vec![Value::from(fts.clone())];
+        let mut args_with_text = vec![Value::from(fts.to_string())];
         args_with_text.extend(args.iter().cloned());
 
         // Ranking reads every match (and bm25 every list of the query's words), so a
@@ -169,8 +299,15 @@ impl Vault {
             .prepare(&format!("SELECT notes_fts.rowid, {is_phrase} {from} ORDER BY {order} LIMIT ? OFFSET ?"))?
             .query_map(params_from_iter(page_args), |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?;
-        let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
-        let phrase_ids: std::collections::HashSet<i64> = rows.iter().filter(|(_, p)| *p).map(|(id, _)| *id).collect();
+        Ok(Some(WordRanking { rows, newest_first, phrase }))
+    }
+
+    /// The hits of a words search's page (see [`Vault::word_ranking`]), with snippets.
+    fn word_hits(&self, fts: &str, ranked: &WordRanking, stop: &dyn Fn() -> bool) -> Result<Option<Vec<SearchHit>>> {
+        let ids: Vec<i64> = ranked.rows.iter().map(|(id, _)| *id).collect();
+        let phrase_ids: std::collections::HashSet<i64> =
+            ranked.rows.iter().filter(|(_, p)| *p).map(|(id, _)| *id).collect();
+        let phrase = &ranked.phrase;
 
         // Summaries and snippets for this page only.
         let mut snippet = self.conn.prepare_cached(
@@ -186,14 +323,14 @@ impl Vault {
                 return Ok(None);
             }
             // A phrase match shows the phrase, not the words elsewhere in the note.
-            let matching = match &phrase {
-                Some(p) if phrase_ids.contains(&note.id) => p,
-                _ => &fts,
+            let matching = match phrase {
+                Some(p) if phrase_ids.contains(&note.id) => p.as_str(),
+                _ => fts,
             };
             let text: Option<String> = snippet.query_row(params![matching, note.id], |r| r.get(0)).optional()?;
-            hits.push(SearchHit { snippet: text.and_then(|s| clean_snippet(&s)), note });
+            hits.push(SearchHit { snippet: text.and_then(|s| clean_snippet(&s)), note, why: None });
         }
-        Ok(Some(SearchPage { hits, newest_first }))
+        Ok(Some(hits))
     }
 
     /// Up to `limit` ids of notes matching `q` (text and filters; paging and order are
@@ -262,6 +399,15 @@ impl Vault {
         let rows = stmt.query_map(params, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
+}
+
+/// One page of a full-text ranking (see [`Vault::word_ranking`]).
+struct WordRanking {
+    /// Note ids, best first, with whether each matched as a phrase.
+    rows: Vec<(i64, bool)>,
+    newest_first: bool,
+    /// The phrase query ranked first, if any.
+    phrase: Option<String>,
 }
 
 /// A search without text: the notes matching `filters` (from [`filters`]), most recently

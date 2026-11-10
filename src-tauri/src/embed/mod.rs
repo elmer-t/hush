@@ -62,6 +62,7 @@ const BGE_SMALL_EN_V15_Q8: ModelDescriptor = ModelDescriptor {
     // Measured on the fixture vault with the fp32 export of this model, not the int8 file
     // itself: re-measure with `measure_suggestion_threshold_on_the_fixture_vault`.
     suggestion_threshold: 0.67,
+    meaning_threshold: BGE_MEANING_THRESHOLD,
     gpu: false,
     // Dynamic int8 quantisation scales a whole run at once: see `onnx::OnnxEmbedder::batch_with`.
     batch_across_notes: false,
@@ -96,6 +97,7 @@ const MULTILINGUAL_E5_SMALL_Q8: ModelDescriptor = ModelDescriptor {
     prefix: "passage: ",
     query_prefix: "query: ",
     suggestion_threshold: E5_SUGGESTION_THRESHOLD,
+    meaning_threshold: E5_MEANING_THRESHOLD,
     gpu: false,
     batch_across_notes: false,
 };
@@ -129,6 +131,7 @@ const ALL_MINILM_L6_V2_Q8: ModelDescriptor = ModelDescriptor {
     prefix: "",
     query_prefix: "",
     suggestion_threshold: MINILM_SUGGESTION_THRESHOLD,
+    meaning_threshold: MINILM_MEANING_THRESHOLD,
     gpu: false,
     batch_across_notes: false,
 };
@@ -167,6 +170,7 @@ const BGE_SMALL_EN_V15_FP16: ModelDescriptor = ModelDescriptor {
     // The bundled model's threshold was measured with the fp32 export, which this file
     // matches to a cosine of 0.99998 (#105).
     suggestion_threshold: 0.67,
+    meaning_threshold: BGE_MEANING_THRESHOLD,
     gpu: true,
     // Measured on DirectML: a note's vector alone and in a batch agree to a cosine of
     // 0.99999 or better (#105).
@@ -189,6 +193,12 @@ const MINILM_MODEL_SIZE: u64 = 22_972_370;
 const MINILM_TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
 const MINILM_TOKENIZER_SIZE: u64 = 711_661;
 const MINILM_SUGGESTION_THRESHOLD: f32 = 0.4;
+// Search by meaning (#146). bge's is measured on the fixture vault with
+// `measure_meaning_search_on_the_fixture_vault` (docs/decisions.md, Search); the others
+// are not measured yet and sit at the same place in their similarity range.
+const BGE_MEANING_THRESHOLD: f32 = 0.58;
+const E5_MEANING_THRESHOLD: f32 = 0.8;
+const MINILM_MEANING_THRESHOLD: f32 = 0.3;
 // Taken from the files as Hugging Face served them on 2026-11-03 (#105), checked on two
 // machines.
 const BGE_FP16_MODEL_SHA256: &str =
@@ -228,6 +238,9 @@ pub struct ModelDescriptor {
     /// Default similarity at or above which a tag is suggested. Overridden per vault by
     /// the `suggest_threshold:<model ID>` setting.
     pub suggestion_threshold: f32,
+    /// Lowest cosine between a search query and a note vector that counts as a match
+    /// by meaning (#146). Below it, a note is only found by its words.
+    pub meaning_threshold: f32,
     /// Made for the GPU: runs through DirectML when this computer has a usable GPU and
     /// Settings allows it, else on the CPU.
     pub gpu: bool,

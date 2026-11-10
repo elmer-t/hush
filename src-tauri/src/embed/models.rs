@@ -256,7 +256,7 @@ pub enum ReducedReason {
     FirstIndex,
 }
 
-/// Why related notes, tag suggestions, tag classifiers and Discover tags are off.
+/// Why related notes, search by meaning, tag suggestions, tag classifiers and Discover tags are off.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reduced {
@@ -393,6 +393,7 @@ mod tests {
             prefix: "",
             query_prefix: "",
             suggestion_threshold: 0.5,
+            meaning_threshold: 0.5,
             gpu: false,
             batch_across_notes: false,
         }

@@ -168,16 +168,43 @@ impl RelatedIndex {
         let &row = self.rows.get(&id)?;
         let d = self.dims;
         let query = &self.vectors[row * d..(row + 1) * d];
+        Some(self.best(query, k, |i| i != row))
+    }
+
+    /// Up to `k` notes closest to `query` (any length-`dims` vector, such as a search
+    /// query's) by the `i8` vectors, most similar first: candidates for [`rerank`].
+    /// With `allowed`, only those notes are scored, so a filtered search finds its best
+    /// matches even when none of them are among the vault's best.
+    pub fn search(&self, query: &[f32], k: usize, allowed: Option<&Allowed>) -> Vec<i64> {
+        if query.len() != self.dims || self.dims == 0 {
+            return Vec::new();
+        }
+        let mut unit = Zeroizing::new(query.to_vec());
+        super::normalize(&mut unit);
+        let mut q = Zeroizing::new(vec![0i8; self.dims]);
+        // The query's own scale is the same for every row, so it doesn't change the order.
+        quantize(&unit, &mut q);
+        match allowed {
+            Some(allowed) => self.best(&q, k, |i| allowed.contains(self.ids[i])),
+            None => self.best(&q, k, |_| true),
+        }
+    }
+
+    /// The ids of the best `k` rows for `query` (`i8`, as stored) among the rows `keep`
+    /// accepts, best first; ties by row, so the order is stable. Large indexes are
+    /// scanned on several threads.
+    fn best(&self, query: &[i8], k: usize, keep: impl Fn(usize) -> bool + Sync) -> Vec<i64> {
+        let d = self.dims;
         let n = self.ids.len();
-        if k == 0 || n <= 1 {
-            return Some(Vec::new());
+        if k == 0 || n == 0 || d == 0 {
+            return Vec::new();
         }
         // The best `k` of rows `start..`, in a bounded heap: the worst kept on top.
         let scan = |start: usize, rows: &[i8]| -> Vec<(Score, Reverse<usize>)> {
             let mut heap: BinaryHeap<Reverse<(Score, Reverse<usize>)>> = BinaryHeap::with_capacity(k + 1);
             for (i, v) in rows.chunks_exact(d).enumerate() {
                 let i = start + i;
-                if i == row {
+                if !keep(i) {
                     continue;
                 }
                 let entry = (Score(idot(query, v) as f32 * self.scales[i]), Reverse(i));
@@ -197,6 +224,7 @@ impl RelatedIndex {
             scan(0, &self.vectors)
         } else {
             let per = n.div_ceil(threads);
+            let scan = &scan;
             std::thread::scope(|s| {
                 let handles: Vec<_> = self
                     .vectors
@@ -210,7 +238,44 @@ impl RelatedIndex {
         // Highest score first; ties by row, so the order is stable.
         best.sort_unstable_by(|a, b| b.cmp(a));
         best.truncate(k);
-        Some(best.into_iter().map(|(_, Reverse(i))| self.ids[i]).collect())
+        best.into_iter().map(|(_, Reverse(i))| self.ids[i]).collect()
+    }
+}
+
+/// The notes a filtered search may return: a bitset over note ids, so the index scan
+/// checks a note with one lookup.
+pub struct Allowed {
+    bits: Vec<u64>,
+    len: usize,
+}
+
+impl Allowed {
+    pub fn new(ids: &[i64]) -> Self {
+        let max = ids.iter().copied().filter(|&id| id >= 0).max().unwrap_or(0) as usize;
+        let mut bits = vec![0u64; max / 64 + 1];
+        let mut len = 0;
+        for &id in ids {
+            if id < 0 {
+                continue;
+            }
+            let (word, bit) = (id as usize / 64, id as usize % 64);
+            len += usize::from(bits[word] & (1 << bit) == 0);
+            bits[word] |= 1 << bit;
+        }
+        Self { bits, len }
+    }
+
+    pub fn contains(&self, id: i64) -> bool {
+        id >= 0 && self.bits.get(id as usize / 64).is_some_and(|w| w & (1 << (id as usize % 64)) != 0)
+    }
+
+    /// How many notes are allowed.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 }
 
@@ -530,6 +595,18 @@ mod tests {
             index.upsert(*id, [*id as u8; 32], v);
         }
         index
+    }
+
+    #[test]
+    fn a_query_vector_finds_the_closest_notes_among_those_allowed() {
+        let index = index(&[(1, [1.0, 0.0, 0.0]), (2, [0.9, 0.1, 0.0]), (3, [0.0, 1.0, 0.0]), (70, [0.5, 0.5, 0.0])]);
+        assert_eq!(index.search(&[2.0, 0.0, 0.0], 3, None), vec![1, 2, 70], "any length: it is normalised");
+        let allowed = Allowed::new(&[3, 70, 999]);
+        assert_eq!(allowed.len(), 3);
+        assert!(allowed.contains(70) && !allowed.contains(1) && !allowed.contains(-1) && !allowed.contains(5000));
+        assert_eq!(index.search(&[1.0, 0.0, 0.0], 3, Some(&allowed)), vec![70, 3]);
+        assert_eq!(index.search(&[1.0, 0.0], 3, None), Vec::<i64>::new(), "wrong length");
+        assert_eq!(index.search(&[1.0, 0.0, 0.0], 3, Some(&Allowed::new(&[]))), Vec::<i64>::new());
     }
 
     #[test]

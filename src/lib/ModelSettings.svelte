@@ -209,7 +209,7 @@
 <div class="card model">
   <p class="muted">
     The embedding model works out what each note is about, on this computer. Without a ready model these are off:
-    {MODEL_FEATURES}. Search and everything else keep working.
+    {MODEL_FEATURES}. Words search and everything else keep working.
   </p>
   <p class="muted">
     Extra models are optional. Hush goes online only when you click Download, and only to that model's address. To
