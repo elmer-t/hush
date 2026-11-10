@@ -174,13 +174,34 @@ impl Vault {
             .map(|r| (r.rows.iter().map(|(id, _)| *id).collect(), r.newest_first)))
     }
 
-    /// The live notes passing `q`'s filters and folder (not its text), for a meaning
-    /// search to score only those; `None` when `q` has no filter and no folder, so every
-    /// live note passes.
-    pub fn search_filter_ids(&self, q: &SearchQuery) -> Result<Option<Vec<i64>>> {
-        let (filters, args) = filters(q);
-        if filters.len() == 1 {
+    /// The notes passing `q`'s filters and folder (not its text), for a meaning search
+    /// to score only those; `None` when `q` has no filter and no folder, so every live
+    /// note passes. Trashed notes may be in an [`NoteFilter::Except`] list or not; the
+    /// meaning search drops them anyway.
+    pub fn search_filter_ids(&self, q: &SearchQuery) -> Result<Option<NoteFilter>> {
+        // "Unread" and "Not finished" pass nearly every note, and `read_status` comes
+        // after the body in each row, so checking it row by row reads the whole vault.
+        // The few notes they exclude are read from the partial index instead.
+        let excluded = match q.read_status {
+            Some(ReadFilter::Unread) => Some("SELECT id FROM notes WHERE read_status > 0"),
+            Some(ReadFilter::NotFinished) => Some("SELECT id FROM notes WHERE read_status > 0 AND read_status = 2"),
+            _ => None,
+        };
+        let (filters, args) = if excluded.is_some() {
+            filters(&SearchQuery { read_status: None, ..q.clone() })
+        } else {
+            filters(q)
+        };
+        if filters.len() == 1 && excluded.is_none() {
             return Ok(None);
+        }
+        let excluded: Option<Vec<i64>> = match excluded {
+            Some(sql) => Some(self.conn.prepare(sql)?.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?),
+            None => None,
+        };
+        if filters.len() == 1 {
+            // Only the read status: every note but the excluded ones, without listing them.
+            return Ok(excluded.map(NoteFilter::Except));
         }
         let mut sql = "SELECT n.id FROM notes n WHERE 1".to_string();
         for f in &filters {
@@ -188,8 +209,12 @@ impl Vault {
             sql.push_str(f);
         }
         let mut stmt = self.conn.prepare(&sql)?;
-        let ids = stmt.query_map(params_from_iter(args), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(Some(ids))
+        let mut ids: Vec<i64> = stmt.query_map(params_from_iter(args), |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        if let Some(excluded) = excluded {
+            let excluded: std::collections::HashSet<i64> = excluded.into_iter().collect();
+            ids.retain(|id| !excluded.contains(id));
+        }
+        Ok(Some(NoteFilter::Only(ids)))
     }
 
     /// The search hits of a meaning search's fused notes (one page of them), in order:
@@ -399,6 +424,14 @@ impl Vault {
         let rows = stmt.query_map(params, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
+}
+
+/// The notes a filtered meaning search may return (see [`Vault::search_filter_ids`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteFilter {
+    Only(Vec<i64>),
+    /// Every note but these.
+    Except(Vec<i64>),
 }
 
 /// One page of a full-text ranking (see [`Vault::word_ranking`]).
@@ -620,6 +653,44 @@ mod tests {
                 assert!(!plan.contains("TEMP B-TREE"), "{f:?}: already in order: {plan}");
             }
         }
+    }
+
+    /// A broad read status filter (nearly every note passes) lists the few notes it
+    /// excludes, from the partial index, rather than checking every note's row.
+    #[test]
+    fn broad_read_filters_list_the_notes_they_exclude() {
+        use super::NoteFilter::{Except, Only};
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let a = vault.create_note("", "a", "x").unwrap();
+        let b = vault.create_note("", "b", "x").unwrap();
+        let c = vault.create_note("f", "c", "x").unwrap();
+        let d = vault.create_note("", "d", "x").unwrap();
+        vault.set_read_status(&[b], crate::db::ReadStatus::PartlyRead).unwrap();
+        vault.set_read_status(&[c], crate::db::ReadStatus::Read).unwrap();
+        vault.trash_note(d).unwrap();
+        let ids = |f: ReadFilter, folder: Option<&str>| {
+            let q = SearchQuery { read_status: Some(f), folder: folder.map(Into::into), ..Default::default() };
+            match vault.search_filter_ids(&q).unwrap().unwrap() {
+                Only(mut ids) => Only({ ids.sort(); ids }),
+                Except(mut ids) => Except({ ids.sort(); ids }),
+            }
+        };
+        assert_eq!(ids(ReadFilter::Unread, None), Except(vec![b, c]));
+        assert_eq!(ids(ReadFilter::NotFinished, None), Except(vec![c]));
+        assert_eq!(ids(ReadFilter::Read, None), Only(vec![c]));
+        assert_eq!(ids(ReadFilter::NotFinished, Some("f")), Only(vec![]));
+        assert_eq!(ids(ReadFilter::Unread, Some("")), Except(vec![b, c]), "the vault root is no folder filter");
+        let _ = a;
+        assert_eq!(vault.search_filter_ids(&SearchQuery::default()).unwrap(), None);
+        // The excluded notes come from the partial index alone.
+        let mut stmt = vault.conn.prepare("EXPLAIN QUERY PLAN SELECT id FROM notes WHERE read_status > 0 AND read_status = 2").unwrap();
+        let mut rows = stmt.raw_query();
+        let mut plan = Vec::new();
+        while let Some(r) = rows.next().unwrap() {
+            plan.push(r.get::<_, String>(3).unwrap());
+        }
+        assert!(plan.join(" ").contains("COVERING INDEX notes_read"), "{plan:?}");
     }
 
     #[test]

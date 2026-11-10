@@ -295,3 +295,18 @@ fn a_newer_search_cancels_an_older_meaning_search() {
     assert!(!session.search_is_current(ticket));
     assert_eq!(session.run_search(ticket, |_, _| Ok(Some(1))).unwrap(), None);
 }
+
+#[test]
+fn a_broad_read_status_filter_applies_to_vector_hits() {
+    let (_dir, _path, session, generation) = session();
+    let models = Models::new(&[MODEL]);
+    note(&session, "", "Unread one", "One.\nv 1 0 0 0");
+    let read = note(&session, "", "Read one", "Two.\nv 1 0 0 0");
+    index(&session, generation, &models);
+    session.with_vault(|v| v.set_read_status(&[read], hush_lib::db::ReadStatus::Read).map(|_| ())).unwrap();
+    for f in [hush_lib::db::ReadFilter::Unread, hush_lib::db::ReadFilter::NotFinished] {
+        let mut q = query("stuck", SearchMode::Meaning);
+        q.read_status = Some(f);
+        assert_eq!(titles(&run(&session, &models, &q)), vec!["Unread one"], "{f:?}");
+    }
+}

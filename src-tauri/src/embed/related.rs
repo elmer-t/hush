@@ -243,40 +243,36 @@ impl RelatedIndex {
 }
 
 /// The notes a filtered search may return: a bitset over note ids, so the index scan
-/// checks a note with one lookup.
+/// checks a note with one lookup. Either the notes listed, or every note but them.
 pub struct Allowed {
     bits: Vec<u64>,
-    len: usize,
+    except: bool,
 }
 
 impl Allowed {
+    /// Only the notes `ids`.
     pub fn new(ids: &[i64]) -> Self {
-        let max = ids.iter().copied().filter(|&id| id >= 0).max().unwrap_or(0) as usize;
-        let mut bits = vec![0u64; max / 64 + 1];
-        let mut len = 0;
-        for &id in ids {
-            if id < 0 {
-                continue;
-            }
-            let (word, bit) = (id as usize / 64, id as usize % 64);
-            len += usize::from(bits[word] & (1 << bit) == 0);
-            bits[word] |= 1 << bit;
-        }
-        Self { bits, len }
+        Self { bits: bitset(ids), except: false }
+    }
+
+    /// Every note but `ids`.
+    pub fn except(ids: &[i64]) -> Self {
+        Self { bits: bitset(ids), except: true }
     }
 
     pub fn contains(&self, id: i64) -> bool {
-        id >= 0 && self.bits.get(id as usize / 64).is_some_and(|w| w & (1 << (id as usize % 64)) != 0)
+        let listed = id >= 0 && self.bits.get(id as usize / 64).is_some_and(|w| w & (1 << (id as usize % 64)) != 0);
+        listed != self.except
     }
+}
 
-    /// How many notes are allowed.
-    pub fn len(&self) -> usize {
-        self.len
+fn bitset(ids: &[i64]) -> Vec<u64> {
+    let max = ids.iter().copied().filter(|&id| id >= 0).max().unwrap_or(0) as usize;
+    let mut bits = vec![0u64; max / 64 + 1];
+    for &id in ids.iter().filter(|&&id| id >= 0) {
+        bits[id as usize / 64] |= 1 << (id as usize % 64);
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
+    bits
 }
 
 /// A score that orders like a number, so `(Score, Reverse(row))` compares higher for a
@@ -602,9 +598,11 @@ mod tests {
         let index = index(&[(1, [1.0, 0.0, 0.0]), (2, [0.9, 0.1, 0.0]), (3, [0.0, 1.0, 0.0]), (70, [0.5, 0.5, 0.0])]);
         assert_eq!(index.search(&[2.0, 0.0, 0.0], 3, None), vec![1, 2, 70], "any length: it is normalised");
         let allowed = Allowed::new(&[3, 70, 999]);
-        assert_eq!(allowed.len(), 3);
         assert!(allowed.contains(70) && !allowed.contains(1) && !allowed.contains(-1) && !allowed.contains(5000));
         assert_eq!(index.search(&[1.0, 0.0, 0.0], 3, Some(&allowed)), vec![70, 3]);
+        let except = Allowed::except(&[1, 70]);
+        assert!(!except.contains(70) && except.contains(2) && except.contains(5000));
+        assert_eq!(index.search(&[1.0, 0.0, 0.0], 3, Some(&except)), vec![2, 3]);
         assert_eq!(index.search(&[1.0, 0.0], 3, None), Vec::<i64>::new(), "wrong length");
         assert_eq!(index.search(&[1.0, 0.0, 0.0], 3, Some(&Allowed::new(&[]))), Vec::<i64>::new());
     }

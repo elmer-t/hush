@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-use crate::db::{SearchPage, SearchQuery};
+use crate::db::{NoteFilter, SearchPage, SearchQuery};
 use crate::embed::related::{self, Allowed};
 use crate::embed::{self, EmbedError, Embedder};
 use crate::session::{Session, SessionError};
@@ -123,7 +123,12 @@ pub fn search(session: &Session, models: &dyn QueryModels, q: &SearchQuery) -> R
     if !session.search_is_current(ticket) {
         return Ok(None);
     }
-    let Some(allowed) = session.run_search(ticket, |v, _| Ok(Some(v.search_filter_ids(q)?.map(|ids| Allowed::new(&ids)))))?
+    let Some(allowed) = session.run_search(ticket, |v, _| {
+        Ok(Some(v.search_filter_ids(q)?.map(|f| match f {
+            NoteFilter::Only(ids) => Allowed::new(&ids),
+            NoteFilter::Except(ids) => Allowed::except(&ids),
+        })))
+    })?
     else {
         return Ok(None);
     };
