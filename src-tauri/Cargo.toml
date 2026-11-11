@@ -3,6 +3,7 @@ name = "hush"
 version = "0.1.0"
 description = "Private notes in an encrypted vault"
 authors = ["Elmer Torensma"]
+license = "MIT"
 publish = false
 edition = "2024"
 
