@@ -203,6 +203,10 @@ fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | extra,
     )?;
+    // Before the key, as SQLCipher documents: SQLCipher then overwrites the memory it
+    // frees, so decrypted pages don't stay in the heap after the vault locks (#153).
+    // Process-wide, and it can't be turned off again; costs measured in #153.
+    run_pragma(&conn, "PRAGMA cipher_memory_security = ON")?;
     apply_key(&conn, passphrase)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -245,4 +249,21 @@ pub(crate) fn now_ms() -> i64 {
 /// `“A”, “B”` for error messages.
 fn quote_list(items: &[String]) -> String {
     items.iter().map(|t| format!("“{t}”")).collect::<Vec<_>>().join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SQLCipher wipes the memory it frees, so decrypted pages don't outlive a lock in
+    /// the heap (#153).
+    #[test]
+    fn open_vault_has_memory_security_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.hush");
+        Vault::create(&path, "pass").unwrap().close().unwrap();
+        let vault = Vault::open(&path, "pass").unwrap();
+        let on: String = vault.conn.query_row("PRAGMA cipher_memory_security", [], |r| r.get(0)).unwrap();
+        assert_eq!(on, "1");
+    }
 }

@@ -154,3 +154,50 @@ fn vault_held_by_another_process() {
     child.wait().unwrap();
     Vault::open(&path, PASS).unwrap();
 }
+
+/// Env var naming the vault [`child_edits_vault_without_memory_security`] opens.
+const CHILD_RAW_VAULT: &str = "HUSH_TEST_CHILD_RAW_VAULT";
+
+/// Run by [`memory_security_does_not_change_the_file`] in a child process: opens the
+/// vault on a plain SQLCipher connection that never turns `cipher_memory_security` on,
+/// as Hush before #153 did, reads the note and adds a setting.
+#[test]
+#[ignore = "helper process for memory_security_does_not_change_the_file"]
+fn child_edits_vault_without_memory_security() {
+    let Ok(path) = std::env::var(CHILD_RAW_VAULT) else { return };
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.pragma_update(None, "key", PASS).unwrap();
+    let body: String = conn.query_row("SELECT body FROM notes WHERE title = 'Kept'", [], |r| r.get(0)).unwrap();
+    assert_eq!(body, "written with memory security on");
+    let on: String = conn.query_row("PRAGMA cipher_memory_security", [], |r| r.get(0)).unwrap();
+    assert_eq!(on, "0", "this process never turns it on");
+    conn.execute("INSERT INTO settings(key, value) VALUES ('from_old_hush', 'yes')", []).unwrap();
+    conn.close().unwrap();
+    println!("edited");
+}
+
+/// `cipher_memory_security` only changes how SQLCipher frees memory, not the file: a
+/// vault written with it on opens without it (an older Hush), and pages that process
+/// writes open with it on again.
+#[test]
+fn memory_security_does_not_change_the_file() {
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("vault.hush");
+    let mut vault = Vault::create(&path, PASS).unwrap();
+    let id = vault.create_note("", "Kept", "written with memory security on").unwrap();
+    vault.close().unwrap();
+
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "child_edits_vault_without_memory_security", "--ignored", "--nocapture", "--test-threads=1"])
+        .env(CHILD_RAW_VAULT, &path)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && stdout.contains("edited"), "child failed:\n{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    let vault = Vault::open(&path, PASS).unwrap();
+    assert_eq!(vault.note(id).unwrap().body, "written with memory security on");
+    assert_eq!(vault.setting("from_old_hush").unwrap().as_deref(), Some("yes"));
+}
