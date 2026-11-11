@@ -78,6 +78,7 @@ impl CommandError {
             Self::Session(SessionError::Db(e)) => match e {
                 D::WrongPassphrase => "wrongPassphrase",
                 D::EmptyPassphrase => "emptyPassphrase",
+                D::PassphraseTooShort => "passphraseTooShort",
                 D::VaultNotFound => "vaultNotFound",
                 D::VaultExists => "vaultExists",
                 D::VaultInUse => "vaultInUse",

@@ -52,12 +52,18 @@ pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_S
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The shortest passphrase a new vault, or a passphrase change, accepts, counted in
+/// characters. Opening never checks it, so vaults made before the minimum still open.
+pub const MIN_PASSPHRASE_CHARS: usize = 8;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("wrong passphrase, or not a Hush vault")]
     WrongPassphrase,
     #[error("passphrase must not be empty")]
     EmptyPassphrase,
+    #[error("passphrase must be at least {MIN_PASSPHRASE_CHARS} characters")]
+    PassphraseTooShort,
     #[error("vault file not found")]
     VaultNotFound,
     #[error("a file already exists at that location")]
@@ -112,6 +118,7 @@ impl Vault {
         if path.exists() {
             return Err(Error::VaultExists);
         }
+        check_new_passphrase(passphrase)?;
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
         Self::init(conn, lock, &mut |_| {})
@@ -155,9 +162,7 @@ impl Vault {
     }
 
     pub fn change_passphrase(&self, new_passphrase: &str) -> Result<()> {
-        if new_passphrase.is_empty() {
-            return Err(Error::EmptyPassphrase);
-        }
+        check_new_passphrase(new_passphrase)?;
         self.conn.pragma_update(None, "rekey", new_passphrase)?;
         Ok(())
     }
@@ -193,6 +198,17 @@ impl Vault {
         self.setting_changes.set(self.setting_changes.get() + n as u64);
         Ok(())
     }
+}
+
+/// Checks a passphrase that is about to key a vault: on create and change, never on open.
+fn check_new_passphrase(passphrase: &str) -> Result<()> {
+    if passphrase.is_empty() {
+        return Err(Error::EmptyPassphrase);
+    }
+    if passphrase.chars().count() < MIN_PASSPHRASE_CHARS {
+        return Err(Error::PassphraseTooShort);
+    }
+    Ok(())
 }
 
 fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection> {

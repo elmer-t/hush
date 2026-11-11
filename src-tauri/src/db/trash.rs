@@ -391,7 +391,7 @@ mod tests {
 
     fn vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         (dir, vault)
     }
 
