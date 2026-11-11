@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getVersion } from "@tauri-apps/api/app";
   import { listen } from "@tauri-apps/api/event";
   import { api, errorMessage, GPU_STATUS_EVENT, type GpuStatus } from "$lib/api";
   import { gpuText } from "$lib/gpu";
+  import { licenceSummary } from "$lib/notices";
   import ModelSettings from "$lib/ModelSettings.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
 
@@ -43,6 +45,13 @@
   let authorStatus = $state("");
   let authorError = $state("");
 
+  let version = $state("");
+  /** THIRD_PARTY_NOTICES.md, read when first shown (it is large). */
+  let notices = $state<string | null>(null);
+  let showNotices = $state(false);
+  let noticesError = $state("");
+  const families = $derived(notices ? licenceSummary(notices) : []);
+
   const SECTIONS = [
     { id: "settings-general", label: "General" },
     { id: "settings-security", label: "Security" },
@@ -50,6 +59,7 @@
     { id: "model-settings", label: "Model" },
     { id: "settings-indexing", label: "Indexing" },
     { id: "settings-trash", label: "Trash" },
+    { id: "settings-about", label: "About" },
   ];
   let root = $state<HTMLElement>();
   let active = $state(SECTIONS[0].id);
@@ -137,6 +147,7 @@
   });
 
   onMount(async () => {
+    getVersion().then((v) => (version = v), () => {});
     api.indexAllCores().then((on) => (allCores = on), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
@@ -147,6 +158,19 @@
       api.recentOpenedCount(),
     ]);
   });
+
+  async function toggleNotices() {
+    noticesError = "";
+    if (!showNotices && notices === null) {
+      try {
+        notices = await api.thirdPartyNotices();
+      } catch (err) {
+        noticesError = errorMessage(err);
+        return;
+      }
+    }
+    showNotices = !showNotices;
+  }
 
   async function saveAllCores() {
     coresError = "";
@@ -394,6 +418,45 @@
         </div>
       </form>
     </section>
+
+    <section id="settings-about" aria-labelledby="settings-about-h">
+      <h2 id="settings-about-h" tabindex="-1"><span class="num" aria-hidden="true">07</span>About</h2>
+      <div class="card">
+        <h3>Hush{version ? ` ${version}` : ""}</h3>
+        <p class="muted">Private notes in an encrypted vault.</p>
+      </div>
+      <div class="card">
+        <h3>Licences</h3>
+        <p class="muted">
+          Hush is built on open-source libraries, fonts and an embedding model, and on Windows it also ships
+          Microsoft's DirectML and WebView2 loader. Their licences and copyright notices come with the app, in
+          THIRD_PARTY_NOTICES.md.
+        </p>
+        {#if noticesError}<p class="error" role="alert">{noticesError}</p>{/if}
+        {#if showNotices && notices !== null}
+          {#if families.length}
+            <table class="families">
+              <caption class="muted">Licences used, by number of packages</caption>
+              <thead><tr><th scope="col">Licence</th><th scope="col">Rust crates</th><th scope="col">npm packages</th></tr></thead>
+              <tbody>
+                {#each families as f (f.licence)}
+                  <tr><th scope="row">{f.licence}</th><td>{f.rust}</td><td>{f.npm}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+          <!-- Plain text: the notices are licence texts, not content to render. Focusable so
+               the keyboard can scroll it. -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <pre class="notices" tabindex="0" aria-label="Third-party notices">{notices}</pre>
+        {/if}
+        <div class="actions">
+          <button type="button" aria-expanded={showNotices} onclick={toggleNotices}>
+            {showNotices ? "Hide third-party notices" : "Show third-party notices"}
+          </button>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 </div>
@@ -543,6 +606,54 @@
     align-items: center;
     justify-content: flex-end;
     gap: 12px;
+  }
+
+  .families {
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .families caption {
+    text-align: left;
+    padding-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .families th,
+  .families td {
+    padding: 4px 16px 4px 0;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+
+  .families th[scope="row"],
+  .families thead th:first-child {
+    text-align: left;
+    font-family: var(--mono);
+    font-weight: 400;
+  }
+
+  .families thead th {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .notices {
+    max-height: 420px;
+    margin: 0;
+    padding: 12px 14px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   @container (max-width: 640px) {

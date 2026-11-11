@@ -1,9 +1,10 @@
-// Browser check for the Settings layout: section menu, active section, the model in use.
+// Browser check for the Settings layout: section menu, active section, the model in use,
+// the third-party notices under About.
 // Needs `npm run dev` (Vite on :1420) and Playwright: `node scripts/check-settings.cjs [screenshot dir]`.
 // Mounts Settings alone through src/lib/checks/settings-harness.svelte.ts with mocked commands,
 // and exits 1 when a check fails.
 const { chromium } = require("playwright");
-const URL = "http://127.0.0.1:1420/";
+const URL = process.env.DEV_URL ?? "http://127.0.0.1:1420/";
 const SHOTS = process.argv[2];
 
 function mocks() {
@@ -26,6 +27,9 @@ function mocks() {
       ],
     },
     tag_list: [{ tag: "work", notes: 120, description: "Work notes" }, { tag: "journal", notes: 40, description: "" }],
+    "plugin:app|version": "0.1.0",
+    third_party_notices:
+      "# Third-party notices\n\n## Summary\n\n| Licence | Rust crates | npm packages |\n|---|---:|---:|\n| MIT | 391 | 59 |\n| ISC | 23 | 20 |\n| MPL-2.0 | 5 | 0 |\n| OFL-1.1 | 0 | 3 |\n\n## Native libraries, fonts and models\n\n### SQLCipher (community edition)\n\n~~~~text\nCopyright (c) 2008-2020 Zetetic LLC\nAll rights reserved.\n~~~~\n".repeat(3),
     suggestion_threshold: { model: "e5-small", threshold: null, default: 0.8 }, tag_training: [], folders: [], recent_vaults: [],
   };
   window.__TAURI_INTERNALS__ = {
@@ -53,8 +57,8 @@ async function main() {
     await page.waitForSelector(".in-use");
     const tag = `${scheme} ${width}px`;
     const current = () => page.evaluate(() => document.querySelector('.menu a[aria-current="true"]')?.textContent.trim());
-    check(`${tag}: six menu entries`, (await page.locator(".menu a").count()) === 6);
-    check(`${tag}: six section headers`, (await page.locator(".sections > section > h2").count()) === 6);
+    check(`${tag}: seven menu entries`, (await page.locator(".menu a").count()) === 7);
+    check(`${tag}: seven section headers`, (await page.locator(".sections > section > h2").count()) === 7);
     check(`${tag}: General active at the top`, /General/.test(await current()));
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/top-${scheme}-${width}.png` });
     await page.click('.menu a[href="#model-settings"]');
@@ -69,7 +73,17 @@ async function main() {
     await page.mouse.move(width / 2, 400);
     await page.mouse.wheel(0, 5000);
     await page.waitForTimeout(600);
-    check(`${tag}: wheel to the bottom lights Trash`, /Trash/.test(await current()));
+    check(`${tag}: wheel to the bottom lights About`, /About/.test(await current()));
+    check(`${tag}: About shows the version`, /Hush 0\.1\.0/.test(await page.locator("#settings-about h3").first().textContent()));
+    check(`${tag}: notices hidden until asked`, (await page.locator("pre.notices").count()) === 0);
+    await page.click("text=Show third-party notices");
+    await page.waitForSelector("pre.notices");
+    check(`${tag}: licence summary has four rows`, (await page.locator(".families tbody tr").count()) === 4);
+    check(`${tag}: notices text shown`, /Zetetic LLC/.test(await page.locator("pre.notices").textContent()));
+    check(`${tag}: button says Hide`, (await page.locator('#settings-about button[aria-expanded="true"]').count()) === 1);
+    await page.evaluate(() => document.getElementById("settings-about").scrollIntoView());
+    await page.waitForTimeout(300);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/about-${scheme}-${width}.png` });
     await page.mouse.wheel(0, -100000);
     await page.waitForTimeout(600);
     check(`${tag}: wheel back up lights General`, /General/.test(await current()));

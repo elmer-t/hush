@@ -56,6 +56,18 @@ npm run check
 
 The test that runs the real embedding model is skipped (it prints `SKIPPED`) unless `npm run fetch-model` has been run.
 
+## Third-party notices
+
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) holds the licences of everything Hush ships: Rust crates, the npm packages in the bundle, and the native libraries, fonts and model. It goes into the installer and shows under Settings → About. After changing dependencies, regenerate it:
+
+```powershell
+cargo install --locked --features cli cargo-about   # once
+npm run notices            # rewrites THIRD_PARTY_NOTICES.md (and build/)
+npm run notices -- --check # fails when the committed file is out of date
+```
+
+The hand-written part is [scripts/notices/manual.md](scripts/notices/manual.md). The script lists every licence family it finds and flags copyleft or unknown licences.
+
 ## How this gets built
 
 I write issues and label them `ready-for-agent`. An agent picks the lowest-numbered one, opens a branch and a PR, and lists the calls it made under a `Decisions` heading so I can overrule them in review. It stops and asks only before something that could make an existing vault unreadable. The rules are in [CLAUDE.md](CLAUDE.md).
