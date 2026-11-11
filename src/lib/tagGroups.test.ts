@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupTags, PAGE_SIZE, shownCount } from "$lib/tagGroups";
+import { fastestOf } from "$lib/testing/timing";
 
 const info = (tag: string, notes: number, description = "") => ({ tag, notes, description });
 
@@ -27,10 +28,11 @@ describe("groupTags", () => {
 
   it("handles 10,000 tags quickly", () => {
     const tags = Array.from({ length: 10_000 }, (_, i) => info(`tag${i}`, i % 7));
-    const start = performance.now();
-    const { main, rare } = groupTags(tags, (t) => t);
+    // About 7 ms idle, so 200 ms leaves a busy CI runner 30x; the fastest of 3 runs
+    // drops the ones another process or a GC pause slowed down.
+    const { ms, result: { main, rare } } = fastestOf(3, () => groupTags(tags, (t) => t));
     expect(main.length + rare.length).toBe(10_000);
-    expect(performance.now() - start).toBeLessThan(200);
+    expect(ms).toBeLessThan(200);
   });
 });
 

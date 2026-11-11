@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
-import { ensureSyntaxTree } from "@codemirror/language";
 import { Decoration, type DecorationSet } from "@codemirror/view";
 import MarkdownIt from "markdown-it";
 import { liveLanguage } from "$lib/livePreview";
+import { parsed } from "$lib/testing/parsed";
 import {
   MermaidWidget,
   liveMermaid,
@@ -18,9 +18,7 @@ function stateOf(marked: string, extensions: unknown[] = []) {
   const at = [...marked.matchAll(/\^/g)].map((m, i) => m.index! - i);
   const doc = marked.replaceAll("^", "");
   const selection = at.length === 2 ? EditorSelection.single(at[0], at[1]) : EditorSelection.cursor(at[0] ?? 0);
-  const state = EditorState.create({ doc, selection, extensions: [liveLanguage(), ...(extensions as [])] });
-  ensureSyntaxTree(state, doc.length, 5000);
-  return state;
+  return parsed(EditorState.create({ doc, selection, extensions: [liveLanguage(), ...(extensions as [])] }));
 }
 
 /** The content markdown-it gives each mermaid fence: what the preview renders and caches. */

@@ -52,7 +52,10 @@ Both commands first run `npm run fetch-model`, which downloads the bundled embed
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run check
+npm test
 ```
+
+`npm test` leaves out the editor's frame-budget checks (typing into a 5,000-line note within 16 ms a keystroke), because on a busy machine they fail for no reason. Run them on an idle machine with `npm run test:perf`.
 
 The test that runs the real embedding model is skipped (it prints `SKIPPED`) unless `npm run fetch-model` has been run.
 

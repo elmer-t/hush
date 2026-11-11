@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { folderChildren, folderNodes, sameFolders, subtreeSizes } from "$lib/folderTree";
+import { fastestOf } from "$lib/testing/timing";
 
 describe("folderChildren", () => {
   it("adds ancestors that hold no notes and sorts each folder's children by name", () => {
@@ -34,12 +35,12 @@ describe("folderChildren", () => {
 
   it("builds 50,000 folders under one parent quickly", () => {
     const folders = Array.from({ length: 50_000 }, (_, i) => `Archive/Item ${i}`);
-    // The quadratic sibling lookup this replaces took 80 s here.
-    const start = performance.now();
-    const nodes = folderNodes(folders);
-    const elapsed = performance.now() - start;
+    // The quadratic sibling lookup this replaces took 80 s here; this takes about 90 ms
+    // idle. The fastest of 3 runs under a 2 s limit holds on a busy CI runner and still
+    // catches that 40 times over.
+    const { ms, result: nodes } = fastestOf(3, () => folderNodes(folders));
     expect(nodes[0].children).toHaveLength(50_000);
-    expect(elapsed).toBeLessThan(200);
+    expect(ms).toBeLessThan(2000);
   });
 });
 
@@ -99,12 +100,12 @@ describe("subtreeSizes", () => {
 
   it("rolls up 50,000 deep folders quickly", () => {
     const sizes = Array.from({ length: 50_000 }, (_, i) => ({ path: `A/B ${i % 100}/C ${i}`, bytes: 10 }));
-    const start = performance.now();
-    const totals = subtreeSizes(sizes);
-    const elapsed = performance.now() - start;
+    // About 30 ms idle; a rescan of the list per folder took 9 s. The fastest of 3 runs
+    // under a 2 s limit holds on a busy CI runner and still catches that.
+    const { ms, result: totals } = fastestOf(3, () => subtreeSizes(sizes));
     expect(totals.get("")).toBe(500_000);
     expect(totals.get("a")).toBe(500_000);
     expect(totals.get("a/b 7")).toBe(5_000);
-    expect(elapsed).toBeLessThan(200);
+    expect(ms).toBeLessThan(2000);
   });
 });

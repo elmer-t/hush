@@ -12,6 +12,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run",
+    "test:perf": "vitest run --config vitest.perf.config.js",
     "tauri": "tauri",
     "fetch-model": "node scripts/fetch-model.mjs"
   },

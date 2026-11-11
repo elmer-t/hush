@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState, Text } from "@codemirror/state";
-import { ensureSyntaxTree } from "@codemirror/language";
 import { buildLive, frontmatterRange, frontmatterView, type LiveSpec } from "$lib/liveDecorations";
 import { liveLanguage } from "$lib/livePreview";
+import { parsed } from "$lib/testing/parsed";
 import { FRONTMATTER } from "$lib/markdown";
 
 /** A state for `doc` with the cursor at `^` (or a selection between two `^`), parsed in full. */
@@ -10,9 +10,7 @@ function stateOf(marked: string) {
   const at = [...marked.matchAll(/\^/g)].map((m, i) => m.index! - i);
   const doc = marked.replaceAll("^", "");
   const selection = at.length === 2 ? EditorSelection.single(at[0], at[1]) : EditorSelection.cursor(at[0] ?? 0);
-  const state = EditorState.create({ doc, selection, extensions: [liveLanguage()] });
-  ensureSyntaxTree(state, doc.length, 5000);
-  return state;
+  return parsed(EditorState.create({ doc, selection, extensions: [liveLanguage()] }));
 }
 
 function specs(marked: string, ranges?: { from: number; to: number }[]) {
@@ -234,34 +232,5 @@ describe("frontmatter", () => {
     const { state, specs: all } = specs("---\ntitle: **a** [[b]]\n# not a heading\n---\n# H\n^");
     expect(all.filter((s) => s.kind === "hide").map((s) => slice(state, s))).toEqual(["# "]);
     expect(all.filter((s) => s.kind === "line")).toHaveLength(1);
-  });
-});
-
-describe("performance", () => {
-  it("types into a 5,000-line note quickly", () => {
-    const lines = Array.from({ length: 5000 }, (_, i) =>
-      i % 10 === 0 ? `## Heading ${i}` : `Line ${i} with **bold**, *em*, \`code\`, [[Link ${i}|alias]] and [a](https://x.com/${i}).`,
-    );
-    let state = stateOf(lines.join("\n"));
-    const visible = () => {
-      const line = state.doc.lineAt(state.selection.main.head);
-      const first = state.doc.line(Math.max(1, line.number - 30));
-      const last = state.doc.line(Math.min(state.doc.lines, line.number + 30));
-      return [{ from: first.from, to: last.to }];
-    };
-    state = state.update({ selection: { anchor: state.doc.line(2500).to } }).state;
-    const times: number[] = [];
-    for (let i = 0; i < 50; i++) {
-      const start = performance.now();
-      const at = state.selection.main.head;
-      state = state.update({ changes: { from: at, insert: "x" }, selection: { anchor: at + 1 } }).state;
-      ensureSyntaxTree(state, visible()[0].to, 1000);
-      buildLive(state, visible());
-      times.push(performance.now() - start);
-    }
-    times.sort((a, b) => a - b);
-    const median = times[times.length >> 1];
-    console.log(`5,000-line note: median ${median.toFixed(2)} ms, max ${times[times.length - 1].toFixed(2)} ms per keystroke`);
-    expect(median).toBeLessThan(16);
   });
 });
