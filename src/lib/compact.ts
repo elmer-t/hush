@@ -14,7 +14,8 @@ export function elapsedText(ms: number): string {
 /** What compacting would do now, or why it isn't offered. */
 export function compactNote(space: VaultSpace): string {
   const by = space.incremental ? " Space freed by emptying the trash is given back right away." : "";
-  if (space.worthCompacting) return `Compacting gives back ${formatSize(space.reclaimableBytes)}.${by}`;
+  // At least: merging the search index first frees more, which can't be measured up front.
+  if (space.worthCompacting) return `Compacting gives back at least ${formatSize(space.reclaimableBytes)}.${by}`;
   if (space.reclaimableBytes === 0) return `Nothing to give back.${by}`;
   return (
     `Only ${formatSize(space.reclaimableBytes)} can be given back; ` +

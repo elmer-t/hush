@@ -25,7 +25,7 @@ describe("elapsedText", () => {
 
 describe("compactNote", () => {
   it("says how much compacting gives back", () => {
-    expect(compactNote(space())).toBe("Compacting gives back 9.0 GB.");
+    expect(compactNote(space())).toBe("Compacting gives back at least 9.0 GB.");
   });
 
   it("says why there is nothing to compact", () => {
