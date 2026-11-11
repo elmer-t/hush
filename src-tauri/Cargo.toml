@@ -3,6 +3,7 @@ name = "hush"
 version = "0.1.0"
 description = "Private notes in an encrypted vault"
 authors = ["Elmer Torensma"]
+license = "MIT"
 publish = false
 edition = "2024"
 
@@ -50,7 +51,12 @@ ureq = { version = "3.5", default-features = false, features = ["rustls", "platf
 # the installer ships it from there (tauri.windows.conf.json). DXGI names the GPU.
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["directml"] }
-windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Storage_FileSystem"] }
+
+# Free disk space on the vault's drive before compacting (#149); Windows uses the
+# `windows` crate above.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 insta = "1.49.0"

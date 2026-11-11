@@ -87,7 +87,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             let WindowEvent::CloseRequested { api, .. } = event else { return };
             let app = window.app_handle();
-            if app.state::<Session>().path().is_none() {
+            // `generation`, not `path`: it doesn't wait for the vault, which a compaction
+            // can hold for minutes, and this runs on the main thread.
+            if app.state::<Session>().generation() == 0 {
                 return;
             }
             api.prevent_close();
@@ -110,6 +112,8 @@ pub fn run() {
             commands::vault::auto_lock_minutes,
             commands::vault::set_auto_lock_minutes,
             commands::vault::change_passphrase,
+            commands::vault::vault_space,
+            commands::vault::compact_vault,
             commands::vault::exit_app,
             commands::notes::folders,
             commands::notes::folder_sizes,
@@ -214,7 +218,11 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                app.state::<Session>().lock();
+                let session = app.state::<Session>();
+                // Quitting doesn't wait minutes for a compaction: stopped, it leaves the
+                // vault as it was.
+                session.cancel_compaction();
+                session.lock();
             }
         });
 }

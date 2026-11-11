@@ -11,3 +11,6 @@ vite.config.ts.timestamp-*
 
 # Vaults the GPU tests keep (HUSH_KEEP_VAULT).
 /test-vault/
+
+# Per-machine Claude Code settings (plugins, local permissions).
+.claude/settings.local.json

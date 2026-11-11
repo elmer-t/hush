@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use zeroize::Zeroizing;
 
 use std::time::Instant;
@@ -11,7 +11,7 @@ use std::time::Instant;
 use super::{LOCKED_EVENT, Result, activity, embeddings, training};
 use crate::activity::{Job, count};
 use crate::config::Config;
-use crate::db::Vault;
+use crate::db::{self, Compacted, Vault, VaultSpace};
 use crate::session::{self, Session};
 
 /// Emitted with a [`crate::db::Upgrade`] while opening a vault runs a migration that
@@ -143,6 +143,23 @@ pub async fn change_passphrase(session: State<'_, Session>, current: String, new
         v.verify_passphrase(&current)?;
         v.change_passphrase(&new)
     })?)
+}
+
+/// The vault file's size and how much compacting would give back, for Settings.
+#[tauri::command(async)]
+pub fn vault_space(session: State<'_, Session>) -> Result<VaultSpace> {
+    Ok(session.with_vault(|v| v.space())?)
+}
+
+/// Compacts the vault (see [`crate::db::Vault::compact`] and [`Session::compact`]). Runs
+/// on a blocking thread: it holds the vault for minutes on a large vault.
+#[tauri::command]
+pub async fn compact_vault(app: AppHandle) -> Result<Compacted> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(app.state::<Session>().compact(|v| v.compact(&db::available_space))?)
+    })
+    .await
+    .expect("compaction panicked")
 }
 
 /// Exits after the frontend has saved pending edits; the vault is locked on exit.

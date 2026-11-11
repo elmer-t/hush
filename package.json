@@ -1,7 +1,8 @@
 {
   "name": "hush",
   "version": "0.1.0",
-  "description": "",
+  "description": "Private notes in an encrypted vault",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

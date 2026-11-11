@@ -1764,6 +1764,7 @@ dependencies = [
  "half",
  "htmd",
  "insta",
+ "libc",
  "ort",
  "regex",
  "rusqlite",

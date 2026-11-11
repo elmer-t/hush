@@ -15,7 +15,7 @@ If you found this by accident: welcome. You are now the second user. There is no
 - Imports a folder of Markdown files (an Obsidian vault, say) and cleans up the HTML and 80-character line breaks on the way in.
 - Locks itself when you walk away.
 
-Hush never goes online. Your thoughts stay as private as they deserve to be, which in my case is mostly a list of things I forgot to do.
+Hush goes online only when you click *Download* in Settings → Model, and then only to that model's pinned URL; the files are checked against a pinned SHA-256 before use. Otherwise your thoughts stay as private as they deserve to be, which in my case is mostly a list of things I forgot to do.
 
 For the serious version, see [docs/project-brief.md](docs/project-brief.md) and [docs/decisions.md](docs/decisions.md).
 
@@ -45,7 +45,7 @@ npm run tauri build    # release build + installer
 
 The first build compiles OpenSSL and takes several minutes. Make coffee. Write a journal entry about waiting for OpenSSL, if you already have a working build.
 
-Both commands first run `npm run fetch-model`, which downloads the bundled embedding model (about 34 MB) from Hugging Face into `src-tauri/models/` and checks it against the SHA-256s in `src-tauri/models/manifest.json`. A release build fails without it; `tauri dev` carries on and Hush shows "Indexing stopped" until the files are there. The build also downloads ONNX Runtime once (`ort`'s `download-binaries`). After that, Hush itself never goes online.
+Both commands first run `npm run fetch-model`, which downloads the bundled embedding model (about 34 MB) from Hugging Face into `src-tauri/models/` and checks it against the SHA-256s in `src-tauri/models/manifest.json`. A release build fails without it; `tauri dev` carries on and Hush shows "Indexing stopped" until the files are there. The build also downloads ONNX Runtime once (`ort`'s `download-binaries`). After that, the app itself goes online only when you click *Download* in Settings → Model, to a pinned URL, and checks what it downloads by SHA-256.
 
 ## Tests & checks
 
@@ -55,6 +55,12 @@ npm run check
 ```
 
 The test that runs the real embedding model is skipped (it prints `SKIPPED`) unless `npm run fetch-model` has been run.
+
+## Security
+
+The vault protects the file at rest: it is a SQLCipher database, with the key derived from your passphrase by PBKDF2-HMAC-SHA512. It does not protect a running app that is unlocked, a machine with malware on it, or a weak passphrase.
+
+Found a vulnerability? Please report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ## Third-party notices
 
@@ -75,3 +81,7 @@ I write issues and label them `ready-for-agent`. An agent picks the lowest-numbe
 ## Contributing
 
 You could. I would be surprised.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
