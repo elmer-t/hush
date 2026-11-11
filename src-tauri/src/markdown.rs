@@ -3,6 +3,7 @@
 //! The body is the single source of truth; everything the database indexes about a
 //! note is derived from what this module returns.
 
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::LazyLock;
 
@@ -77,11 +78,13 @@ pub fn parse(body: &str) -> Parsed {
         }
         None => 0,
     };
-    let code = code_ranges(body, content_start);
-    let in_code = |pos: usize| code.iter().any(|r| r.contains(&pos));
+    // Sorted and merged once, so each link is a binary search, not a scan (#151).
+    let code = merge_ranges(code_ranges(body, content_start));
     let content = &body[content_start..];
 
     let skipped = not_tag_ranges(content, code.iter().map(|r| r.start - content_start..r.end - content_start));
+    // A set, not `push_unique`: a note with many distinct tags was quadratic too.
+    let mut seen_tags: HashSet<String> = parsed.tags.iter().cloned().collect();
     for caps in TAG.captures_iter(content) {
         let m = caps.get(1).unwrap();
         let tag = m.as_str().trim_end_matches('/');
@@ -90,13 +93,16 @@ pub fn parse(body: &str) -> Parsed {
         {
             continue;
         }
-        push_unique(&mut parsed.tags, tag);
+        if !seen_tags.contains(tag) {
+            seen_tags.insert(tag.to_string());
+            parsed.tags.push(tag.to_string());
+        }
     }
 
     for caps in WIKILINK.captures_iter(content) {
         let whole = caps.get(0).unwrap();
         // Embeds (`![[...]]`) are out of scope with attachments.
-        if in_code(content_start + whole.start()) || !caps[1].is_empty() {
+        if in_ranges(&code, content_start + whole.start()) || !caps[1].is_empty() {
             continue;
         }
         let inner = caps.get(2).unwrap();
@@ -379,6 +385,11 @@ fn not_tag_ranges(content: &str, code: impl Iterator<Item = Range<usize>>) -> Ve
     if content.contains('<') {
         ranges.extend(HTML.find_iter(content).map(|m| m.range()));
     }
+    merge_ranges(ranges)
+}
+
+/// Sorts `ranges` and merges overlapping ones, for [`in_ranges`].
+fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     ranges.sort_by_key(|r| r.start);
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
     for r in ranges {
@@ -607,6 +618,43 @@ mod tests {
         let body = "---\na: 1\n---\nsee [[X]]";
         let p = parse(body);
         assert_eq!(&body[p.links[0].target_range.clone()], "X");
+    }
+
+    /// #151: each link was checked against every code span, so 160,000 links next to
+    /// 160,000 spans (1.6 MB) took 17 s in a release build (370 s in a debug build).
+    /// The bound is for a debug build on a slow shared machine, where the fixed parse
+    /// takes under 1 s.
+    #[test]
+    fn many_links_and_code_spans_parse_quickly() {
+        let n = 160_000;
+        let body = "`a` [[b]]\n".repeat(n);
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        let elapsed = start.elapsed();
+        assert_eq!(p.links.len(), n);
+        assert!(p.links.iter().enumerate().all(|(i, l)| l.target_range == (i * 10 + 6..i * 10 + 7) && l.title == "b"));
+        assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+    }
+
+    #[test]
+    fn links_in_nested_code_ranges_are_skipped() {
+        // Inline spans inside a fence overlap it; links after both still count.
+        let body = "```\n`x` [[In]] `y`\n```\n`z` [[Out]] `w` [[Out2]]\n~~~\n[[Tail]]";
+        let titles: Vec<String> = parse(body).links.into_iter().map(|l| l.title).collect();
+        assert_eq!(titles, vec!["Out", "Out2"]);
+    }
+
+    #[test]
+    fn many_distinct_tags_parse_quickly() {
+        let n = 100_000;
+        let body: String = (0..n).map(|i| format!("#tag{i} ")).collect();
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        let elapsed = start.elapsed();
+        assert_eq!(p.tags.len(), n);
+        assert_eq!(p.tags[n - 1], format!("tag{}", n - 1));
+        assert_eq!(parse("#bb #aa #bb #AA").tags, vec!["bb", "aa", "AA"], "first-seen order, case-sensitive");
+        assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
     }
 
     fn set(body: &str, key: &str, values: &[&str]) -> String {
