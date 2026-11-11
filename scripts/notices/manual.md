@@ -4,9 +4,9 @@ These are compiled into Hush, shipped next to it, or bundled as resources, but t
 
 ### SQLCipher (community edition)
 
-SQLCipher {{sqlcipher}}, from the Rust crate libsqlite3-sys {{lock libsqlite3-sys}} (`bundled-sqlcipher-vendored-openssl`). Compiled from source and linked statically into Hush. Copyright Zetetic LLC. BSD 3-Clause licence:
+SQLCipher {{sqlcipher}}, from the Rust crates libsqlite3-sys {{lock libsqlite3-sys}} (`bundled-sqlcipher-vendored-openssl`) and sqlcipher-src {{lock sqlcipher-src}}. Compiled from source and linked statically into Hush. Copyright Zetetic LLC. BSD 3-Clause licence:
 
-{{text crate:libsqlite3-sys/sqlcipher/LICENSE}}
+{{text crate:sqlcipher-src/sqlcipher/LICENSE-sqlcipher}}
 
 ### SQLite
 
