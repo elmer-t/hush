@@ -294,6 +294,8 @@
   // Capture phase, so shortcuts win over the editor's own (CodeMirror binds Ctrl+L).
   function onkeydown(e: KeyboardEvent) {
     activity();
+    // The vault is held until compacting ends: no shortcut could reach it meanwhile.
+    if (compacting) return;
     const arrows = !isMac && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     const brackets = isMac && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
     const back = (arrows && e.key === "ArrowLeft") || (brackets && e.key === "[");

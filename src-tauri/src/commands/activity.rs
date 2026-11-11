@@ -58,6 +58,11 @@ pub fn start(app: &AppHandle, generation: u64) {
 /// Counts what the panel shows. The vault is read through the quiet accessor, so this
 /// never postpones auto-lock, and only through index lookups (see `db::internals`).
 fn refresh_stats(app: &AppHandle, session: &Session, generation: u64) {
+    // A compaction holds the vault for minutes, and this also runs on the main thread
+    // (`set_activity_panel_open`): don't wait for it.
+    if session.compacting() {
+        return;
+    }
     let Ok((notes, queued, model, ready, with_vector, heads, schema)) = session.with_vault_quiet(generation, |v| {
         let model = v.embedding_model()?;
         Ok((
