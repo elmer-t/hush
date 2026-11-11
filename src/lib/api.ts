@@ -444,6 +444,8 @@ export const api = {
   modelStatus: () => invoke<ModelStatus>("model_status"),
   /** Everything Settings → Model shows; checks each model's files. */
   modelOverview: () => invoke<ModelOverview>("model_overview"),
+  /** THIRD_PARTY_NOTICES.md from the app's resources, as Markdown. */
+  thirdPartyNotices: () => invoke<string>("third_party_notices"),
   /** Switches the vault to an available model; every note is re-embedded with it. */
   setEmbeddingModel: (model: string) => invoke<void>("set_embedding_model", { model }),
   /** Checks the model files again and restarts indexing if it had stopped on them. */

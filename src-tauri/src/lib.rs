@@ -101,6 +101,7 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            commands::about::third_party_notices,
             commands::vault::recent_vaults,
             commands::vault::forget_recent_vault,
             commands::vault::create_vault,
