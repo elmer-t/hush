@@ -8,6 +8,7 @@
   import { gpuText } from "$lib/gpu";
   import { licenceSummary } from "$lib/notices";
   import ModelSettings from "$lib/ModelSettings.svelte";
+  import PassphraseStrength from "$lib/PassphraseStrength.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
 
   type Props = {
@@ -395,10 +396,20 @@
           Current passphrase
           <input type="password" autocomplete="off" bind:value={current} disabled={changing} required />
         </label>
-        <label>
-          New passphrase
-          <input type="password" autocomplete="off" bind:value={next} disabled={changing} required />
-        </label>
+        <div class="new-passphrase">
+          <label>
+            New passphrase
+            <input
+              type="password"
+              autocomplete="off"
+              aria-describedby="new-passphrase-strength"
+              bind:value={next}
+              disabled={changing}
+              required
+            />
+          </label>
+          <PassphraseStrength passphrase={next} id="new-passphrase-strength" />
+        </div>
         <label>
           Repeat new passphrase
           <input type="password" autocomplete="off" bind:value={confirm} disabled={changing} required />
@@ -707,6 +718,12 @@
   label > input {
     min-height: 36px;
     border-radius: 8px;
+  }
+
+  .new-passphrase {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .check {
