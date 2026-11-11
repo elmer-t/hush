@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
+use yaml_rust2::parser::{Event, Parser};
 use yaml_rust2::{Yaml, YamlLoader};
 
 static TAG: LazyLock<Regex> =
@@ -24,6 +25,9 @@ static LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\p{L}").unwrap())
 static ORDINAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^[0-9]+(?:st|nd|rd|th)$").unwrap());
 static HEX_COLOUR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$").unwrap());
+
+/// Frontmatter longer than this isn't parsed: it is kept but not read, like broken YAML.
+pub const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
 
 /// Bumped whenever the tag rules change ([`is_tag`] or what [`parse`] skips), so the
 /// background re-derive pass (`crate::retag`) runs once more on every vault.
@@ -162,10 +166,29 @@ pub fn split_frontmatter(body: &str) -> Option<(&str, usize)> {
 
 /// Whether frontmatter YAML can be read: empty, or a mapping.
 pub fn frontmatter_is_valid(yaml: &str) -> bool {
-    match YamlLoader::load_from_str(yaml) {
-        Ok(docs) => matches!(docs.first(), None | Some(Yaml::Hash(_))),
-        Err(_) => false,
+    match load_frontmatter(yaml) {
+        Some(docs) => matches!(docs.first(), None | Some(Yaml::Hash(_))),
+        None => false,
     }
+}
+
+/// Loads frontmatter YAML, or `None` when it is broken, longer than
+/// [`MAX_FRONTMATTER_BYTES`] or uses an alias (`*name`). The loader expands every alias
+/// by copying the anchored node, so a few hundred bytes of nested aliases take minutes
+/// and gigabytes (#150); Hush only reads flat keys, where aliases have no use.
+fn load_frontmatter(yaml: &str) -> Option<Vec<Yaml>> {
+    if yaml.len() > MAX_FRONTMATTER_BYTES {
+        return None;
+    }
+    let mut events = Parser::new_from_str(yaml);
+    loop {
+        match events.next_token().ok()?.0 {
+            Event::Alias(_) => return None,
+            Event::StreamEnd => break,
+            _ => {}
+        }
+    }
+    YamlLoader::load_from_str(yaml).ok()
 }
 
 /// Sets the top-level frontmatter `key` to `values`, or removes it when `values` is empty.
@@ -268,7 +291,7 @@ pub fn parse_date(s: &str) -> Option<i64> {
 }
 
 fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
-    let Ok(docs) = YamlLoader::load_from_str(yaml) else {
+    let Some(docs) = load_frontmatter(yaml) else {
         return;
     };
     let Some(Yaml::Hash(map)) = docs.into_iter().next() else {
@@ -495,6 +518,48 @@ mod tests {
         let p = parse("---\nauthor: [unclosed\n---\n#ok");
         assert_eq!(p.author, None);
         assert_eq!(p.tags, vec!["ok"]);
+    }
+
+    /// #150: `levels` of anchors, each a list of ten aliases to the previous one.
+    pub(crate) fn alias_bomb(levels: usize) -> String {
+        let mut yaml = "a0: &a0 [x,x,x,x,x,x,x,x,x,x]\n".to_string();
+        for i in 1..levels {
+            let refs = vec![format!("*a{}", i - 1); 10].join(",");
+            yaml += &format!("a{i}: &a{i} [{refs}]\n");
+        }
+        yaml
+    }
+
+    #[test]
+    fn aliases_make_frontmatter_invalid_without_expanding_them() {
+        // Checked first, so a regression fails here instead of hanging on the bomb.
+        // A single harmless alias is refused too: Hush only reads flat keys.
+        assert!(!frontmatter_is_valid("a: &x 1\nb: *x\n"));
+        assert_eq!(parse("---\nauthor: Ada\nb: &x 1\nc: *x\n---\n").author, None);
+        let yaml = alias_bomb(9);
+        let body = format!("---\nauthor: Ada\n{yaml}---\nBody #ok [[Link]]");
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        assert!(!frontmatter_is_valid(&yaml));
+        assert!(start.elapsed() < std::time::Duration::from_millis(100), "{:?}", start.elapsed());
+        assert_eq!(p.author, None, "frontmatter with aliases isn't read");
+        assert!(p.attributes.is_empty());
+        assert_eq!(p.tags, vec!["ok"], "the body is still parsed");
+        assert_eq!(p.links.len(), 1);
+        // Anchors without aliases are harmless and still read.
+        assert_eq!(parse("---\nauthor: &x Ada\n---\n").author.as_deref(), Some("Ada"));
+    }
+
+    #[test]
+    fn oversized_frontmatter_is_not_read() {
+        let filler = "x".repeat(MAX_FRONTMATTER_BYTES);
+        let yaml = format!("author: Ada\nnote: {filler}\n");
+        assert!(!frontmatter_is_valid(&yaml));
+        assert_eq!(parse(&format!("---\n{yaml}---\n#ok")).author, None);
+        assert_eq!(parse(&format!("---\n{yaml}---\n#ok")).tags, vec!["ok"]);
+        let fits = format!("author: Ada\nnote: {}\n", "x".repeat(MAX_FRONTMATTER_BYTES - 100));
+        assert!(frontmatter_is_valid(&fits));
+        assert_eq!(parse(&format!("---\n{fits}---\n")).author.as_deref(), Some("Ada"));
     }
 
     #[test]

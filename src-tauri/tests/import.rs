@@ -438,3 +438,29 @@ fn imported_mailto_links_are_searchable() {
         })
         .unwrap();
 }
+
+/// #150: a file whose frontmatter nests YAML aliases ("billion laughs") imports with
+/// the usual warning, its body kept as written, instead of hanging the import.
+#[test]
+fn alias_bomb_frontmatter_imports_with_a_warning() {
+    let mut yaml = "a0: &a0 [x,x,x,x,x,x,x,x,x,x]\n".to_string();
+    for i in 1..9 {
+        yaml += &format!("a{i}: &a{i} [{}]\n", vec![format!("*a{}", i - 1); 10].join(","));
+    }
+    let body = format!("---\nauthor: Ada\n{yaml}---\nBomb #kept\n");
+    let source = tempfile::tempdir().unwrap();
+    fs::write(source.path().join("bomb.md"), &body).unwrap();
+    let (_dir, session) = unlocked();
+    let report = run(&session, source.path(), false);
+    assert_eq!(report.imported, 1);
+    let messages: Vec<&str> = report.warnings.iter().map(|w| w.message.as_str()).collect();
+    assert!(messages.iter().any(|m| m.contains("frontmatter is not valid YAML")), "{messages:?}");
+    session
+        .with_vault(|v| {
+            let note = &v.folder_notes("", 0, 10)?[0];
+            assert_eq!(note.title, "bomb");
+            assert!(v.note(note.id)?.body.contains(&yaml), "frontmatter kept as written");
+            Ok(())
+        })
+        .unwrap();
+}
