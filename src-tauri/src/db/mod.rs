@@ -283,8 +283,8 @@ mod tests {
     fn open_vault_has_memory_security_on() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v.hush");
-        Vault::create(&path, "pass").unwrap().close().unwrap();
-        let vault = Vault::open(&path, "pass").unwrap();
+        Vault::create(&path, "test passphrase").unwrap().close().unwrap();
+        let vault = Vault::open(&path, "test passphrase").unwrap();
         let on: String = vault.conn.query_row("PRAGMA cipher_memory_security", [], |r| r.get(0)).unwrap();
         assert_eq!(on, "1");
     }
