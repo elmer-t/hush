@@ -5,6 +5,8 @@ import type { FolderSize } from "$lib/folderTree";
 export type VaultInfo = { path: string; name: string };
 export type RecentVault = { path: string; name: string; exists: boolean };
 export type LockReason = "manual" | "idle";
+/** Memory wiping: `on` is the saved choice, `active` what this run of Hush started with; they differ until a restart. */
+export type MemorySecurity = { on: boolean; active: boolean };
 
 export type NoteSummary = {
   id: number;
@@ -294,6 +296,10 @@ export const api = {
   autoLockMinutes: () => invoke<number>("auto_lock_minutes"),
   setAutoLockMinutes: (minutes: number) => invoke<void>("set_auto_lock_minutes", { minutes }),
   changePassphrase: (current: string, next: string) => invoke<void>("change_passphrase", { current, new: next }),
+  /** Whether SQLCipher wipes the memory it frees: saved for this computer, and in effect now. */
+  memorySecurity: () => invoke<MemorySecurity>("memory_security"),
+  /** Saves the choice for this computer; it takes effect when Hush next starts. */
+  setMemorySecurity: (on: boolean) => invoke<MemorySecurity>("set_memory_security", { on }),
   vaultSpace: () => invoke<VaultSpace>("vault_space"),
   /** Holds the vault until done: minutes on a large vault. */
   compactVault: () => invoke<Compacted>("compact_vault"),

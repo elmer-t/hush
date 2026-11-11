@@ -26,6 +26,10 @@ pub struct AppConfig {
     /// the estimate shown before switching models. Holds no vault data.
     #[serde(default)]
     pub index_rates: BTreeMap<String, f64>,
+    /// SQLCipher wipes the memory it frees (Settings → Security, #153). Off by default
+    /// because of its speed cost; read once at startup, so a change applies on restart.
+    #[serde(default)]
+    pub memory_security: bool,
 }
 
 impl AppConfig {

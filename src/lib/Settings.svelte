@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { listen } from "@tauri-apps/api/event";
-  import { api, errorMessage, GPU_STATUS_EVENT, type Compacted, type GpuStatus, type VaultSpace } from "$lib/api";
+  import { api, errorMessage, GPU_STATUS_EVENT, type Compacted, type GpuStatus, type MemorySecurity, type VaultSpace } from "$lib/api";
   import { compactNote, elapsedText } from "$lib/compact";
   import { formatSize } from "$lib/size";
   import { gpuText } from "$lib/gpu";
@@ -29,6 +29,10 @@
   let changing = $state(false);
   let passphraseStatus = $state("");
   let passphraseError = $state("");
+
+  let memory = $state<MemorySecurity | null>(null);
+  let wipeMemory = $state(false);
+  let memoryError = $state("");
 
   let confirmTrash = $state(true);
   let allCores = $state(false);
@@ -164,6 +168,7 @@
     getVersion().then((v) => (version = v), () => {});
     void loadSpace();
     api.indexAllCores().then((on) => (allCores = on), () => {});
+    api.memorySecurity().then((m) => ((memory = m), (wipeMemory = m.on)), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
@@ -185,6 +190,16 @@
       }
     }
     showNotices = !showNotices;
+  }
+
+  async function saveWipeMemory() {
+    memoryError = "";
+    try {
+      memory = await api.setMemorySecurity(wipeMemory);
+    } catch (err) {
+      memoryError = errorMessage(err);
+      wipeMemory = !wipeMemory;
+    }
   }
 
   async function saveAllCores() {
@@ -423,6 +438,23 @@
           </button>
         </div>
       </form>
+
+      <div class="card">
+        <h3>Memory wiping</h3>
+        <label class="check">
+          <input type="checkbox" bind:checked={wipeMemory} onchange={saveWipeMemory} />
+          Wipe decrypted vault data from memory when Hush is done with it
+        </label>
+        <p class="muted">
+          Makes it harder to recover note text from this computer's memory after the vault locks. It slows Hush down:
+          searching by words takes 3–4 times as long, and imports about twice as long. Worth it only if someone else
+          could read this computer's memory. Applies to this computer, from the next time Hush starts.
+        </p>
+        {#if memory && memory.on !== memory.active}
+          <p role="status">Restart Hush to turn memory wiping {memory.on ? "on" : "off"}.</p>
+        {/if}
+        {#if memoryError}<p class="error" role="alert">{memoryError}</p>{/if}
+      </div>
     </section>
 
     <section id="settings-tags" aria-labelledby="settings-tags-h">

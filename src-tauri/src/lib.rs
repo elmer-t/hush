@@ -53,6 +53,8 @@ pub fn run() {
             let config = Config::new(config_path);
             let (all_cores, gpu_off) = {
                 let c = config.get();
+                // Before any vault opens: SQLCipher can't turn it off again (#153).
+                db::set_memory_security(c.memory_security);
                 (c.index_all_cores, c.index_gpu_off)
             };
             app.manage(config);
@@ -112,6 +114,8 @@ pub fn run() {
             commands::vault::auto_lock_minutes,
             commands::vault::set_auto_lock_minutes,
             commands::vault::change_passphrase,
+            commands::vault::memory_security,
+            commands::vault::set_memory_security,
             commands::vault::vault_space,
             commands::vault::compact_vault,
             commands::vault::exit_app,

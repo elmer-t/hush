@@ -212,12 +212,31 @@ fn vault_held_by_another_process() {
     Vault::open(&path, PASS).unwrap();
 }
 
-/// Env var naming the vault [`child_edits_vault_without_memory_security`] opens.
+/// Env var naming the vault the memory-security helper processes below open.
 const CHILD_RAW_VAULT: &str = "HUSH_TEST_CHILD_RAW_VAULT";
+
+/// Run by [`memory_security_does_not_change_the_file`] in a child process, because the
+/// setting is process-wide and can't be turned off again: turns memory wiping on as
+/// Hush does at startup when the user chose it, creates the vault with a note, and
+/// checks that SQLCipher reports it on.
+#[test]
+#[ignore = "helper process for memory_security_does_not_change_the_file"]
+fn child_creates_vault_with_memory_security() {
+    let Ok(path) = std::env::var(CHILD_RAW_VAULT) else { return };
+    hush_lib::db::set_memory_security(true);
+    let mut vault = Vault::create(std::path::Path::new(&path), PASS).unwrap();
+    let id = vault.create_note("", "Kept", "written with memory security on").unwrap();
+    // Process-wide, so a plain connection sees it too.
+    let probe = rusqlite::Connection::open_in_memory().unwrap();
+    let on: String = probe.query_row("PRAGMA cipher_memory_security", [], |r| r.get(0)).unwrap();
+    assert_eq!(on, "1", "the setting turns wiping on");
+    vault.close().unwrap();
+    println!("created note {id}");
+}
 
 /// Run by [`memory_security_does_not_change_the_file`] in a child process: opens the
 /// vault on a plain SQLCipher connection that never turns `cipher_memory_security` on,
-/// as Hush before #153 did, reads the note and adds a setting.
+/// reads the note and adds a setting.
 #[test]
 #[ignore = "helper process for memory_security_does_not_change_the_file"]
 fn child_edits_vault_without_memory_security() {
@@ -234,27 +253,31 @@ fn child_edits_vault_without_memory_security() {
 }
 
 /// `cipher_memory_security` only changes how SQLCipher frees memory, not the file: a
-/// vault written with it on opens without it (an older Hush), and pages that process
-/// writes open with it on again.
+/// vault written with it on opens without it, and the other way round, so the
+/// Settings switch can change between restarts. Each side runs in its own process.
 #[test]
 fn memory_security_does_not_change_the_file() {
     use std::process::Command;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("vault.hush");
-    let mut vault = Vault::create(&path, PASS).unwrap();
-    let id = vault.create_note("", "Kept", "written with memory security on").unwrap();
-    vault.close().unwrap();
+    let mut id = None;
+    for (helper, expect) in [("child_creates_vault_with_memory_security", "created"), ("child_edits_vault_without_memory_security", "edited")] {
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", helper, "--ignored", "--nocapture", "--test-threads=1"])
+            .env(CHILD_RAW_VAULT, &path)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && stdout.contains(expect), "{helper} failed:\n{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+        if let Some(rest) = stdout.split("created note ").nth(1) {
+            id = rest.split_whitespace().next().and_then(|n| n.parse::<i64>().ok());
+        }
+    }
 
-    let out = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "child_edits_vault_without_memory_security", "--ignored", "--nocapture", "--test-threads=1"])
-        .env(CHILD_RAW_VAULT, &path)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success() && stdout.contains("edited"), "child failed:\n{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
-
+    // This process leaves the setting at its default, off.
+    assert!(!hush_lib::db::memory_security());
     let vault = Vault::open(&path, PASS).unwrap();
-    assert_eq!(vault.note(id).unwrap().body, "written with memory security on");
+    assert_eq!(vault.note(id.expect("note id from the first child")).unwrap().body, "written with memory security on");
     assert_eq!(vault.setting("from_old_hush").unwrap().as_deref(), Some("yes"));
 }
