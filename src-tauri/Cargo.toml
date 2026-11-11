@@ -1,6 +1,6 @@
 [package]
 name = "hush"
-version = "0.1.0"
+version = "0.2.0"
 description = "Private notes in an encrypted vault"
 authors = ["Elmer Torensma"]
 license = "MIT"
