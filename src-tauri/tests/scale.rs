@@ -875,3 +875,78 @@ fn generator_is_deterministic_and_shaped_as_specified() {
     let mean = words / 2_000;
     assert!((250..=350).contains(&mean), "mean {mean} words");
 }
+
+/// Compacting a vault (#149): a generated vault loses 60% of its notes to the trash, the
+/// trash is emptied, and the vault is compacted. Prints the sizes, the time and the peak
+/// memory, then times an emptied trash on the compacted vault (incremental vacuum).
+/// `HUSH_SCALE_NOTES` sets the size (default 100,000 notes, a few hundred MB); the vault
+/// is always a fresh temp file, since the run deletes most of it.
+#[test]
+#[ignore = "scale benchmark: minutes; run with --ignored --nocapture"]
+fn compact_benchmark() {
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(100_000);
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("compact.hush");
+    println!("machine: {}", machine());
+    let mut vault = prepare(&path, notes);
+    let ids: Vec<i64> = (1..=notes as i64).collect();
+    let size = |p: &Path| {
+        let wal = PathBuf::from(format!("{}-wal", p.display()));
+        std::fs::metadata(p).map_or(0, |m| m.len()) + std::fs::metadata(wal).map_or(0, |m| m.len())
+    };
+    let gb = |b: u64| format!("{:.2} GB", b as f64 / 1e9);
+    println!("generated vault: {}", gb(size(&path)));
+
+    let start = Instant::now();
+    let gone: Vec<i64> = ids.iter().copied().filter(|id| id % 5 < 3).collect();
+    for chunk in gone.chunks(10_000) {
+        vault.trash_notes(chunk).unwrap();
+    }
+    let emptied = vault.empty_trash().unwrap();
+    println!("trashed and emptied {emptied} notes: {}", secs(start.elapsed()));
+    let space = vault.space().unwrap();
+    println!(
+        "before: file {}, reclaimable {}, needs {} free, worth compacting: {}",
+        gb(space.file_bytes),
+        gb(space.reclaimable_bytes),
+        gb(space.needed_bytes),
+        space.worth_compacting
+    );
+
+    let peak_reset = reset_peak();
+    let rss_before = memory_kb("VmRSS").unwrap_or(0);
+    let start = Instant::now();
+    let done = vault.compact(&hush_lib::db::available_space).unwrap();
+    let took = start.elapsed();
+    println!(
+        "compact: {} -> {} in {} ({:.0} MB/s of the file before); RSS before {}, peak {}{}",
+        gb(done.before_bytes),
+        gb(done.after_bytes),
+        secs(took),
+        done.before_bytes as f64 / 1e6 / took.as_secs_f64(),
+        mb(rss_before),
+        memory_kb("VmHWM").map_or("?".into(), mb),
+        if peak_reset { "" } else { " (peak since process start)" }
+    );
+    assert!(done.after_bytes < done.before_bytes);
+
+    // On the compacted vault, an emptied trash gives the space back at once.
+    let more: Vec<i64> = ids.iter().copied().filter(|id| id % 5 == 3).collect();
+    let before = size(&path);
+    for chunk in more.chunks(10_000) {
+        vault.trash_notes(chunk).unwrap();
+    }
+    let start = Instant::now();
+    let emptied = vault.empty_trash().unwrap();
+    println!(
+        "then empty_trash of {emptied} notes with incremental vacuum: {} -> {} in {}",
+        gb(before),
+        gb(size(&path)),
+        secs(start.elapsed())
+    );
+    vault.close().unwrap();
+    let start = Instant::now();
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    println!("reopen: {}", ms(start.elapsed()));
+    assert_eq!(vault.live_note_count().unwrap(), notes - gone.len() - more.len());
+}

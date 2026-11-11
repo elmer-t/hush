@@ -1,9 +1,10 @@
-// Browser check for the Settings layout: section menu, active section, the model in use.
-// Needs `npm run dev` (Vite on :1420) and Playwright: `node scripts/check-settings.cjs [screenshot dir]`.
+// Browser check for the Settings layout: section menu, active section, the model in use,
+// and compacting the vault (Storage).
+// Needs `npm run dev` (Vite on :1420, or HUSH_DEV_URL) and Playwright: `node scripts/check-settings.cjs [screenshot dir]`.
 // Mounts Settings alone through src/lib/checks/settings-harness.svelte.ts with mocked commands,
 // and exits 1 when a check fails.
 const { chromium } = require("playwright");
-const URL = "http://127.0.0.1:1420/";
+const URL = process.env.HUSH_DEV_URL || "http://127.0.0.1:1420/";
 const SHOTS = process.argv[2];
 
 function mocks() {
@@ -28,8 +29,20 @@ function mocks() {
     tag_list: [{ tag: "work", notes: 120, description: "Work notes" }, { tag: "journal", notes: 40, description: "" }],
     suggestion_threshold: { model: "e5-small", threshold: null, default: 0.8 }, tag_training: [], folders: [], recent_vaults: [],
   };
+  let compacted = false;
+  const space = () => compacted
+    ? { fileBytes: 6.3e9, reclaimableBytes: 0, trashNotes: 0, trashTextBytes: 0, neededBytes: 6.9e9, incremental: true, worthCompacting: false }
+    : { fileBytes: 15.2e9, reclaimableBytes: 8.9e9, trashNotes: 1240, trashTextBytes: 310e6, neededBytes: 7.0e9, incremental: false, worthCompacting: true };
+  const calls = {
+    vault_space: async () => space(),
+    // Held until the check lets it finish, like the real command holding the vault.
+    compact_vault: () => new Promise((done) => (window.__finishCompaction = () => {
+      compacted = true;
+      done({ beforeBytes: 15.2e9, afterBytes: 6.3e9, millis: 252_000 });
+    })),
+  };
   window.__TAURI_INTERNALS__ = {
-    invoke: async (cmd) => (cmd.startsWith("plugin:event|") ? 1 : cmd in replies ? structuredClone(replies[cmd]) : null),
+    invoke: async (cmd) => (cmd.startsWith("plugin:event|") ? 1 : cmd in calls ? calls[cmd]() : cmd in replies ? structuredClone(replies[cmd]) : null),
     transformCallback: () => 0,
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -53,8 +66,8 @@ async function main() {
     await page.waitForSelector(".in-use");
     const tag = `${scheme} ${width}px`;
     const current = () => page.evaluate(() => document.querySelector('.menu a[aria-current="true"]')?.textContent.trim());
-    check(`${tag}: six menu entries`, (await page.locator(".menu a").count()) === 6);
-    check(`${tag}: six section headers`, (await page.locator(".sections > section > h2").count()) === 6);
+    check(`${tag}: seven menu entries`, (await page.locator(".menu a").count()) === 7);
+    check(`${tag}: seven section headers`, (await page.locator(".sections > section > h2").count()) === 7);
     check(`${tag}: General active at the top`, /General/.test(await current()));
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/top-${scheme}-${width}.png` });
     await page.click('.menu a[href="#model-settings"]');
@@ -69,7 +82,31 @@ async function main() {
     await page.mouse.move(width / 2, 400);
     await page.mouse.wheel(0, 5000);
     await page.waitForTimeout(600);
-    check(`${tag}: wheel to the bottom lights Trash`, /Trash/.test(await current()));
+    check(`${tag}: wheel to the bottom lights Storage`, /Storage/.test(await current()));
+    const storage = page.locator("#settings-storage");
+    const button = storage.getByRole("button", { name: "Compact now" });
+    check(`${tag}: storage shows the sizes`, /15 GB/.test(await storage.textContent()) && /8\.9 GB/.test(await storage.textContent()));
+    check(`${tag}: trash hint shown`, /Empty the trash first/.test(await storage.textContent()));
+    check(`${tag}: Compact now enabled`, await button.isEnabled());
+    if (SHOTS) await storage.screenshot({ path: `${SHOTS}/storage-${scheme}-${width}.png` });
+    if (width === 1000) {
+      await button.click();
+      const dialog = page.locator("dialog.compacting");
+      await dialog.waitFor({ state: "visible" });
+      await page.waitForTimeout(2200);
+      check(`${tag}: busy dialog is modal`, await dialog.evaluate((d) => d.open && d.matches(":modal")));
+      check(`${tag}: elapsed time counts (${await dialog.locator(".elapsed").textContent()})`, /^0:0[1-3]$/.test(await dialog.locator(".elapsed").textContent()));
+      await page.keyboard.press("Escape");
+      check(`${tag}: Escape doesn't close it`, await dialog.isVisible());
+      if (SHOTS) await page.screenshot({ path: `${SHOTS}/compacting-${scheme}-${width}.png` });
+      await page.evaluate(() => window.__finishCompaction());
+      await dialog.waitFor({ state: "hidden" });
+      await page.waitForTimeout(300);
+      const text = await storage.textContent();
+      check(`${tag}: result shown`, /Compacted: 15 GB → 6\.3 GB in 4:12/.test(text));
+      check(`${tag}: nothing left to compact`, !(await button.isEnabled()) && /Nothing to give back/.test(text));
+      if (SHOTS) await storage.screenshot({ path: `${SHOTS}/storage-done-${scheme}-${width}.png` });
+    }
     await page.mouse.wheel(0, -100000);
     await page.waitForTimeout(600);
     check(`${tag}: wheel back up lights General`, /General/.test(await current()));

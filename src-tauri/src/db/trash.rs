@@ -7,6 +7,9 @@
 //! `deleted_at` its notes share. Every trash operation gets its own `deleted_at`, so that
 //! key alone finds the group's notes. Folder operations are set-based, one statement per
 //! table, so a folder of 100k notes is one transaction of a handful of statements.
+//!
+//! Every real delete then gives the freed pages back to the disk once the vault was
+//! compacted (see [`super::compact`]).
 
 use std::collections::HashSet;
 
@@ -246,6 +249,8 @@ impl Vault {
         }
         let deleted = tx.execute("DELETE FROM notes WHERE deleted_at = ?1", [deleted_at])?;
         tx.commit()?;
+        // The delete is done; space not given back now is given back next time.
+        let _ = self.give_back_free_pages();
         Ok(deleted)
     }
 
@@ -338,6 +343,8 @@ impl Vault {
         let deleted = tx.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL", [])?;
         tx.execute("DELETE FROM trash_folders", [])?;
         tx.commit()?;
+        // The delete is done; space not given back now is given back next time.
+        let _ = self.give_back_free_pages();
         Ok(deleted)
     }
 
@@ -370,6 +377,8 @@ impl Vault {
         let deleted = tx.execute("DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at <= ?1", [cutoff])?;
         tx.execute("DELETE FROM trash_folders WHERE deleted_at <= ?1", [cutoff])?;
         tx.commit()?;
+        // The delete is done; space not given back now is given back next time.
+        let _ = self.give_back_free_pages();
         Ok(deleted)
     }
 

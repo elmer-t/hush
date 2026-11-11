@@ -61,8 +61,8 @@ pub fn run(session: &Session, generation: u64, poll: Duration) -> Result<Option<
     let total = session.with_vault_quiet(generation, |v| v.live_note_count())? as u64;
     let mut result = Retag::default();
     loop {
-        if session.import_running() {
-            activity.pause(Job::Retag, "import running");
+        if let Some(reason) = session.pause_reason() {
+            activity.pause(Job::Retag, reason);
             if !sleep_while_open(session, generation, poll) {
                 return Err(RetagError::Locked);
             }
