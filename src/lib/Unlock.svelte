@@ -13,6 +13,7 @@
     type VaultUpgrade,
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
+  import PassphraseStrength from "$lib/PassphraseStrength.svelte";
   // The 256 px Tauri app icon, so the unlock screen always matches the installed icon.
   import appIcon from "../../src-tauri/icons/128x128@2x.png";
 
@@ -130,7 +131,7 @@
   }
 </script>
 
-{#snippet passphraseField(id: string, label: string)}
+{#snippet passphraseField(id: string, label: string, strength = false)}
   <div class="field">
     <label for={id}>{label}</label>
     <div class="secret" class:invalid={error?.kind === "wrongPassphrase"}>
@@ -141,6 +142,7 @@
         spellcheck="false"
         bind:this={passphraseInput}
         bind:value={passphrase}
+        aria-describedby={strength ? `${id}-strength` : undefined}
         disabled={busy}
         required
       />
@@ -154,6 +156,9 @@
         <Icon name="eye" />
       </button>
     </div>
+    {#if strength}
+      <PassphraseStrength {passphrase} id="{id}-strength" />
+    {/if}
   </div>
 {/snippet}
 
@@ -191,7 +196,7 @@
         </div>
       </div>
 
-      {@render passphraseField("new-passphrase", "Passphrase")}
+      {@render passphraseField("new-passphrase", "Passphrase", true)}
 
       <div class="field">
         <label for="repeat-passphrase">Repeat passphrase</label>

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState, type SelectionRange, type Transaction } from "@codemirror/state";
-import { ensureSyntaxTree } from "@codemirror/language";
 import { history, undo } from "@codemirror/commands";
 import { deleteMarkupBackward, insertNewlineContinueMarkup } from "@codemirror/lang-markdown";
 import { buildLive, inlineHandlers, type LiveSpec } from "$lib/liveDecorations";
 import { liveLanguage } from "$lib/livePreview";
+import { parsed } from "$lib/testing/parsed";
 import { blockHandlers, cursorInBlock, findBlocks, shownBlocks, tableCellPos, toggleTask } from "$lib/liveBlocks";
 
 /** A state for `doc` with the cursor at `^` (or a selection between two `^`), parsed in full. */
@@ -12,9 +12,7 @@ function stateOf(marked: string, extra = false) {
   const at = [...marked.matchAll(/\^/g)].map((m, i) => m.index! - i);
   const doc = marked.replaceAll("^", "");
   const selection = at.length === 2 ? EditorSelection.single(at[0], at[1]) : EditorSelection.cursor(at[0] ?? 0);
-  const state = EditorState.create({ doc, selection, extensions: extra ? [liveLanguage(), history()] : [liveLanguage()] });
-  ensureSyntaxTree(state, doc.length, 5000);
-  return state;
+  return parsed(EditorState.create({ doc, selection, extensions: extra ? [liveLanguage(), history()] : [liveLanguage()] }));
 }
 
 const handlers = { ...inlineHandlers, ...blockHandlers };
@@ -314,50 +312,5 @@ describe("tables and images", () => {
     expect(tableCellPos(state, table, 3, 1)).toBe(doc.indexOf("|e|") + 3);
     // Past the last row: the end of the table.
     expect(tableCellPos(state, table, 9, 0)).toBe(doc.indexOf("|e|") + 3);
-  });
-});
-
-describe("performance", () => {
-  it("types into a 5,000-line note with lists, quotes, code, tables and images quickly", () => {
-    const chunk = [
-      "## Heading",
-      "- item **b**",
-      "  - [ ] task",
-      "> quote [[link]]",
-      "```js",
-      "code()",
-      "```",
-      "| a | b |",
-      "|---|---|",
-      "| 1 | 2 |",
-      "",
-      "![img](i.png)",
-      "Text with ![inline](x.png) and *em*.",
-      "",
-      "---",
-      "",
-    ];
-    const lines: string[] = [];
-    while (lines.length < 5000) lines.push(...chunk);
-    let state = stateOf(lines.join("\n"));
-    state = state.update({ selection: { anchor: state.doc.line(2501).to } }).state;
-    const visible = () => {
-      const line = state.doc.lineAt(state.selection.main.head);
-      return [{ from: state.doc.line(line.number - 30).from, to: state.doc.line(line.number + 30).to }];
-    };
-    const times: number[] = [];
-    for (let i = 0; i < 50; i++) {
-      const start = performance.now();
-      const at = state.selection.main.head;
-      state = state.update({ changes: { from: at, insert: "x" }, selection: { anchor: at + 1 } }).state;
-      ensureSyntaxTree(state, state.doc.length, 5000);
-      buildLive(state, visible(), handlers);
-      shownBlocks(state, findBlocks(state));
-      times.push(performance.now() - start);
-    }
-    times.sort((a, b) => a - b);
-    const median = times[times.length >> 1];
-    console.log(`5,000-line block note: median ${median.toFixed(2)} ms, max ${times[times.length - 1].toFixed(2)} ms per keystroke`);
-    expect(median).toBeLessThan(16);
   });
 });

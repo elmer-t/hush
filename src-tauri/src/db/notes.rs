@@ -464,6 +464,8 @@ impl Vault {
         super::trash::forget_empty_groups(&tx)?;
         super::recent::forget_last_opened(&tx, id)?;
         tx.commit()?;
+        // The delete is done; space not given back now is given back next time.
+        let _ = self.give_back_free_pages();
         Ok(())
     }
 
@@ -637,7 +639,7 @@ mod tests {
     #[test]
     fn set_read_status_touches_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let a = vault.create_note("f", "A", "---\ntags: [x]\n---\nlighthouse #y").unwrap();
         let b = vault.create_note("f", "B", "keeper").unwrap();
         let gone = vault.create_note("f", "Gone", "old").unwrap();
@@ -685,7 +687,7 @@ mod tests {
     #[test]
     fn a_spent_budget_still_writes_one_note_per_transaction() {
         let dir = tempfile::tempdir().unwrap();
-        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let titles = ["a", "b", "c"];
         let notes: Vec<NewNote> =
             titles.iter().map(|t| NewNote { folder: "", title: t, body: "x", created_at: 1, updated_at: 1 }).collect();
@@ -703,7 +705,7 @@ mod tests {
     fn bulk_write_settings_are_undone_and_reset_on_open() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v.hush");
-        let vault = Vault::create(&path, "pass").unwrap();
+        let vault = Vault::create(&path, "test passphrase").unwrap();
         vault.set_bulk_writes(true).unwrap();
         assert_eq!(stored_hashsize(&vault), Some(BULK_FTS_BYTES));
         let cache: i64 = vault.conn.query_row("PRAGMA cache_size", [], |r| r.get(0)).unwrap();
@@ -714,7 +716,7 @@ mod tests {
         // An import that never finished (crash, or the vault locked) leaves the big buffer.
         vault.set_bulk_writes(true).unwrap();
         vault.close().unwrap();
-        let vault = Vault::open(&path, "pass").unwrap();
+        let vault = Vault::open(&path, "test passphrase").unwrap();
         assert_eq!(stored_hashsize(&vault), Some(DEFAULT_FTS_BYTES));
     }
 
@@ -787,7 +789,7 @@ mod tests {
     #[test]
     fn folders_table_follows_every_write_path() {
         let dir = tempfile::tempdir().unwrap();
-        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         assert_folders_match(&v, "create vault");
 
         let root = v.create_note("", "Root", "root body").unwrap();
@@ -871,7 +873,7 @@ mod tests {
     #[test]
     fn case_variant_folders_share_one_row() {
         let dir = tempfile::tempdir().unwrap();
-        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let upper = v.create_note("Projects", "A", "x").unwrap();
         v.create_note("projects", "B", "x").unwrap();
         assert_eq!(folder_rows(&v).0, [("projects".into(), 2)]);
@@ -886,7 +888,7 @@ mod tests {
     #[test]
     fn folders_table_survives_random_operations() {
         let dir = tempfile::tempdir().unwrap();
-        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         const FOLDERS: [&str; 7] = ["", "a", "A", "a/b", "A/B", "c", "c/d/e"];
         let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
         let mut next = |n: usize| {
@@ -926,7 +928,7 @@ mod tests {
     #[test]
     fn folders_reads_the_folders_table() {
         let dir = tempfile::tempdir().unwrap();
-        let v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let plan: Vec<String> = v
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {FOLDERS_QUERY}"))
@@ -943,7 +945,7 @@ mod tests {
     #[test]
     fn folder_sizes_read_the_folders_table() {
         let dir = tempfile::tempdir().unwrap();
-        let v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let plan: Vec<String> = v
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {FOLDER_SIZES_QUERY}"))
@@ -961,7 +963,7 @@ mod tests {
     #[test]
     fn folder_sizes_count_utf8_bytes_of_live_bodies() {
         let dir = tempfile::tempdir().unwrap();
-        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let sizes = |v: &Vault| v.folder_sizes().unwrap().into_iter().map(|s| (s.path, s.bytes)).collect::<Vec<_>>();
         let a = v.create_note("Docs", "A", "héllo").unwrap(); // 6 bytes
         let b = v.create_note("Docs", "B", "🙂").unwrap(); // 4 bytes
@@ -987,7 +989,7 @@ mod tests {
     #[test]
     fn folder_notes_carry_each_notes_size() {
         let dir = tempfile::tempdir().unwrap();
-        let mut v = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let id = v.create_note("a", "A", "naïve").unwrap();
         v.create_note("a", "B", "").unwrap();
         let listed = v.folder_notes("a", 0, 10).unwrap();

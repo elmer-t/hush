@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn read_status_filters_use_the_right_index() {
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let q = |f: Option<ReadFilter>, folder: Option<&str>| SearchQuery {
             read_status: f,
             folder: folder.map(Into::into),
@@ -661,7 +661,7 @@ mod tests {
     fn broad_read_filters_list_the_notes_they_exclude() {
         use super::NoteFilter::{Except, Only};
         let dir = tempfile::tempdir().unwrap();
-        let mut vault = Vault::create(&dir.path().join("v.hush"), "pass").unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
         let a = vault.create_note("", "a", "x").unwrap();
         let b = vault.create_note("", "b", "x").unwrap();
         let c = vault.create_note("f", "c", "x").unwrap();

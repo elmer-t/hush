@@ -3,6 +3,7 @@
   import { api, errorMessage, type OpenedNote, type TrashEntry } from "$lib/api";
   import { shortDate } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
+  import { formatSize } from "$lib/size";
 
   type Props = {
     /** Called with the restored note, which may have a new title. */
@@ -11,8 +12,10 @@
     onrestoredfolder: () => void;
     /** Called with the number of notes in the trash whenever it is loaded. */
     oncount: (count: number) => void;
+    /** Opens Settings → Storage, where the vault can be compacted. */
+    oncompact?: () => void;
   };
-  let { onrestored, onrestoredfolder, oncount }: Props = $props();
+  let { onrestored, onrestoredfolder, oncount, oncompact }: Props = $props();
 
   const DAY_MS = 86_400_000;
   const PAGE_SIZE = 200;
@@ -25,6 +28,8 @@
   let days = $state<number | null>(null);
   let busy = $state(false);
   let error = $state("");
+  // Set after deleting for good left space that only compacting gives back.
+  let reclaimable = $state<number | null>(null);
   // What the confirmation dialog asks about; `null` while it is closed.
   let confirming = $state<{ title: string; text: string; action: string; run: () => Promise<unknown> } | null>(null);
   let dialog = $state<HTMLDialogElement>();
@@ -104,7 +109,20 @@
     const question = confirming;
     dialog?.close();
     confirming = null;
-    if (yes && question) void run(question.run);
+    if (yes && question) void run(question.run).then(offerCompacting);
+  }
+
+  /**
+   * Every answer deletes for good. A vault compacted before gives the space back by
+   * itself; otherwise point to compacting once there is enough to give back.
+   */
+  async function offerCompacting() {
+    try {
+      const space = await api.vaultSpace();
+      reclaimable = space.worthCompacting && !space.incremental ? space.reclaimableBytes : null;
+    } catch {
+      reclaimable = null;
+    }
   }
 
   function deleteForever(entry: TrashEntry) {
@@ -157,6 +175,12 @@
 
   <div class="body">
     {#if error}<p class="error" role="alert">{error}</p>{/if}
+    {#if reclaimable !== null}
+      <p class="hint" role="status">
+        The vault file keeps its size until it is compacted, which would give back {formatSize(reclaimable)}{#if oncompact}:
+          <button class="link" onclick={oncompact}>Settings → Storage</button>{/if}.
+      </p>
+    {/if}
 
     {#if entries && entries.length === 0}
       <p class="muted">The trash is empty.</p>
@@ -256,6 +280,10 @@
   p {
     margin: 0;
     color: var(--text-2);
+  }
+
+  .hint {
+    margin-bottom: 12px;
   }
 
   .body {

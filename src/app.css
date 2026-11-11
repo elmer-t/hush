@@ -29,6 +29,7 @@
   --selection-text: #5e1e2b;
   --warn: #8a5100;
   --warn-soft: #fbefd9;
+  --ok: #2e7a3c;
   --danger: #c8281e;
   --danger-soft: #fce6e3;
   --danger-text: #ffffff;
@@ -75,6 +76,7 @@
     --selection-text: #f2c9d0;
     --warn: #e8a94f;
     --warn-soft: #372a14;
+    --ok: #7cc68a;
     --danger: #ff6b6b;
     --danger-soft: #3d1a1a;
     --danger-text: #2a0606;

@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
-import { ensureSyntaxTree } from "@codemirror/language";
 import { liveLanguage } from "$lib/livePreview";
+import { parsed } from "$lib/testing/parsed";
 import { clickAction, linkRangeAt, linkRevealed } from "$lib/liveLinks";
 import type { Link } from "$lib/linkOpen";
 
 function stateOf(doc: string, cursor = 0) {
-  const state = EditorState.create({ doc, selection: EditorSelection.cursor(cursor), extensions: [liveLanguage()] });
-  ensureSyntaxTree(state, doc.length, 5000);
-  return state;
+  return parsed(EditorState.create({ doc, selection: EditorSelection.cursor(cursor), extensions: [liveLanguage()] }));
 }
 
 /** The source of the link around the `^` in `marked` (the `^` is removed). */

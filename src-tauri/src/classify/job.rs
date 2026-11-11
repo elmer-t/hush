@@ -103,9 +103,9 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
         }
         let embedding = queued > 0 && queue.is_some_and(|(_, since)| since.elapsed() < quiet * STALLED_QUIETS);
         // The notes an import brings have no vectors yet: wait until it is over.
-        if session.import_running() {
+        if let Some(reason) = session.pause_reason() {
             changed_at = Some(Instant::now());
-            activity.wait(Job::Training, "import running");
+            activity.wait(Job::Training, reason);
         } else if embedding {
             changed_at = Some(Instant::now());
             activity.wait(Job::Training, format!("notes being embedded ({} queued)", count(queued as u64)));

@@ -1,6 +1,7 @@
 //! The encrypted vault: one SQLCipher database file per vault. All database access goes
 //! through [`Vault`].
 
+mod compact;
 mod discover;
 mod embeddings;
 mod graph;
@@ -26,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
+pub use compact::{COMPACT_MIN_BYTES, COMPACT_MIN_PERCENT, Compacted, VaultSpace, available_space, byte_text};
 pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCounts, QueueCursor, QueuePage, QueuePhase, QueuedText,
@@ -52,12 +54,18 @@ pub use trash::{DEFAULT_TRASH_DAYS, FolderContents, MAX_TRASH_DAYS, TRASH_DAYS_S
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The shortest passphrase a new vault, or a passphrase change, accepts, counted in
+/// characters. Opening never checks it, so vaults made before the minimum still open.
+pub const MIN_PASSPHRASE_CHARS: usize = 8;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("wrong passphrase, or not a Hush vault")]
     WrongPassphrase,
     #[error("passphrase must not be empty")]
     EmptyPassphrase,
+    #[error("passphrase must be at least {MIN_PASSPHRASE_CHARS} characters")]
+    PassphraseTooShort,
     #[error("vault file not found")]
     VaultNotFound,
     #[error("a file already exists at that location")]
@@ -92,6 +100,10 @@ pub enum Error {
     InvalidRating,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
+    #[error("not enough free disk space to compact the vault: it needs {} free on the vault's drive, and {} is free", compact::byte_text(*.needed), compact::byte_text(*.available))]
+    NotEnoughDiskSpace { needed: u64, available: u64 },
+    #[error("could not check the free disk space: {0}")]
+    DiskSpace(std::io::Error),
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }
@@ -112,6 +124,7 @@ impl Vault {
         if path.exists() {
             return Err(Error::VaultExists);
         }
+        check_new_passphrase(passphrase)?;
         let lock = lock::VaultLock::acquire(path)?;
         let conn = connect(path, passphrase, OpenFlags::SQLITE_OPEN_CREATE)?;
         Self::init(conn, lock, &mut |_| {})
@@ -155,9 +168,7 @@ impl Vault {
     }
 
     pub fn change_passphrase(&self, new_passphrase: &str) -> Result<()> {
-        if new_passphrase.is_empty() {
-            return Err(Error::EmptyPassphrase);
-        }
+        check_new_passphrase(new_passphrase)?;
         self.conn.pragma_update(None, "rekey", new_passphrase)?;
         Ok(())
     }
@@ -193,6 +204,17 @@ impl Vault {
         self.setting_changes.set(self.setting_changes.get() + n as u64);
         Ok(())
     }
+}
+
+/// Checks a passphrase that is about to key a vault: on create and change, never on open.
+fn check_new_passphrase(passphrase: &str) -> Result<()> {
+    if passphrase.is_empty() {
+        return Err(Error::EmptyPassphrase);
+    }
+    if passphrase.chars().count() < MIN_PASSPHRASE_CHARS {
+        return Err(Error::PassphraseTooShort);
+    }
+    Ok(())
 }
 
 fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection> {
