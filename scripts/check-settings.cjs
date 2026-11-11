@@ -15,7 +15,7 @@ function mocks() {
   const status = { model: "e5-small", readyModel: "e5-small", load: { state: "ready" }, reduced: null };
   const replies = {
     auto_lock_minutes: 10, default_author: "Elmer", trash_days: 30, confirm_trash: true, recent_opened_count: 10,
-    index_all_cores: false,
+    index_all_cores: false, memory_security: { on: false, active: false },
     gpu_status: { adapters: [], best: null, enabled: true, model: "e5-small", device: "cpu", reason: null, gpuModel: "e5-small-fp16" },
     model_status: status, index_status: { state: "idle" }, model_downloads: [],
     model_overview: {
@@ -37,6 +37,8 @@ function mocks() {
     ? { fileBytes: 6.3e9, reclaimableBytes: 0, trashNotes: 0, trashTextBytes: 0, neededBytes: 6.9e9, incremental: true, worthCompacting: false }
     : { fileBytes: 15.2e9, reclaimableBytes: 8.9e9, trashNotes: 1240, trashTextBytes: 310e6, neededBytes: 7.0e9, incremental: false, worthCompacting: true };
   const calls = {
+    // This run of Hush started with wiping off; the saved choice follows the switch.
+    set_memory_security: async (args) => ({ on: args.on, active: false }),
     vault_space: async () => space(),
     // Held until the check lets it finish, like the real command holding the vault.
     compact_vault: () => new Promise((done) => (window.__finishCompaction = () => {
@@ -45,7 +47,7 @@ function mocks() {
     })),
   };
   window.__TAURI_INTERNALS__ = {
-    invoke: async (cmd) => (cmd.startsWith("plugin:event|") ? 1 : cmd in calls ? calls[cmd]() : cmd in replies ? structuredClone(replies[cmd]) : null),
+    invoke: async (cmd, args) => (cmd.startsWith("plugin:event|") ? 1 : cmd in calls ? calls[cmd](args) : cmd in replies ? structuredClone(replies[cmd]) : null),
     transformCallback: () => 0,
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
@@ -73,6 +75,17 @@ async function main() {
     check(`${tag}: eight section headers`, (await page.locator(".sections > section > h2").count()) === 8);
     check(`${tag}: General active at the top`, /General/.test(await current()));
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/top-${scheme}-${width}.png` });
+    const security = page.locator("#settings-security");
+    const wipe = security.getByLabel(/Wipe decrypted vault data/);
+    check(`${tag}: memory wiping off by default`, !(await wipe.isChecked()));
+    check(`${tag}: no restart note before a change`, (await security.getByText(/Restart Hush/).count()) === 0);
+    await wipe.check();
+    await security.getByText("Restart Hush to turn memory wiping on.").waitFor();
+    check(`${tag}: turning it on asks for a restart`, true);
+    if (SHOTS) await security.screenshot({ path: `${SHOTS}/security-${scheme}-${width}.png` });
+    await wipe.uncheck();
+    await page.waitForTimeout(200);
+    check(`${tag}: turning it back off drops the note`, (await security.getByText(/Restart Hush/).count()) === 0);
     await page.click('.menu a[href="#model-settings"]');
     await page.waitForTimeout(1200);
     const gap = await page.evaluate(() => document.getElementById("model-settings").getBoundingClientRect().top - document.getElementById("scroller").getBoundingClientRect().top);

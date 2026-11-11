@@ -135,6 +135,26 @@ pub fn set_auto_lock_minutes(session: State<'_, Session>, minutes: u32) -> Resul
     Ok(session.set_auto_lock_minutes(minutes)?)
 }
 
+/// The memory-wiping choice for this machine: what is saved, and what this process
+/// started with. They differ until Hush is restarted.
+#[derive(Serialize)]
+pub struct MemorySecurity {
+    on: bool,
+    active: bool,
+}
+
+#[tauri::command]
+pub fn memory_security(config: State<'_, Config>) -> MemorySecurity {
+    MemorySecurity { on: config.get().memory_security, active: db::memory_security() }
+}
+
+/// Saves the choice; it takes effect on the next start (see [`db::set_memory_security`]).
+#[tauri::command]
+pub fn set_memory_security(config: State<'_, Config>, on: bool) -> Result<MemorySecurity> {
+    config.update(|c| c.memory_security = on)?;
+    Ok(MemorySecurity { on, active: db::memory_security() })
+}
+
 #[tauri::command]
 pub async fn change_passphrase(session: State<'_, Session>, current: String, new: String) -> Result<()> {
     let current = Zeroizing::new(current);

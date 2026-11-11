@@ -23,6 +23,7 @@ mod trash;
 
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
@@ -217,6 +218,22 @@ fn check_new_passphrase(passphrase: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether vaults opened by this process turn on `cipher_memory_security` (#153).
+static MEMORY_SECURITY: AtomicBool = AtomicBool::new(false);
+
+/// Chooses, once at startup and before any vault opens, whether SQLCipher wipes the
+/// memory it frees. Off by default: it makes word search about 3–4× and imports about
+/// 2× slower (measured in #153). SQLCipher can't turn it off again within a process,
+/// so a change made in Settings takes effect on the next start.
+pub fn set_memory_security(on: bool) {
+    MEMORY_SECURITY.store(on, Ordering::SeqCst);
+}
+
+/// Whether this process wipes freed SQLCipher memory, as chosen at startup.
+pub fn memory_security() -> bool {
+    MEMORY_SECURITY.load(Ordering::SeqCst)
+}
+
 fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection> {
     if passphrase.is_empty() {
         return Err(Error::EmptyPassphrase);
@@ -227,8 +244,10 @@ fn connect(path: &Path, passphrase: &str, extra: OpenFlags) -> Result<Connection
     )?;
     // Before the key, as SQLCipher documents: SQLCipher then overwrites the memory it
     // frees, so decrypted pages don't stay in the heap after the vault locks (#153).
-    // Process-wide, and it can't be turned off again; costs measured in #153.
-    run_pragma(&conn, "PRAGMA cipher_memory_security = ON")?;
+    // Opt-in (Settings → Security); process-wide, and it can't be turned off again.
+    if memory_security() {
+        run_pragma(&conn, "PRAGMA cipher_memory_security = ON")?;
+    }
     apply_key(&conn, passphrase)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -277,15 +296,16 @@ fn quote_list(items: &[String]) -> String {
 mod tests {
     use super::*;
 
-    /// SQLCipher wipes the memory it frees, so decrypted pages don't outlive a lock in
-    /// the heap (#153).
+    /// Memory wiping is opt-in (#153): no lib test turns it on, because it can't be
+    /// turned off again in this process. `tests/vault.rs` checks the opt-in in a child
+    /// process.
     #[test]
-    fn open_vault_has_memory_security_on() {
+    fn open_vault_has_memory_security_off_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v.hush");
         Vault::create(&path, "test passphrase").unwrap().close().unwrap();
         let vault = Vault::open(&path, "test passphrase").unwrap();
         let on: String = vault.conn.query_row("PRAGMA cipher_memory_security", [], |r| r.get(0)).unwrap();
-        assert_eq!(on, "1");
+        assert_eq!(on, "0");
     }
 }
