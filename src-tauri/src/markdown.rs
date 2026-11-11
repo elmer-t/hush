@@ -3,11 +3,13 @@
 //! The body is the single source of truth; everything the database indexes about a
 //! note is derived from what this module returns.
 
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::LazyLock;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
+use yaml_rust2::parser::{Event, Parser};
 use yaml_rust2::{Yaml, YamlLoader};
 
 static TAG: LazyLock<Regex> =
@@ -24,6 +26,9 @@ static LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\p{L}").unwrap())
 static ORDINAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^[0-9]+(?:st|nd|rd|th)$").unwrap());
 static HEX_COLOUR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$").unwrap());
+
+/// Frontmatter longer than this isn't parsed: it is kept but not read, like broken YAML.
+pub const MAX_FRONTMATTER_BYTES: usize = 64 * 1024;
 
 /// Bumped whenever the tag rules change ([`is_tag`] or what [`parse`] skips), so the
 /// background re-derive pass (`crate::retag`) runs once more on every vault.
@@ -77,11 +82,13 @@ pub fn parse(body: &str) -> Parsed {
         }
         None => 0,
     };
-    let code = code_ranges(body, content_start);
-    let in_code = |pos: usize| code.iter().any(|r| r.contains(&pos));
+    // Sorted and merged once, so each link is a binary search, not a scan (#151).
+    let code = merge_ranges(code_ranges(body, content_start));
     let content = &body[content_start..];
 
     let skipped = not_tag_ranges(content, code.iter().map(|r| r.start - content_start..r.end - content_start));
+    // A set, not `push_unique`: a note with many distinct tags was quadratic too.
+    let mut seen_tags: HashSet<String> = parsed.tags.iter().cloned().collect();
     for caps in TAG.captures_iter(content) {
         let m = caps.get(1).unwrap();
         let tag = m.as_str().trim_end_matches('/');
@@ -90,13 +97,16 @@ pub fn parse(body: &str) -> Parsed {
         {
             continue;
         }
-        push_unique(&mut parsed.tags, tag);
+        if !seen_tags.contains(tag) {
+            seen_tags.insert(tag.to_string());
+            parsed.tags.push(tag.to_string());
+        }
     }
 
     for caps in WIKILINK.captures_iter(content) {
         let whole = caps.get(0).unwrap();
         // Embeds (`![[...]]`) are out of scope with attachments.
-        if in_code(content_start + whole.start()) || !caps[1].is_empty() {
+        if in_ranges(&code, content_start + whole.start()) || !caps[1].is_empty() {
             continue;
         }
         let inner = caps.get(2).unwrap();
@@ -162,10 +172,29 @@ pub fn split_frontmatter(body: &str) -> Option<(&str, usize)> {
 
 /// Whether frontmatter YAML can be read: empty, or a mapping.
 pub fn frontmatter_is_valid(yaml: &str) -> bool {
-    match YamlLoader::load_from_str(yaml) {
-        Ok(docs) => matches!(docs.first(), None | Some(Yaml::Hash(_))),
-        Err(_) => false,
+    match load_frontmatter(yaml) {
+        Some(docs) => matches!(docs.first(), None | Some(Yaml::Hash(_))),
+        None => false,
     }
+}
+
+/// Loads frontmatter YAML, or `None` when it is broken, longer than
+/// [`MAX_FRONTMATTER_BYTES`] or uses an alias (`*name`). The loader expands every alias
+/// by copying the anchored node, so a few hundred bytes of nested aliases take minutes
+/// and gigabytes (#150); Hush only reads flat keys, where aliases have no use.
+fn load_frontmatter(yaml: &str) -> Option<Vec<Yaml>> {
+    if yaml.len() > MAX_FRONTMATTER_BYTES {
+        return None;
+    }
+    let mut events = Parser::new_from_str(yaml);
+    loop {
+        match events.next_token().ok()?.0 {
+            Event::Alias(_) => return None,
+            Event::StreamEnd => break,
+            _ => {}
+        }
+    }
+    YamlLoader::load_from_str(yaml).ok()
 }
 
 /// Sets the top-level frontmatter `key` to `values`, or removes it when `values` is empty.
@@ -268,7 +297,7 @@ pub fn parse_date(s: &str) -> Option<i64> {
 }
 
 fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
-    let Ok(docs) = YamlLoader::load_from_str(yaml) else {
+    let Some(docs) = load_frontmatter(yaml) else {
         return;
     };
     let Some(Yaml::Hash(map)) = docs.into_iter().next() else {
@@ -379,6 +408,11 @@ fn not_tag_ranges(content: &str, code: impl Iterator<Item = Range<usize>>) -> Ve
     if content.contains('<') {
         ranges.extend(HTML.find_iter(content).map(|m| m.range()));
     }
+    merge_ranges(ranges)
+}
+
+/// Sorts `ranges` and merges overlapping ones, for [`in_ranges`].
+fn merge_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     ranges.sort_by_key(|r| r.start);
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
     for r in ranges {
@@ -497,6 +531,48 @@ mod tests {
         assert_eq!(p.tags, vec!["ok"]);
     }
 
+    /// #150: `levels` of anchors, each a list of ten aliases to the previous one.
+    pub(crate) fn alias_bomb(levels: usize) -> String {
+        let mut yaml = "a0: &a0 [x,x,x,x,x,x,x,x,x,x]\n".to_string();
+        for i in 1..levels {
+            let refs = vec![format!("*a{}", i - 1); 10].join(",");
+            yaml += &format!("a{i}: &a{i} [{refs}]\n");
+        }
+        yaml
+    }
+
+    #[test]
+    fn aliases_make_frontmatter_invalid_without_expanding_them() {
+        // Checked first, so a regression fails here instead of hanging on the bomb.
+        // A single harmless alias is refused too: Hush only reads flat keys.
+        assert!(!frontmatter_is_valid("a: &x 1\nb: *x\n"));
+        assert_eq!(parse("---\nauthor: Ada\nb: &x 1\nc: *x\n---\n").author, None);
+        let yaml = alias_bomb(9);
+        let body = format!("---\nauthor: Ada\n{yaml}---\nBody #ok [[Link]]");
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        assert!(!frontmatter_is_valid(&yaml));
+        assert!(start.elapsed() < std::time::Duration::from_millis(100), "{:?}", start.elapsed());
+        assert_eq!(p.author, None, "frontmatter with aliases isn't read");
+        assert!(p.attributes.is_empty());
+        assert_eq!(p.tags, vec!["ok"], "the body is still parsed");
+        assert_eq!(p.links.len(), 1);
+        // Anchors without aliases are harmless and still read.
+        assert_eq!(parse("---\nauthor: &x Ada\n---\n").author.as_deref(), Some("Ada"));
+    }
+
+    #[test]
+    fn oversized_frontmatter_is_not_read() {
+        let filler = "x".repeat(MAX_FRONTMATTER_BYTES);
+        let yaml = format!("author: Ada\nnote: {filler}\n");
+        assert!(!frontmatter_is_valid(&yaml));
+        assert_eq!(parse(&format!("---\n{yaml}---\n#ok")).author, None);
+        assert_eq!(parse(&format!("---\n{yaml}---\n#ok")).tags, vec!["ok"]);
+        let fits = format!("author: Ada\nnote: {}\n", "x".repeat(MAX_FRONTMATTER_BYTES - 100));
+        assert!(frontmatter_is_valid(&fits));
+        assert_eq!(parse(&format!("---\n{fits}---\n")).author.as_deref(), Some("Ada"));
+    }
+
     #[test]
     fn inline_tags() {
         let p = parse("# Heading\n#one and #two/sub, (#three) #123 a#notatag http://x/#anchor #One");
@@ -607,6 +683,43 @@ mod tests {
         let body = "---\na: 1\n---\nsee [[X]]";
         let p = parse(body);
         assert_eq!(&body[p.links[0].target_range.clone()], "X");
+    }
+
+    /// #151: each link was checked against every code span, so 160,000 links next to
+    /// 160,000 spans (1.6 MB) took 17 s in a release build (370 s in a debug build).
+    /// The bound is for a debug build on a slow shared machine, where the fixed parse
+    /// takes under 1 s.
+    #[test]
+    fn many_links_and_code_spans_parse_quickly() {
+        let n = 160_000;
+        let body = "`a` [[b]]\n".repeat(n);
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        let elapsed = start.elapsed();
+        assert_eq!(p.links.len(), n);
+        assert!(p.links.iter().enumerate().all(|(i, l)| l.target_range == (i * 10 + 6..i * 10 + 7) && l.title == "b"));
+        assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
+    }
+
+    #[test]
+    fn links_in_nested_code_ranges_are_skipped() {
+        // Inline spans inside a fence overlap it; links after both still count.
+        let body = "```\n`x` [[In]] `y`\n```\n`z` [[Out]] `w` [[Out2]]\n~~~\n[[Tail]]";
+        let titles: Vec<String> = parse(body).links.into_iter().map(|l| l.title).collect();
+        assert_eq!(titles, vec!["Out", "Out2"]);
+    }
+
+    #[test]
+    fn many_distinct_tags_parse_quickly() {
+        let n = 100_000;
+        let body: String = (0..n).map(|i| format!("#tag{i} ")).collect();
+        let start = std::time::Instant::now();
+        let p = parse(&body);
+        let elapsed = start.elapsed();
+        assert_eq!(p.tags.len(), n);
+        assert_eq!(p.tags[n - 1], format!("tag{}", n - 1));
+        assert_eq!(parse("#bb #aa #bb #AA").tags, vec!["bb", "aa", "AA"], "first-seen order, case-sensitive");
+        assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
     }
 
     fn set(body: &str, key: &str, values: &[&str]) -> String {

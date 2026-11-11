@@ -3,7 +3,8 @@
   "bundle": {
     "resources": {
       "models/*": "models/",
-      "directml/DirectML.dll": "DirectML.dll"
+      "directml/DirectML.dll": "DirectML.dll",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     }
   }
 }
