@@ -5,7 +5,7 @@ const { chromium } = require("playwright");
 const URL = process.env.HUSH_URL || "http://127.0.0.1:1420/";
 const SHOTS = process.argv[2];
 
-function mocks() {
+function mocks(opts = {}) {
   const note = (id, folder, title) => ({
     id, folder, title, author: null, topic: null, rating: null, readStatus: "unread", createdAt: 1.7e12, updatedAt: 1.7e12,
   });
@@ -15,7 +15,7 @@ function mocks() {
     vault_status: { path: "/vaults/test.hush", name: "test" },
     folders: ["Archive", "Projects", "Projects/Work"],
     folder_sizes: [], folder_notes: [], recent_opened_notes: [], model_downloads: [],
-    sidebar_view: "tree", sidebar_folder: "Projects/Work", sidebar_search_scope: "folder",
+    sidebar_view: "tree", sidebar_folder: opts.folder === undefined ? "Projects/Work" : opts.folder, sidebar_search_scope: "folder",
     search_facets: { tags: [], topics: [], authors: [], attributeKeys: [] },
     index_status: { state: "idle", done: 0, total: 0 },
     model_status: { model: "e5-small", readyModel: "e5-small", load: { state: "ready" }, reduced: null },
@@ -39,8 +39,53 @@ function mocks() {
   };
   window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   try {
-    localStorage.setItem("hush.layout.leftWidth", "200");
+    localStorage.setItem("hush.layout.leftWidth", String(opts.width ?? 200));
   } catch {}
+}
+
+/**
+ * Where the search controls sit (#157): top to bottom the search box, the Words/Meaning and
+ * This folder/Whole vault toggles, the results line, then Tree/Recent/Suggestions + Filters.
+ */
+function searchLayout() {
+  const box = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+  const unsplit = (sel) => { const tops = [...document.querySelectorAll(`${sel} button`)].map((b) => Math.round(b.getBoundingClientRect().top)); return tops.length > 0 && new Set(tops).size === 1; };
+  const status = document.querySelector(".sidebar .summary");
+  const over = (sel) => { const e = document.querySelector(sel); return e ? e.scrollWidth - e.clientWidth : 0; };
+  return {
+    search: box(".sidebar label.search"), mode: box(".sidebar .mode-switch"), scope: box(".sidebar .scope-switch"),
+    summary: box(".sidebar .summary"), bar: box(".sidebar .bar"),
+    modeUnsplit: unsplit(".sidebar .mode-switch"), scopeUnsplit: unsplit(".sidebar .scope-switch"),
+    statusRole: status?.getAttribute("role") ?? null, statusButtons: status ? status.querySelectorAll("button").length : -1,
+    // The sidebar, and the rows #157 moved, inside the content box of .top. (The Tree/Recent/
+    // Suggestions control is wider than 200 px on its own; that row is out of scope here.)
+    overflow: Math.max(
+      over(".sidebar"),
+      ...[".mode-switch", ".scope-switch", ".summary p"].map((sel) => {
+        const e = document.querySelector(`.sidebar ${sel}`);
+        const top = document.querySelector(".sidebar .top");
+        if (!e) return 0;
+        return Math.ceil(e.getBoundingClientRect().right - (top.getBoundingClientRect().left + top.clientWidth - 12));
+      }),
+    ),
+  };
+}
+
+function checkLayout(check, l, label, { folder, oneRow }) {
+  const toggles = folder ? Math.max(l.mode.bottom, l.scope.bottom) : l.mode.bottom;
+  check(`${label}: search box above the toggles`, l.search.bottom <= l.mode.top);
+  check(`${label}: toggles above the results line`, toggles <= l.summary.top);
+  check(`${label}: results line above Tree/Recent/Suggestions`, l.summary.bottom <= l.bar.top);
+  check(`${label}: results line is a status without buttons`, l.statusRole === "status" && l.statusButtons === 0);
+  check(`${label}: Words/Meaning on one line`, l.modeUnsplit);
+  if (folder) {
+    check(`${label}: This folder/Whole vault on one line`, l.scopeUnsplit);
+    if (oneRow) check(`${label}: both toggles on one row, Words/Meaning first`, Math.abs(l.scope.top - l.mode.top) < 1 && l.scope.left > l.mode.right);
+    else check(`${label}: scope toggle on its own line, left-aligned under Words/Meaning`, l.scope.top >= l.mode.bottom && Math.abs(l.scope.left - l.mode.left) < 1);
+  } else {
+    check(`${label}: no scope toggle without a folder`, l.scope === null);
+  }
+  check(`${label}: no horizontal overflow (${l.overflow})`, l.overflow <= 0);
 }
 
 async function main() {
@@ -67,6 +112,7 @@ async function main() {
   await page.waitForTimeout(600);
   check("query limited to the folder", (await lastSearch()).folder === "Projects/Work");
   check(`summary names the folder (${await summary()})`, /^1 result in Projects\/Work · best match first$/.test(await summary()));
+  checkLayout(check, await page.evaluate(searchLayout), "200 px, folder", { folder: true, oneRow: false });
   if (SHOTS) await sidebar.screenshot({ path: `${SHOTS}/folder-scope.png` });
 
   await page.getByRole("button", { name: "Whole vault" }).click();
@@ -100,6 +146,29 @@ async function main() {
   const overflow = await page.evaluate(() => { const s = document.querySelector(".sidebar"); return s.scrollWidth - s.clientWidth; });
   check(`no horizontal overflow at minimum width (${overflow})`, overflow <= 0);
   check(`no page errors (${errors.join("; ")})`, errors.length === 0);
+
+  // The order and wrapping at the minimum, default and maximum sidebar widths, with and
+  // without a selected folder; with a screenshot directory, in light and dark too.
+  for (const scheme of SHOTS ? ["light", "dark"] : ["light"]) {
+    for (const width of [200, 280, 480]) {
+      for (const folder of ["Projects/Work", null]) {
+        const ctx = await browser.newContext({ viewport: { width: 1100, height: 700 }, deviceScaleFactor: 2, colorScheme: scheme });
+        const p = await ctx.newPage();
+        p.on("pageerror", (e) => errors.push(e.message));
+        await p.addInitScript(mocks, { width, folder });
+        await p.goto(URL);
+        await p.waitForSelector(".sidebar input[type=search]");
+        await p.waitForTimeout(500);
+        await p.locator(".sidebar input[type=search]").fill("plan");
+        await p.waitForTimeout(600);
+        const label = `${width} px, ${folder ? "folder" : "no folder"}, ${scheme}`;
+        checkLayout(check, await p.evaluate(searchLayout), label, { folder: folder !== null, oneRow: width >= 480 });
+        if (SHOTS) await p.locator(".sidebar").screenshot({ path: `${SHOTS}/search-${width}-${folder ? "folder" : "vault"}-${scheme}.png` });
+        await ctx.close();
+      }
+    }
+  }
+  check(`no page errors after the width checks (${errors.join("; ")})`, errors.length === 0);
   await browser.close();
   process.exit(fails.length ? 1 : 0);
 }
