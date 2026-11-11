@@ -30,10 +30,10 @@ These are compiled into Hush, shipped next to it, or bundled as resources, but t
 
 ### SQLCipher (community edition)
 
-SQLCipher 4.14.0, from the Rust crate libsqlite3-sys 0.38.2 (`bundled-sqlcipher-vendored-openssl`). Compiled from source and linked statically into Hush. Copyright Zetetic LLC. BSD 3-Clause licence:
+SQLCipher 4.20.0, from the Rust crates libsqlite3-sys 0.40.0 (`bundled-sqlcipher-vendored-openssl`) and sqlcipher-src 420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2. Compiled from source and linked statically into Hush. Copyright Zetetic LLC. BSD 3-Clause licence:
 
 ~~~~text
-Copyright (c) 2008-2020 Zetetic LLC
+Copyright (c) 2025, ZETETIC LLC
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -61,7 +61,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### SQLite
 
-SQLite 3.51.3, inside the SQLCipher amalgamation above. SQLite is in the public domain. Its source carries this notice in place of a licence:
+SQLite 3.54.1, inside the SQLCipher amalgamation above. SQLite is in the public domain. Its source carries this notice in place of a licence:
 
 ~~~~text
 The author disclaims copyright to this source code.  In place of
@@ -11388,7 +11388,7 @@ DBUS_END_DECLS
 
 ### MIT
 
-Used by: libsqlite3-sys 0.38.2, rusqlite 0.40.2
+Used by: libsqlite3-sys 0.40.0, rusqlite 0.42.0
 
 ~~~~text
 Copyright (c) 2014 The rusqlite developers

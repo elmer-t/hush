@@ -75,7 +75,8 @@ function match(path, re) {
   if (!m) throw new Error(`no version in ${path}`);
   return m[1];
 }
-const sqlcipherC = () => join(crateDir("libsqlite3-sys"), "sqlcipher/sqlite3.c");
+// libsqlite3-sys 0.40+ takes the SQLCipher amalgamation from the sqlcipher-src crate (#164).
+const sqlcipherC = () => join(crateDir("sqlcipher-src"), "sqlcipher/sqlcipher.c");
 const values = {
   sqlcipher: () => match(sqlcipherC(), /#define CIPHER_VERSION_NUMBER (\S+)/),
   sqlite: () => match(sqlcipherC(), /#define SQLITE_VERSION\s+"([^"]+)"/),
