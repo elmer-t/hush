@@ -21,7 +21,7 @@ Preconditions:
 - Baseline. The fixture folder `src-tauri\tests\fixtures\vault` is clean in git (`git status --short src-tauri/tests/fixtures` prints nothing).
 
 - **Open.** Run `node $h click "text=Import"` and `node $h wait "#import-source"`.
-- **Source and target.** Run `node $h type "#import-source" "E:\Projects\hush\src-tauri\tests\fixtures\vault"`. Then `node $h click "#import-target"`, `node $h press Control+A` and `node $h type "#import-target" "fixtures"`.
+- **Source and target.** Run `node $h type "#import-source" "$PWD\src-tauri\tests\fixtures\vault"` (PowerShell expands `$PWD` to the repo root, so the app gets an absolute path). Then `node $h click "#import-target"`, `node $h press Control+A` and `node $h type "#import-target" "fixtures"`.
 - **Preview.** Run `node $h click "text=Preview import"` and `node $h wait "text=Dry run" --timeout 30000`. `node $h text ".report .stats"` shows `Will be imported 25`, `Not supported yet 6`, `Folders 9` and `Warnings 10`. `node $h text "[role=tree]"` is unchanged.
 - **Import.** Run `node $h click "text=Import 25 notes"` and `node $h wait "text=Import finished" --timeout 60000`. `node $h text "[role=tree]"` now shows the `fixtures` folder.
 - **Merge.** Repeat **Source and target** and **Preview**. The stats show `Already in vault 25`.

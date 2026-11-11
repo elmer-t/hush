@@ -3,7 +3,7 @@
 //! except background work, which uses [`Session::with_vault_quiet`].
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -22,6 +22,8 @@ pub enum SessionError {
     Locked,
     #[error("auto-lock must be between 1 and {MAX_AUTO_LOCK_MINUTES} minutes")]
     InvalidAutoLock,
+    #[error("the vault is already being compacted")]
+    Compacting,
     #[error(transparent)]
     Db(#[from] db::Error),
 }
@@ -44,6 +46,10 @@ pub struct Session {
     running_search: Mutex<Option<rusqlite::InterruptHandle>>,
     /// Imports writing to the vault right now (see [`Session::begin_import`]).
     imports: AtomicUsize,
+    /// Set while [`Session::compact`] runs.
+    compacting: AtomicBool,
+    /// Interrupts the compaction running on the open vault, for [`Session::cancel_compaction`].
+    running_compaction: Mutex<Option<rusqlite::InterruptHandle>>,
     /// Foreground callers (the UI's commands) waiting for the vault right now. `Mutex`
     /// is not fair: a background job that releases the vault and takes it again a
     /// moment later can keep a waiting command out for as long as it keeps going, so
@@ -196,6 +202,11 @@ impl Session {
     }
 
     pub fn touch(&self) {
+        // Compacting holds the vault for minutes and counts as activity when it ends;
+        // don't queue up behind it.
+        if self.compacting() {
+            return;
+        }
         if let Some(u) = self.guard().as_mut() {
             u.activity = Activity::now();
         }
@@ -281,6 +292,61 @@ impl Session {
     /// Whether an import is running (see [`Session::begin_import`]).
     pub fn import_running(&self) -> bool {
         self.imports.load(Ordering::SeqCst) > 0
+    }
+
+    /// Why the background jobs should not start work now, if they shouldn't: an import
+    /// is running, or the vault is being compacted. They check between batches.
+    pub fn pause_reason(&self) -> Option<&'static str> {
+        if self.import_running() {
+            Some("import running")
+        } else if self.compacting() {
+            Some("compacting the vault")
+        } else {
+            None
+        }
+    }
+
+    /// Whether [`Session::compact`] is running.
+    pub fn compacting(&self) -> bool {
+        self.compacting.load(Ordering::SeqCst)
+    }
+
+    /// Runs compaction `f` on the vault. It holds the vault for as long as it takes
+    /// (minutes on a large vault), so meanwhile:
+    /// - the background jobs pause (see [`Session::pause_reason`]) and wait for it;
+    /// - auto-lock waits for it, and finds the vault in use when it ends: it counts as
+    ///   activity from start to end, so the vault never locks in the middle or the
+    ///   moment it finishes;
+    /// - [`Session::touch`] returns at once instead of waiting.
+    ///
+    /// Only one runs at a time; a second fails with [`SessionError::Compacting`].
+    pub fn compact<T>(&self, f: impl FnOnce(&mut Vault) -> db::Result<T>) -> Result<T, SessionError> {
+        if self.compacting.swap(true, Ordering::SeqCst) {
+            return Err(SessionError::Compacting);
+        }
+        struct Done<'a>(&'a AtomicBool);
+        impl Drop for Done<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _done = Done(&self.compacting);
+        let mut guard = self.guard();
+        let unlocked = guard.as_mut().ok_or(SessionError::Locked)?;
+        unlocked.activity = Activity::now();
+        *self.running_compaction.lock().unwrap_or_else(|e| e.into_inner()) = Some(unlocked.vault.interrupt_handle());
+        let result = f(&mut unlocked.vault);
+        *self.running_compaction.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        unlocked.activity = Activity::now();
+        Ok(result?)
+    }
+
+    /// Stops a running compaction; the vault stays as it was before it started. For
+    /// quitting the app, which shouldn't wait minutes for it. Auto-lock never does this.
+    pub fn cancel_compaction(&self) {
+        if let Some(handle) = self.running_compaction.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            handle.interrupt();
+        }
     }
 
     /// Whether a search is running on the vault right now.
@@ -393,6 +459,55 @@ mod tests {
         assert!(session.lock_if_idle_at(later(10)));
         assert!(session.path().is_none());
         assert!(matches!(session.with_vault(|_| Ok(())), Err(SessionError::Locked)));
+    }
+
+    /// Compacting pauses the background jobs, doesn't make `touch` wait, and holds off
+    /// auto-lock until it ends, counting as activity, so it doesn't lock right after.
+    #[test]
+    fn compacting_holds_off_auto_lock_and_pauses_background_work() {
+        let (_dir, session) = unlocked();
+        let session = std::sync::Arc::new(session);
+        // Idle for an hour already: auto-lock would fire at once.
+        session.guard().as_mut().unwrap().activity = Activity {
+            instant: Instant::now().checked_sub(Duration::from_secs(3600)).unwrap_or_else(Instant::now),
+            wall: SystemTime::now() - Duration::from_secs(3600),
+        };
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (finish, finish_rx) = std::sync::mpsc::channel::<()>();
+        let compacting = {
+            let session = session.clone();
+            std::thread::spawn(move || {
+                session.compact(|_| {
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    Ok(7)
+                })
+            })
+        };
+        started.recv().unwrap();
+        assert!(session.compacting());
+        assert_eq!(session.pause_reason(), Some("compacting the vault"));
+        session.touch();
+        assert!(matches!(session.compact(|_| Ok(())), Err(SessionError::Compacting)));
+        let auto_lock = {
+            let session = session.clone();
+            std::thread::spawn(move || session.lock_if_idle())
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!auto_lock.is_finished(), "auto-lock waits for the compaction");
+        finish.send(()).unwrap();
+        assert_eq!(compacting.join().unwrap().unwrap(), 7);
+        assert!(!auto_lock.join().unwrap(), "compacting counted as activity");
+        assert!(session.path().is_some());
+        assert!(!session.compacting());
+        assert_eq!(session.pause_reason(), None);
+    }
+
+    #[test]
+    fn compacting_a_locked_vault_fails() {
+        let session = Session::default();
+        assert!(matches!(session.compact(|_| Ok(())), Err(SessionError::Locked)));
+        assert!(!session.compacting());
     }
 
     #[test]

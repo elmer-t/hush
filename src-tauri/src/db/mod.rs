@@ -1,6 +1,7 @@
 //! The encrypted vault: one SQLCipher database file per vault. All database access goes
 //! through [`Vault`].
 
+mod compact;
 mod discover;
 mod embeddings;
 mod graph;
@@ -26,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
+pub use compact::{COMPACT_MIN_BYTES, COMPACT_MIN_PERCENT, Compacted, VaultSpace, available_space, byte_text};
 pub use discover::{DiscoverScope, ScopeCursor};
 pub use embeddings::{
     EMBEDDING_MODEL_READY_SETTING, EMBEDDING_MODEL_SETTING, EmbeddingScan, NoteText, QueueCounts, QueueCursor, QueuePage, QueuePhase, QueuedText,
@@ -98,6 +100,10 @@ pub enum Error {
     InvalidRating,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
+    #[error("not enough free disk space to compact the vault: it needs {} free on the vault's drive, and {} is free", compact::byte_text(*.needed), compact::byte_text(*.available))]
+    NotEnoughDiskSpace { needed: u64, available: u64 },
+    #[error("could not check the free disk space: {0}")]
+    DiskSpace(std::io::Error),
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
 }

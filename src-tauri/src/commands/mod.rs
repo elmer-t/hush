@@ -6,6 +6,7 @@
 //! window ("Not Responding"). Off the main thread only the call waits. New commands
 //! that take `State<Session>` must do the same.
 
+pub mod about;
 pub mod activity;
 pub mod discover;
 pub mod embeddings;
@@ -51,6 +52,9 @@ pub enum CommandError {
     /// Downloading, importing or removing a model's files.
     #[error("{0}")]
     ModelFiles(String),
+    /// Reading the bundled third-party notices.
+    #[error("could not read the third-party notices: {0}")]
+    Notices(String),
 }
 
 impl From<crate::import::ImportError> for CommandError {
@@ -75,6 +79,7 @@ impl CommandError {
         match self {
             Self::Session(SessionError::Locked) => "locked",
             Self::Session(SessionError::InvalidAutoLock) => "invalidAutoLock",
+            Self::Session(SessionError::Compacting) => "compacting",
             Self::Session(SessionError::Db(e)) => match e {
                 D::WrongPassphrase => "wrongPassphrase",
                 D::EmptyPassphrase => "emptyPassphrase",
@@ -96,6 +101,8 @@ impl CommandError {
                 D::InvalidThreshold => "invalidThreshold",
                 D::InvalidRecentOpenedCount => "invalidRecentOpenedCount",
                 D::InvalidRating => "invalidRating",
+                D::NotEnoughDiskSpace { .. } => "notEnoughDiskSpace",
+                D::DiskSpace(_) => "diskSpace",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",
@@ -105,6 +112,7 @@ impl CommandError {
             Self::UnknownModel(_) => "unknownModel",
             Self::ModelUnavailable(_) => "modelUnavailable",
             Self::ModelFiles(_) => "modelFiles",
+            Self::Notices(_) => "notices",
         }
     }
 }
@@ -126,6 +134,7 @@ pub type Result<T> = std::result::Result<T, CommandError>;
 mod tests {
     /// Every command module, as compiled.
     const SOURCES: &[(&str, &str)] = &[
+        ("about", include_str!("about.rs")),
         ("activity", include_str!("activity.rs")),
         ("discover", include_str!("discover.rs")),
         ("embeddings", include_str!("embeddings.rs")),

@@ -258,6 +258,24 @@ export type ImportFinished = { status: "done"; report: ImportReport } | { status
 export const IMPORT_PROGRESS_EVENT = "import-progress";
 export const IMPORT_FINISHED_EVENT = "import-finished";
 
+/** Mirrors `db::VaultSpace`: the vault file's size and what compacting would give back. */
+export type VaultSpace = {
+  /** The vault file plus its `-wal` file. */
+  fileBytes: number;
+  reclaimableBytes: number;
+  trashNotes: number;
+  /** Titles and bodies of the notes in the trash; the search index holds about as much again. */
+  trashTextBytes: number;
+  /** Free disk space compacting needs on the vault's drive. */
+  neededBytes: number;
+  /** Compacted before: emptying the trash gives space back by itself. */
+  incremental: boolean;
+  worthCompacting: boolean;
+};
+
+/** Mirrors `db::Compacted`. */
+export type Compacted = { beforeBytes: number; afterBytes: number; millis: number };
+
 /** The shape of every command error (see `CommandError` in commands/mod.rs). */
 export type ApiError = { kind: string; message: string };
 
@@ -276,6 +294,9 @@ export const api = {
   autoLockMinutes: () => invoke<number>("auto_lock_minutes"),
   setAutoLockMinutes: (minutes: number) => invoke<void>("set_auto_lock_minutes", { minutes }),
   changePassphrase: (current: string, next: string) => invoke<void>("change_passphrase", { current, new: next }),
+  vaultSpace: () => invoke<VaultSpace>("vault_space"),
+  /** Holds the vault until done: minutes on a large vault. */
+  compactVault: () => invoke<Compacted>("compact_vault"),
 
   folders: () => invoke<string[]>("folders"),
   /** Each folder's own byte total (not its subfolders'), apart from `folders` so a save
@@ -423,6 +444,8 @@ export const api = {
   modelStatus: () => invoke<ModelStatus>("model_status"),
   /** Everything Settings → Model shows; checks each model's files. */
   modelOverview: () => invoke<ModelOverview>("model_overview"),
+  /** THIRD_PARTY_NOTICES.md from the app's resources, as Markdown. */
+  thirdPartyNotices: () => invoke<string>("third_party_notices"),
   /** Switches the vault to an available model; every note is re-embedded with it. */
   setEmbeddingModel: (model: string) => invoke<void>("set_embedding_model", { model }),
   /** Checks the model files again and restarts indexing if it had stopped on them. */
