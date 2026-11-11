@@ -133,8 +133,10 @@
   const activityRow = $derived(fitHeight(windowHeight, activityHeight));
   const activityMax = $derived(Math.max(ACTIVITY.min, Math.min(ACTIVITY.max, windowHeight - ABOVE_ACTIVITY_MIN)));
 
+  // Set while Settings compacts the vault, which holds off auto-lock.
+  let compacting = $state(false);
   const locksIn = $derived(
-    autoLockMinutes === null
+    autoLockMinutes === null || compacting
       ? null
       : Math.max(1, Math.ceil((autoLockMinutes * 60_000 - (now - lastTouch)) / 60_000)),
   );
@@ -361,6 +363,18 @@
   }
 
   /** Settings, scrolled to the Model section (from a "why is this off" link). */
+  /** The backend counts a compaction as activity until it ends, so the countdown restarts then. */
+  function compactingChanged(running: boolean) {
+    compacting = running;
+    if (!running) lastTouch = now = Date.now();
+  }
+
+  async function openStorageSettings() {
+    if (view !== "settings") await toggleView("settings");
+    await tick();
+    document.getElementById("settings-storage")?.scrollIntoView({ block: "start" });
+  }
+
   async function openModelSettings() {
     if (view !== "settings") await toggleView("settings");
     await tick();
@@ -887,7 +901,7 @@
       <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh("all")} /></div>
     {/if}
     {#if view === "settings"}
-      <div class="page"><Settings onreviewtag={reviewTag} /></div>
+      <div class="page"><Settings onreviewtag={reviewTag} oncompacting={compactingChanged} /></div>
     {:else if view === "graph"}
       <GraphView
         centre={summary ? { id: summary.id, folder: summary.folder } : null}
@@ -895,7 +909,12 @@
         onedit={select}
       />
     {:else if view === "trash"}
-      <Trash onrestored={restored} onrestoredfolder={restoredFolder} oncount={(n) => (trashCount = n)} />
+      <Trash
+        onrestored={restored}
+        onrestoredfolder={restoredFolder}
+        oncount={(n) => (trashCount = n)}
+        oncompact={() => void openStorageSettings()}
+      />
     {:else if view === "note"}
       {#if opened}
         {#key `${opened.note.id}:${editorRevision}`}

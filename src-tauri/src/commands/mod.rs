@@ -75,6 +75,7 @@ impl CommandError {
         match self {
             Self::Session(SessionError::Locked) => "locked",
             Self::Session(SessionError::InvalidAutoLock) => "invalidAutoLock",
+            Self::Session(SessionError::Compacting) => "compacting",
             Self::Session(SessionError::Db(e)) => match e {
                 D::WrongPassphrase => "wrongPassphrase",
                 D::EmptyPassphrase => "emptyPassphrase",
@@ -95,6 +96,8 @@ impl CommandError {
                 D::InvalidThreshold => "invalidThreshold",
                 D::InvalidRecentOpenedCount => "invalidRecentOpenedCount",
                 D::InvalidRating => "invalidRating",
+                D::NotEnoughDiskSpace { .. } => "notEnoughDiskSpace",
+                D::DiskSpace(_) => "diskSpace",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",

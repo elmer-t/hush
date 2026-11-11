@@ -1005,7 +1005,7 @@
         {/if}
       {:else if indexStatus.state === "paused"}
         <button class="ghost index" onclick={onactivity} title="Show activity (Ctrl J)">
-          Indexing paused while importing.
+          Indexing paused while importing or compacting.
         </button>
       {:else if modelReason}
         <button class="ghost index wrap" onclick={() => model.open?.()} title="Off: {MODEL_FEATURES}. Open Settings → Model">

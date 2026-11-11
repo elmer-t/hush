@@ -6,8 +6,9 @@
 //! also embeds the tag descriptions that zero-shot suggestions compare notes with, and
 //! after each pass it brings the related-notes index ([`super::related`]) up to date.
 //!
-//! While an import runs ([`Session::begin_import`]) it starts no work and stops a pass
-//! between batches; the queue keeps filling, and it carries on once the import ends.
+//! While an import runs ([`Session::begin_import`]) or the vault is compacted
+//! ([`Session::compact`]) it starts no work and stops a pass between batches; the queue
+//! keeps filling, and it carries on once that ends.
 //!
 //! It works from the vault's embedding queue (`embedding_dirty`), which triggers fill
 //! in the same transaction as every write that can change a note's embedded text, so
@@ -197,12 +198,12 @@ pub fn run_with(
         related_changed();
     }
     loop {
-        if session.import_running() {
+        if let Some(reason) = session.pause_reason() {
             paused = true;
             report(IndexStatus::Paused);
-            activity.pause(Job::Embedding, "import running");
+            activity.pause(Job::Embedding, reason);
             if scan.is_some() {
-                activity.wait(Job::SafetyNet, "import running");
+                activity.wait(Job::SafetyNet, reason);
             }
             if !sleep_while_open(session, generation, poll) {
                 return;
@@ -423,7 +424,7 @@ pub fn pass(
             if !session.is_open(generation) {
                 return Err(JobError::Locked);
             }
-            if session.import_running() {
+            if session.pause_reason().is_some() {
                 paused = true;
                 break 'pages;
             }
@@ -447,7 +448,7 @@ pub fn pass(
                 QueuePhase::Rest => &page.stale[start..],
             };
             let texts: Vec<&str> = candidates.iter().map(|q| q.note.text.as_str()).collect();
-            let stop = || !session.is_open(generation) || session.import_running();
+            let stop = || !session.is_open(generation) || session.pause_reason().is_some();
             // One call: the model may run several notes' chunks together.
             let embedded = match phase {
                 QueuePhase::First => embedder.embed_first_batch(&texts, &stop),
@@ -507,8 +508,9 @@ pub fn pass(
     }
     if paused {
         report(IndexStatus::Paused);
-        activity.pause(Job::Embedding, "import running");
-        activity.log(Job::Embedding, format!("paused for an import after embedding {} notes", count(stale as u64)));
+        let reason = session.pause_reason().unwrap_or("import running");
+        activity.pause(Job::Embedding, reason);
+        activity.log(Job::Embedding, format!("paused ({reason}) after embedding {} notes", count(stale as u64)));
         // The notes embedded so far still go into the related-notes index.
         let related_changed = related::update(session, generation, &changed)?;
         return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });

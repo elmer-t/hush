@@ -464,6 +464,8 @@ impl Vault {
         super::trash::forget_empty_groups(&tx)?;
         super::recent::forget_last_opened(&tx, id)?;
         tx.commit()?;
+        // The delete is done; space not given back now is given back next time.
+        let _ = self.give_back_free_pages();
         Ok(())
     }
 

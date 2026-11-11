@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { api, errorMessage, GPU_STATUS_EVENT, type GpuStatus } from "$lib/api";
+  import { api, errorMessage, GPU_STATUS_EVENT, type Compacted, type GpuStatus, type VaultSpace } from "$lib/api";
+  import { compactNote, elapsedText } from "$lib/compact";
+  import { formatSize } from "$lib/size";
   import { gpuText } from "$lib/gpu";
   import ModelSettings from "$lib/ModelSettings.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
@@ -9,8 +11,10 @@
   type Props = {
     /** Opens the Suggestions view for a tag. */
     onreviewtag: (tag: string) => void;
+    /** Called when compacting starts (true) and ends (false). */
+    oncompacting?: (running: boolean) => void;
   };
-  let { onreviewtag }: Props = $props();
+  let { onreviewtag, oncompacting }: Props = $props();
 
   let minutes = $state(10);
   let minutesStatus = $state("");
@@ -39,6 +43,14 @@
   let recentStatus = $state("");
   let recentError = $state("");
 
+  let space = $state<VaultSpace | null>(null);
+  let compacting = $state(false);
+  let compactStarted = $state(0);
+  let compactNow = $state(0);
+  let compacted = $state<Compacted | null>(null);
+  let compactError = $state("");
+  let compactDialog = $state<HTMLDialogElement>();
+
   let author = $state("");
   let authorStatus = $state("");
   let authorError = $state("");
@@ -50,6 +62,7 @@
     { id: "model-settings", label: "Model" },
     { id: "settings-indexing", label: "Indexing" },
     { id: "settings-trash", label: "Trash" },
+    { id: "settings-storage", label: "Storage" },
   ];
   let root = $state<HTMLElement>();
   let active = $state(SECTIONS[0].id);
@@ -137,6 +150,7 @@
   });
 
   onMount(async () => {
+    void loadSpace();
     api.indexAllCores().then((on) => (allCores = on), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
@@ -188,6 +202,40 @@
       trashStatus = "Saved.";
     } catch (err) {
       trashError = errorMessage(err);
+    }
+  }
+
+  async function loadSpace() {
+    try {
+      space = await api.vaultSpace();
+    } catch (err) {
+      compactError = errorMessage(err);
+    }
+  }
+
+  /**
+   * Compacts the vault. The backend holds the vault until it is done, so a modal
+   * dialog covers the app meanwhile: nothing else could reach the vault anyway.
+   */
+  async function compact() {
+    compacted = null;
+    compactError = "";
+    compacting = true;
+    compactStarted = compactNow = Date.now();
+    const ticker = setInterval(() => (compactNow = Date.now()), 1000);
+    oncompacting?.(true);
+    await tick();
+    compactDialog?.showModal();
+    try {
+      compacted = await api.compactVault();
+    } catch (err) {
+      compactError = errorMessage(err);
+    } finally {
+      clearInterval(ticker);
+      compactDialog?.close();
+      compacting = false;
+      oncompacting?.(false);
+      await loadSpace();
     }
   }
 
@@ -394,9 +442,82 @@
         </div>
       </form>
     </section>
+
+    <section id="settings-storage" aria-labelledby="settings-storage-h">
+      <h2 id="settings-storage-h" tabindex="-1"><span class="num" aria-hidden="true">07</span>Storage</h2>
+      <div class="card compact">
+        <h3>Compact vault</h3>
+        <p class="muted">
+          Deleting notes frees space inside the vault file, and new notes reuse it, but the file doesn't get smaller.
+          Compacting rewrites the file without the free space.
+        </p>
+        {#if space}
+          <dl class="sizes">
+            <div>
+              <dt>Vault file</dt>
+              <dd>{formatSize(space.fileBytes)}</dd>
+            </div>
+            <div>
+              <dt>Free space inside</dt>
+              <dd>{formatSize(space.reclaimableBytes)}</dd>
+            </div>
+            <div>
+              <dt>In the trash</dt>
+              <dd>
+                {space.trashNotes.toLocaleString()}
+                {space.trashNotes === 1 ? "note" : "notes"}{#if space.trashNotes > 0}, about {formatSize(
+                    space.trashTextBytes,
+                  )} of text{/if}
+              </dd>
+            </div>
+          </dl>
+          <p role="status">{compactNote(space)}</p>
+          {#if space.trashNotes > 0}
+            <p class="muted">
+              Notes in the trash still take their space. Empty the trash first to give that back too.
+            </p>
+          {/if}
+          {#if space.worthCompacting}
+            <p class="muted">
+              Needs about {formatSize(space.neededBytes)} of free disk space on the vault's drive. It can take several
+              minutes on a large vault, and Hush can't be used meanwhile. If it is stopped, the vault stays as it was.
+            </p>
+          {/if}
+        {/if}
+        {#if compacted}
+          <p role="status">
+            Compacted: {formatSize(compacted.beforeBytes)} → {formatSize(compacted.afterBytes)} in {elapsedText(
+              compacted.millis,
+            )}.
+          </p>
+        {/if}
+        {#if compactError}<p class="error" role="alert">{compactError}</p>{/if}
+        <div class="actions">
+          <button class="primary" onclick={compact} disabled={compacting || !space?.worthCompacting}>
+            {compacting ? "Compacting…" : "Compact now"}
+          </button>
+        </div>
+      </div>
+    </section>
   </div>
 </div>
 </div>
+
+<!-- Modal, so nothing else is clicked while the vault is held; Escape doesn't close it. -->
+<dialog
+  class="compacting"
+  bind:this={compactDialog}
+  aria-labelledby="compacting-title"
+  aria-busy="true"
+  oncancel={(e) => e.preventDefault()}
+>
+  <h2 id="compacting-title">Compacting the vault…</h2>
+  <p class="elapsed" role="timer" aria-live="off">{elapsedText(compactNow - compactStarted)}</p>
+  <p class="muted">
+    This can take several minutes on a large vault. The vault won't lock in the meantime. If Hush is closed, the
+    vault stays as it was.
+  </p>
+</dialog>
 
 <style>
   /* The menu stacks above the sections when the page is narrow (sidebars open). */
@@ -545,7 +666,74 @@
     gap: 12px;
   }
 
+  .sizes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+  }
+
+  .sizes div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .sizes dt {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .sizes dd {
+    margin: 0;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  dialog.compacting {
+    width: calc(100% - 32px);
+    max-width: 420px;
+    padding: 24px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--raised);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    text-align: center;
+  }
+
+  /* Focused only because nothing in it can be; no ring around the whole box. */
+  dialog.compacting:focus {
+    outline: none;
+  }
+
+  dialog.compacting::backdrop {
+    background: var(--scrim);
+  }
+
+  dialog.compacting h2 {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  dialog.compacting .elapsed {
+    margin: 12px 0;
+    font-family: var(--mono);
+    font-size: 28px;
+    font-variant-numeric: tabular-nums;
+  }
+
   @container (max-width: 640px) {
+    .sizes {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
     .settings {
       grid-template-columns: minmax(0, 1fr);
       gap: 20px;
