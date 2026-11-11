@@ -746,6 +746,45 @@
         <span class="kbd key">Ctrl K</span>
       {/if}
     </label>
+    {#if searching}
+      <div class="switches">
+        <div
+          class="segmented mode-switch"
+          role="group"
+          aria-label="Search mode"
+          title={meaningReason ?? "Alt+M switches while typing"}
+        >
+          <button aria-pressed={searchMode === "words"} onclick={() => setMode("words")}>Words</button>
+          <button
+            aria-pressed={searchMode === "meaning"}
+            disabled={meaningReason !== null}
+            title={meaningReason ?? "Find notes by what they are about, as well as by their words"}
+            onclick={() => setMode("meaning")}
+          >
+            Meaning
+          </button>
+        </div>
+        {#if selectedFolder !== null}
+          <div class="segmented scope-switch" role="group" aria-label="Search scope" title="Alt+F switches while typing">
+            <button aria-pressed={scope === "folder"} title="Search {selectedFolder}" onclick={() => setScope("folder")}>
+              This folder
+            </button>
+            <button aria-pressed={scope === "vault"} onclick={() => setScope("vault")}>Whole vault</button>
+          </div>
+        {/if}
+      </div>
+      <div class="summary" role="status" aria-label={searchSummary(hits.length, hasMore, text, newestFirst, queryFolder, meaningResult)}>
+        <p>
+          {resultCount(hits.length, hasMore)} in
+          <span class="scope" title={queryFolder ?? undefined}>{scopeLabel(queryFolder)}</span>{resultOrder(text, newestFirst, meaningResult)}
+          {#if loadingModel}<span class="note">· Loading model…</span>{/if}
+          {#if searchMode === "meaning" && meaningResult.wordsOnly && text.trim()}
+            <span class="note">· by words: {meaningResult.wordsOnly}</span>
+          {/if}
+          {#if coverage}<span class="note coverage">· {coverage}</span>{/if}
+        </p>
+      </div>
+    {/if}
     <div class="bar">
       <div class="segmented" role="group" aria-label="Note list view">
         <button aria-pressed={view === "tree"} onclick={() => setView("tree")}>Tree</button>
@@ -774,43 +813,6 @@
     {/if}
   </div>
   {#if error}<p class="error">{error}</p>{/if}
-  {#if searching}
-    <div class="summary" role="status" aria-label={searchSummary(hits.length, hasMore, text, newestFirst, queryFolder, meaningResult)}>
-      <p>
-        {resultCount(hits.length, hasMore)} in
-        <span class="scope" title={queryFolder ?? undefined}>{scopeLabel(queryFolder)}</span>{resultOrder(text, newestFirst, meaningResult)}
-        {#if loadingModel}<span class="note">· Loading model…</span>{/if}
-        {#if searchMode === "meaning" && meaningResult.wordsOnly && text.trim()}
-          <span class="note">· by words: {meaningResult.wordsOnly}</span>
-        {/if}
-        {#if coverage}<span class="note coverage">· {coverage}</span>{/if}
-      </p>
-      <div
-        class="segmented mode-switch"
-        role="group"
-        aria-label="Search mode"
-        title={meaningReason ?? "Alt+M switches while typing"}
-      >
-        <button aria-pressed={searchMode === "words"} onclick={() => setMode("words")}>Words</button>
-        <button
-          aria-pressed={searchMode === "meaning"}
-          disabled={meaningReason !== null}
-          title={meaningReason ?? "Find notes by what they are about, as well as by their words"}
-          onclick={() => setMode("meaning")}
-        >
-          Meaning
-        </button>
-      </div>
-      {#if selectedFolder !== null}
-        <div class="segmented scope-switch" role="group" aria-label="Search scope" title="Alt+F switches while typing">
-          <button aria-pressed={scope === "folder"} title="Search {selectedFolder}" onclick={() => setScope("folder")}>
-            This folder
-          </button>
-          <button aria-pressed={scope === "vault"} onclick={() => setScope("vault")}>Whole vault</button>
-        </div>
-      {/if}
-    </div>
-  {/if}
   {#if !searching && recentOpened.length > 0}
     <RecentlyOpened
       notes={recentOpened}
@@ -1126,19 +1128,23 @@
     padding: 0 12px 8px;
   }
 
-  .summary {
+  /* Words/Meaning, then This folder/Whole vault. Each toggle stays whole; when both don't
+     fit, the second wraps to its own line, left-aligned under the first (#157). */
+  .switches {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 8px;
-    padding: 4px 16px 6px;
+    gap: 6px 8px;
+  }
+
+  /* The results line, on a line of its own under the toggles. */
+  .summary {
+    margin-top: -4px;
     font-size: 12px;
     color: var(--muted);
   }
 
   .summary p {
-    flex: 1 1 auto;
-    min-width: 0;
     margin: 0;
     overflow-wrap: anywhere;
   }
