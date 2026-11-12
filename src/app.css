@@ -50,11 +50,52 @@
   line-height: 1.45;
   color: var(--text);
   background: var(--bg);
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+/* Dark tokens (#173). `theme.ts` sets data-theme on <html> to the resolved scheme before the
+   app renders. The media query covers the paint before that script runs (the stylesheet loads
+   first), so a dark OS on System never flashes light. The two token lists must stay equal;
+   theme.test.ts checks it. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111312;
+  --panel: #161918;
+  --surface: #1b1e1d;
+  --raised: #242827;
+  --code: #171a19;
+  --seg: #0e100f;
+  --seg-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --hover: rgba(231, 233, 229, 0.06);
+  --border: #2b302e;
+  --border-strong: #3d4340;
+  --text: #e7e9e5;
+  --text-2: #b1b5af;
+  --muted: #959a93;
+  --accent: #e3a0ac;
+  --accent-text: #2a0b12;
+  --accent-soft: #3a2127;
+  --accent-soft-text: #f2c9d0;
+  --selection: #35212a;
+  --selection-text: #f2c9d0;
+  --warn: #e8a94f;
+  --warn-soft: #372a14;
+  --ok: #7cc68a;
+  --danger: #ff6b6b;
+  --danger-soft: #3d1a1a;
+  --danger-text: #2a0606;
+  --mark: #5b4b12;
+  --mark-text: #fcefc4;
+  --mark-current: #d9a53a;
+  --mark-current-text: #1a1b19;
+  --inverse-button: #c9ccc6;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #111312;
     --panel: #161918;
     --surface: #1b1e1d;

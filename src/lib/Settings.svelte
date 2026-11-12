@@ -10,6 +10,7 @@
   import ModelSettings from "$lib/ModelSettings.svelte";
   import PassphraseStrength from "$lib/PassphraseStrength.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
+  import { setThemePreference, themePreference, type ThemePreference } from "$lib/theme";
 
   type Props = {
     /** Opens the Suggestions view for a tag. */
@@ -18,6 +19,18 @@
     oncompacting?: (running: boolean) => void;
   };
   let { onreviewtag, oncompacting }: Props = $props();
+
+  let theme = $state<ThemePreference>(themePreference());
+  const THEMES: { value: ThemePreference; label: string }[] = [
+    { value: "system", label: "System" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ];
+
+  function chooseTheme(value: ThemePreference) {
+    theme = value;
+    setThemePreference(value);
+  }
 
   let minutes = $state(10);
   let minutesStatus = $state("");
@@ -361,6 +374,16 @@
   <div class="sections">
     <section id="settings-general" aria-labelledby="settings-general-h">
       <h2 id="settings-general-h" tabindex="-1"><span class="num" aria-hidden="true">01</span>General</h2>
+      <div class="card">
+        <h3 id="theme-h">Theme</h3>
+        <div class="segmented" role="group" aria-labelledby="theme-h">
+          {#each THEMES as t (t.value)}
+            <button type="button" aria-pressed={theme === t.value} onclick={() => chooseTheme(t.value)}>{t.label}</button>
+          {/each}
+        </div>
+        <p class="muted">System follows the operating system's setting. Stored on this device, not in the vault.</p>
+      </div>
+
       <form class="card" onsubmit={saveAuthor}>
         <h3>Default author</h3>
         <label>
@@ -739,6 +762,10 @@
     flex-direction: column;
     gap: 12px;
     padding: 20px;
+  }
+
+  .card > .segmented {
+    align-self: flex-start;
   }
 
   h3 {

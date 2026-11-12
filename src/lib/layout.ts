@@ -98,6 +98,8 @@ export const KEYS = {
   activitySplit: "hush.layout.activitySplit",
   view: "hush.layout.view",
   graph: "hush.graph.display",
+  /** System, Light or Dark (#173); see `theme.ts`. */
+  theme: "hush.theme",
 } as const;
 
 export const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";

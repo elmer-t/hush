@@ -3,6 +3,7 @@ import { Facet, StateEffect, StateField, type EditorState, type Extension, type 
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
 import { frontmatterRange } from "$lib/liveDecorations";
 import { diagram, readTheme } from "$lib/mermaid";
+import { onSchemeChange } from "$lib/theme";
 
 /**
  * Mermaid diagrams in the Live editor (#136). A ```mermaid fence is shown as its rendered
@@ -196,12 +197,12 @@ export const mermaidField = StateField.define<MermaidState>({
   provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
 });
 
-/** Tells the field when the colour scheme changes, as the preview re-renders then too. */
+/** Tells the field when the colour scheme changes (the OS's or the user's), as the preview re-renders then too. */
 const schemeWatcher = ViewPlugin.fromClass(
   class {
-    scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    stop: () => void;
     constructor(readonly view: EditorView) {
-      this.scheme.addEventListener("change", this.onChange);
+      this.stop = onSchemeChange(this.onChange);
     }
     onChange = () => {
       const theme = this.view.state.facet(themeReader)();
@@ -210,7 +211,7 @@ const schemeWatcher = ViewPlugin.fromClass(
       }
     };
     destroy() {
-      this.scheme.removeEventListener("change", this.onChange);
+      this.stop();
     }
   },
 );

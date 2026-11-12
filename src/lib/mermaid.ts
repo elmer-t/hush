@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import type { Mermaid, MermaidConfig } from "mermaid";
+import { currentScheme, onSchemeChange } from "$lib/theme";
 
 /**
  * Mermaid diagrams in the preview. `markdown.ts` turns a ```mermaid fence into a
@@ -66,7 +67,7 @@ export function readTheme(): Theme {
   const style = getComputedStyle(document.documentElement);
   const font = token(style, "--sans");
   const variables: Record<string, string | boolean> = {
-    darkMode: window.matchMedia("(prefers-color-scheme: dark)").matches,
+    darkMode: currentScheme() === "dark",
     background: token(style, "--surface"),
     fontFamily: font,
     fontSize: "14px",
@@ -273,7 +274,6 @@ export function diagrams(root: HTMLElement) {
     fillFromCache();
   }
 
-  const scheme = window.matchMedia("(prefers-color-scheme: dark)");
   function onScheme() {
     const next = readTheme();
     if (next.key === theme?.key) return;
@@ -281,7 +281,7 @@ export function diagrams(root: HTMLElement) {
     // Old diagrams stay up until their new rendering is ready.
     refresh(root.querySelectorAll<HTMLElement>(".mermaid-block"));
   }
-  scheme.addEventListener("change", onScheme);
+  const stopWatching = onSchemeChange(onScheme);
 
   return {
     /** Call before the HTML is replaced, so a diagram being edited keeps showing its last rendering. */
@@ -311,7 +311,7 @@ export function diagrams(root: HTMLElement) {
       refresh(blocks);
     },
     destroy() {
-      scheme.removeEventListener("change", onScheme);
+      stopWatching();
       observer?.disconnect();
       for (const timer of timers) clearTimeout(timer);
     },
