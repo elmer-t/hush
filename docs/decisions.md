@@ -326,6 +326,15 @@ Findings: every save costs two full rescans of the vault (#46); related notes ar
 - **Theme:** mermaid's `base` theme with `themeVariables` read from the CSS tokens at render time, plus the app's sans font. A `prefers-color-scheme` change re-renders the diagrams; the old ones stay up until the new ones are ready.
 - **Measured** (headless Chromium, Vite dev server, so unbundled and slower than the app): a note with 50 distinct diagrams shows its text in 14–23 ms and its first diagram in 0.63–0.67 s cold (mermaid's load included), 60 ms when mermaid is already loaded; scrolling through it renders the rest with the longest frame at 36–40 ms. Check: `node scripts/check-mermaid.cjs` with `npm run dev` running.
 
+## Theme
+**Theme setting** (2026-11-12, #173): Settings → General → *Theme*: System (default), Light or Dark, applied at once.
+
+- **Stored per device in `localStorage`** (`hush.theme`, JSON `"system" | "light" | "dark"`), not in the vault: the Unlock screen needs it before any vault is open, and it holds no note data. A missing or invalid value, or unavailable storage, is System.
+- **Applied** by `src/lib/theme.ts`, called from `src/routes/+layout.ts` before the first render (not an inline script in `app.html`, which the CSP blocks). It sets `data-theme` on `<html>` to the **resolved** scheme (`light`/`dark`; System resolves through `prefers-color-scheme`), so CSS and `getComputedStyle` always agree with what JS thinks. `app.css` has the dark tokens twice, for `:root[data-theme="dark"]` and for `:root:not([data-theme="light"])` inside `@media (prefers-color-scheme: dark)`: the built page links the stylesheet in `<head>`, so it can paint before the app's JS runs, and the media copy keeps a dark OS on System from flashing light then. A unit test keeps the two copies equal. `color-scheme` follows, so native controls and scrollbars match.
+- **One source of truth:** `theme.ts` tells listeners when the resolved scheme changes (manual switch, or OS switch while on System). Mermaid in Preview and Live re-renders on it and reads `darkMode` from it; the graph view re-reads its token colours (edges, tag nodes, labels) without a reload or a new layout.
+- **Native window:** `getCurrentWindow().setTheme("light" | "dark" | null)` (`null` follows the OS), so the Windows title bar and native dialogs follow; needs `core:window:allow-set-theme`, which `core:default` doesn't include. The window theme isn't remembered by Tauri, so a choice that differs from the OS shows the OS's title bar until the app's JS runs at start.
+- Check: `node scripts/check-theme.cjs` with `npm run dev` running.
+
 ## Extensibility
 - **No plugins or third-party code** (2026-10-24). Features that would otherwise be plugins (templates, daily notes, custom CSS, …) are built into Hush and requested as separate issues.
 - Why: a plugin runs after unlock and sees every decrypted note, and loading one would need the strict CSP relaxed.

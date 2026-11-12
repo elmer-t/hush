@@ -9,6 +9,7 @@
   import { Layout } from "$lib/graph/layout";
   import { graphSettings as s } from "$lib/graph/settings.svelte";
   import Icon from "$lib/Icon.svelte";
+  import { onSchemeChange } from "$lib/theme";
 
   type Props = {
     /** The open note, the local graph's centre. */
@@ -118,6 +119,26 @@
     return colorOf((attr.tags as string[])[0]);
   }
 
+  /** Edge colours by kind, from the current CSS tokens. */
+  function edgeColors(): Record<"link" | "meaning" | "tag", string> {
+    return {
+      link: rgba(css("--muted", "#64675f"), 0.45),
+      meaning: rgba(css("--accent", "#7a2b3a"), 0.55),
+      tag: rgba(css("--accent", "#7a2b3a"), 0.25),
+    };
+  }
+
+  /** Takes the colours from the tokens again after a light/dark switch, keeping the layout. */
+  function recolor() {
+    if (!graph || !sigma) return;
+    const g = graph;
+    const edges = edgeColors();
+    g.forEachEdge((edge, attr) => g.setEdgeAttribute(edge, "color", edges[attr.kind as keyof typeof edges]));
+    g.forEachNode((key, attr) => g.setNodeAttribute(key, "color", nodeColor(attr)));
+    sigma.setSetting("labelColor", { color: css("--text", "#1a1b19") });
+    sigma.refresh({ skipIndexation: true });
+  }
+
   /** Builds the graph and its renderer for `result`, keeping known nodes where they were. */
   function show(result: GraphData | null) {
     layout?.kill();
@@ -148,9 +169,7 @@
         size: 2,
       });
     }
-    const linkColor = rgba(css("--muted", "#64675f"), 0.45);
-    const meaningColor = rgba(css("--accent", "#7a2b3a"), 0.55);
-    const tagColor = rgba(css("--accent", "#7a2b3a"), 0.25);
+    const { link: linkColor, meaning: meaningColor, tag: tagColor } = edgeColors();
     for (const e of result.edges) {
       if (!g.hasNode(e.source) || !g.hasNode(e.target)) continue;
       if (e.kind === "link") {
@@ -396,7 +415,9 @@
 
   onMount(() => {
     folderInput = folder;
+    const stopWatching = onSchemeChange(recolor);
     return () => {
+      stopWatching();
       layout?.kill();
       sigma?.kill();
     };

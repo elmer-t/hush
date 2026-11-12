@@ -54,4 +54,8 @@ describe("default capability", () => {
     expect(allowed("javascript:alert(1)")).toBe(false);
     expect(allowed("ms-settings:")).toBe(false);
   });
+
+  it("lets the window follow the theme setting (#173)", () => {
+    expect(ids).toContain("core:window:allow-set-theme");
+  });
 });
