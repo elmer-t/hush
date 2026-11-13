@@ -20,6 +20,7 @@
     SearchQuery,
     setSearchQuery,
   } from "@codemirror/search";
+  import { codeHighlighting, codeLanguage } from "$lib/codeHighlight";
   import type { FindSpec } from "$lib/find";
   import type { EditorMode } from "$lib/layout";
   import LinkBar from "$lib/LinkBar.svelte";
@@ -92,7 +93,14 @@
   const modeExtensions = (m: EditorMode): Extension =>
     m === "live"
       ? [livePreview(), links]
-      : [highlightActiveLine(), markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), sourceTheme];
+      : [
+          highlightActiveLine(),
+          markdown({ base: markdownLanguage, codeLanguages: codeLanguage }),
+          syntaxHighlighting(highlight),
+          codeHighlighting(),
+          EditorView.editorAttributes.of({ class: "cm-source" }),
+          sourceTheme,
+        ];
 
   // The find bar replaces CodeMirror's panel: Ctrl+F and Esc are handled by the note.
   const findKeys = searchKeymap.filter((b) => b.key !== "Mod-f" && b.key !== "Escape");

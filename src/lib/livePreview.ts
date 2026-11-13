@@ -10,6 +10,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { buildLive, frontmatterView, inlineHandlers, type LiveSpec } from "$lib/liveDecorations";
+import { codeHighlighting, codeLanguage } from "$lib/codeHighlight";
 import { blockHandlers } from "$lib/liveBlocks";
 import { liveBlocks, liveWidget } from "$lib/liveBlocksView";
 import { liveMermaid } from "$lib/liveMermaid";
@@ -21,9 +22,9 @@ import { wikilinkMarkdown } from "$lib/wikilink";
  * turns it into CodeMirror decorations for the visible ranges and themes them like the preview.
  */
 
-/** Markdown with GFM and `[[wikilinks]]`, as the preview reads it. */
+/** Markdown with GFM and `[[wikilinks]]`, as the preview reads it; code in fences in its own language (#180). */
 export function liveLanguage(): Extension {
-  return markdown({ base: markdownLanguage, extensions: [wikilinkMarkdown] });
+  return markdown({ base: markdownLanguage, extensions: [wikilinkMarkdown], codeLanguages: codeLanguage });
 }
 
 const HIDE = Decoration.replace({});
@@ -191,5 +192,5 @@ const theme = EditorView.theme({
 
 /** Everything the Live editor adds on top of the shared editor setup. */
 export function livePreview(): Extension {
-  return [liveLanguage(), inline, frontmatter, theme, liveMermaid(), liveBlocks()];
+  return [liveLanguage(), codeHighlighting(), inline, frontmatter, theme, liveMermaid(), liveBlocks()];
 }

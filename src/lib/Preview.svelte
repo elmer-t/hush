@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { onGrammar } from "$lib/codeHighlight";
   import { findPattern, step, type FindSpec } from "$lib/find";
   import { renderMarkdown } from "$lib/markdown";
   import { diagrams } from "$lib/mermaid";
@@ -22,7 +23,14 @@
   };
   let { body, large = false, onwikilink, find = null, findLead = false, onfindresult }: Props = $props();
 
-  const html = $derived(renderMarkdown(body));
+  // A code block is plain until its language's grammar has loaded; the note is then rendered again.
+  let grammars = $state(0);
+  $effect(() => onGrammar(() => grammars++));
+
+  const html = $derived.by(() => {
+    void grammars;
+    return renderMarkdown(body);
+  });
 
   let article: HTMLElement;
   let mermaid: ReturnType<typeof diagrams> | undefined;
