@@ -1,6 +1,6 @@
 # Write a note
 
-A user creates a note, names it, writes Markdown in the editor and sees a rendered preview. Edits autosave to the encrypted vault, `#tags` in the body show up in the details panel, and the note is still there after locking and unlocking.
+A user creates a note, names it and writes Markdown in the editor, as source or formatted (Live; `Ctrl E` switches). Edits autosave to the encrypted vault, `#tags` in the body show up in the details panel, and the note is still there after locking and unlocking.
 
 ## Sub-features
 
@@ -25,7 +25,7 @@ Preconditions:
 
 - **Create.** Run `node $h press Control+N` and `node $h wait "input[aria-label=Title]"`. `node $h eval "[document.activeElement.getAttribute('aria-label'), document.activeElement.value]"` prints `["Title","Untitled"]`.
 - **Title.** Run `node $h type "input[aria-label=Title]" "Verify note"` (replaces the selected `Untitled`) and `node $h press Enter`. `node $h text "[role=tree]"` contains `Verify note`.
-- **Body.** Run `node $h type ".cm-content" "Hello from verify-hush #proof"` and `node $h wait "text=Saved" --timeout 8000`. `node $h text ".rendered"` shows the rendered text.
+- **Body.** Run `node $h type ".cm-content" "Hello from verify-hush #proof"` and `node $h wait "text=Saved" --timeout 8000`. `node $h text ".cm-content"` shows the text (Source shows the Markdown as typed, one pane; there is no `.rendered` pane since #192).
 - **Tags.** `node $h text "aside[aria-label=Details]"` contains `#proof`.
 - **Rename existing.** Run `node $h click "input[aria-label=Title]"`, `node $h press Control+A`, `node $h type "input[aria-label=Title]" "Renamed"` and `node $h press Enter`. The tree row `[role=treeitem][title=Renamed]` exists.
 - **Persist.** Run `node $h press Control+L`, unlock through the UI, `node $h click "[role=treeitem][title=Renamed]"` and `node $h text ".cm-content"`. It prints `Hello from verify-hush #proof`.

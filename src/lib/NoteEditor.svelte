@@ -9,7 +9,6 @@
   import type { EditorMode } from "$lib/layout";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
-  import Preview from "$lib/Preview.svelte";
 
   type Props = {
     opened: OpenedNote;
@@ -19,7 +18,7 @@
     onsaved: (summary: NoteSummary, meta: NoteMeta) => void;
     onrenamed: (opened: OpenedNote) => void;
     ondeleted: (id: number) => void;
-    /** A `[[wikilink]]` in the preview or the Live view was clicked. */
+    /** A `[[wikilink]]` in the Live view was clicked. */
     onwikilink: (target: string, x: number, y: number) => void;
   };
   let {
@@ -38,7 +37,7 @@
   const initial = untrack(() => opened.note);
   const id = initial.id;
 
-  let body = $state(initial.body);
+  let body = initial.body;
   let savedBody = initial.body;
   let title = $state(initial.title);
   let folder = $state(initial.folder);
@@ -53,17 +52,15 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let saving: Promise<void> = Promise.resolve();
 
-  // Find in note. The bar drives the editor's search in both modes; in Source the preview
-  // beside it highlights the same query too.
+  // Find in note. The bar drives the editor's search in both modes.
   let findOpen = $state(false);
   let replacing = $state(false);
   let find = $state<FindSpec>({ query: "", caseSensitive: false, wholeWord: false, regexp: false, replace: "" });
   let findResult = $state({ current: -1, total: 0 });
   let findBar = $state<ReturnType<typeof FindBar>>();
-  let preview = $state<ReturnType<typeof Preview>>();
   let returnFocus: HTMLElement | null = null;
 
-  /** The query while there is one to show; a fresh object, so the panes see every change. */
+  /** The query while there is one to show; a fresh object, so the editor sees every change. */
   const activeFind = $derived(findOpen && find.query ? { ...find } : null);
   const findCount = $derived.by(() => {
     if (!activeFind) return "";
@@ -79,7 +76,7 @@
 
   /** Opens the find bar, prefilled with the selected text; `replace` opens the replace row too. */
   export async function openFind(replace = false) {
-    const selected = editor?.selectedText() || preview?.selectedText() || "";
+    const selected = editor?.selectedText() || "";
     if (!findOpen) returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (selected && !selected.includes("\n")) find.query = selected;
     findOpen = true;
@@ -106,7 +103,7 @@
     findResult = { current, total };
   }
 
-  // F3 anywhere in the note, and Esc in its panes, while the bar is open (the bar's own fields
+  // F3 anywhere in the note, and Esc in its editor, while the bar is open (the bar's own fields
   // handle Esc themselves; the title and folder fields keep theirs).
   function findKeys(e: KeyboardEvent & { currentTarget: HTMLElement }) {
     if (!findOpen) return;
@@ -114,7 +111,7 @@
       e.preventDefault();
       e.stopPropagation();
       findStep(e.shiftKey ? -1 : 1);
-    } else if (e.key === "Escape" && (e.target as Element).closest(".panes")) {
+    } else if (e.key === "Escape" && (e.target as Element).closest(".editor")) {
       e.preventDefault();
       e.stopPropagation();
       closeFind();
@@ -277,8 +274,8 @@
         {statusText}
       </span>
       <div class="segmented" role="group" aria-label="Editor view">
-        <button aria-pressed={!live} title="Markdown source beside a preview ({toggleKey})" onclick={() => setMode("source")}>
-          <Icon name="split" size={14} />
+        <button aria-pressed={!live} title="Edit the Markdown source ({toggleKey})" onclick={() => setMode("source")}>
+          <Icon name="code" size={14} />
           Source
         </button>
         <button aria-pressed={live} title="Edit the formatted note ({toggleKey})" onclick={() => setMode("live")}>
@@ -335,22 +332,15 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  <div class="panes" class:live>
-    <div class="source">
-      <MarkdownEditor
-        bind:this={editor}
-        doc={initial.body}
-        {mode}
-        {onchange}
-        onfindresult={editorFindResult}
-        {onwikilink}
-      />
-    </div>
-    {#if !live}
-      <div class="rendered">
-        <Preview bind:this={preview} {body} {onwikilink} find={activeFind} />
-      </div>
-    {/if}
+  <div class="editor">
+    <MarkdownEditor
+      bind:this={editor}
+      doc={initial.body}
+      {mode}
+      {onchange}
+      onfindresult={editorFindResult}
+      {onwikilink}
+    />
   </div>
 </section>
 
@@ -464,31 +454,10 @@
     padding: 8px 24px;
   }
 
-  .panes {
+  /* One editor for both modes, reconfigured on a switch, so its undo history survives toggling. */
+  .editor {
     flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    min-height: 0;
-  }
-
-  .source,
-  .rendered {
     min-height: 0;
     overflow: auto;
-  }
-
-  .source {
-    background: var(--code);
-    border-right: 1px solid var(--border);
-  }
-
-  /* Live is the same editor, reconfigured, so its undo history survives toggling. */
-  .live {
-    grid-template-columns: 1fr;
-  }
-
-  .live .source {
-    background: none;
-    border-right: none;
   }
 </style>
