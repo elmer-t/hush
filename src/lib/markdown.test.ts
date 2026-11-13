@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { buildLive, inlineHandlers } from "$lib/liveDecorations";
+import readme from "../../src-tauri/src/db/readme.md?raw";
 import { CALLOUT_KINDS } from "$lib/callout";
 import { blockHandlers } from "$lib/liveBlocks";
 import { liveLanguage } from "$lib/livePreview";
@@ -473,5 +474,32 @@ describe("callouts (#184)", () => {
     // On it: the marker is shown as syntax.
     expect(at(3)).toContain("mark:[!note]- ");
     expect(at(3).some((s) => s.startsWith("hide:[!note]"))).toBe(false);
+  });
+});
+
+describe("the README note of a new vault (#190)", () => {
+  it("shows each Markdown feature it describes, in the preview", async () => {
+    const { loadGrammar } = await import("$lib/codeHighlight");
+    expect(await loadGrammar("python")).toBe(true);
+    const html = renderMarkdown(readme);
+    expect(html).toContain('<blockquote class="note-callout note-callout-warning">\n<p class="note-callout-title">There is no passphrase recovery</p>');
+    expect(html.match(/class="task-box"/g)).toHaveLength(2);
+    expect(html.match(/<mark>/g)).toHaveLength(2);
+    expect(html).toContain("H<sub>2</sub>O");
+    expect(html).toContain("x<sup>2</sup>");
+    expect(html).toContain('<pre><code class="language-python"><span class="tok-keyword">def</span>');
+    // The examples of the syntax are in code spans, so they show as written.
+    for (const example of ["[[Note title]]", "#tag", "==text==", "H~2~O", "x^2^", "- [ ]", "[!note]"]) {
+      expect(html, example).toContain(`<code>${example}</code>`);
+    }
+  });
+
+  it("shows the same in the Live editor", () => {
+    expect(liveNodes(readme, "Highlight")).toEqual(["==indexes every note again==", "==highlighted=="]);
+    expect(liveNodes(readme, "Subscript")).toEqual(["~2~"]);
+    expect(liveNodes(readme, "Superscript")).toEqual(["^2^"]);
+    const { specs } = liveSpecs(readme);
+    expect(specs.filter((s) => s.kind === "widget" && s.widget.type === "task")).toHaveLength(2);
+    expect(specs.filter((s) => s.kind === "line" && s.class === "cm-live-callout-warning")).toHaveLength(2);
   });
 });
