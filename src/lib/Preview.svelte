@@ -187,6 +187,46 @@
     padding-left: 22px;
   }
 
+  /* A task (`markdown.ts`, `task_list`): the box takes the bullet's place; a number stays, as in Live. */
+  .preview :global(ul > li.task-item) {
+    list-style: none;
+  }
+
+  .preview :global(.task-box) {
+    display: inline-block;
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+    border: 1.5px solid var(--muted);
+    border-radius: 3px;
+    background: var(--surface);
+    vertical-align: -0.1em;
+    position: relative;
+  }
+
+  .preview :global(ul > li.task-item > .task-box),
+  .preview :global(ul > li.task-item > p:first-child > .task-box) {
+    margin-left: -22px;
+  }
+
+  .preview :global(.task-box.task-done) {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .preview :global(.task-box.task-done)::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 0.5px;
+    width: 3px;
+    height: 7px;
+    border: solid var(--accent-text);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
   .preview :global(h1),
   .preview :global(h2),
   .preview :global(h3) {

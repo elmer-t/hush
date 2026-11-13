@@ -39,6 +39,43 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return `<div class="mermaid-block"><pre class="mermaid-source"><code>${md.utils.escapeHtml(token.content)}</code></pre></div>\n`;
 };
 
+/** A task marker at the start of a list item's text, as `@lezer/markdown`'s `TaskList` reads it. */
+const TASK = /^\[([ xX])\](?:[ \t]+|$)/;
+
+/**
+ * `- [ ] todo` and `- [x] done` as a checkbox, for the same items the Live editor shows one
+ * (`liveBlocks.ts`, `listItem`): the marker opens the item's first paragraph, on the line of
+ * the list marker, and is followed by a space or tab. The box is a `span` drawn by
+ * `Preview.svelte`, since the sanitizer forbids `input`; it is read-only.
+ *
+ * Runs before the inline rule, on the paragraph's source: the marker is cut off and the box
+ * put in front of the tokens the inline rule adds, so `[x]` is never read as a reference link.
+ */
+md.core.ruler.before("inline", "task_list", (state) => {
+  const tokens = state.tokens;
+  let lines: string[] | undefined;
+  for (let i = 2; i < tokens.length; i++) {
+    const inline = tokens[i];
+    const item = tokens[i - 2];
+    if (inline.type !== "inline" || tokens[i - 1].type !== "paragraph_open" || item.type !== "list_item_open") continue;
+    const match = TASK.exec(inline.content);
+    const line = inline.map?.[0];
+    if (!match || line === undefined || item.map?.[0] !== line) continue;
+    // markdown-it trims the paragraph, so a marker with nothing after it is checked in the source.
+    if (match[0].length === 3 && !/\][ \t]+$/.test((lines ??= state.src.split("\n"))[line] ?? "")) continue;
+    inline.content = inline.content.slice(match[0].length);
+    const box = new state.Token("task_box", "span", 0);
+    box.meta = { checked: match[1] !== " " };
+    (inline.children ??= []).push(box);
+    item.attrJoin("class", "task-item");
+  }
+});
+
+md.renderer.rules.task_box = (tokens, idx) => {
+  const checked = tokens[idx].meta?.checked === true;
+  return `<span class="task-box${checked ? " task-done" : ""}" role="checkbox" aria-checked="${checked}" aria-disabled="true" aria-label="${checked ? "Done" : "Not done"}"></span>`;
+};
+
 /** Matches the frontmatter block the way `markdown::split_frontmatter` does in Rust. */
 export const FRONTMATTER = /^---\r?\n(?:[\s\S]*?\n)?(?:---|\.\.\.)\r?(?:\n|$)/;
 
