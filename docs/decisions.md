@@ -355,5 +355,9 @@ Three panes: left = search, filters, note list / folder tree (sorted by updated)
 - Importer built test-first with `insta` snapshot tests against the fixture vault.
 - Frontend: `svelte-check` / type checking, plus `scripts/check-mermaid.cjs` (Playwright against the dev server) for the Mermaid preview.
 
+## Distribution
+- **Releases** (2026-11-13, #175): a `v<version>` tag makes GitHub Actions build the Windows x64 NSIS installer on a clean runner and attach it, with a SHA-256 file, to a draft GitHub Release that is published by hand after a test install. NSIS only: it installs per user without administrator rights; the MSI still builds locally (`npm run tauri build`). The build job has a read-only token and the publishing job runs no repository code. Actions are pinned by commit.
+- **Not signed, no updater** [open]: the installer has no Authenticode signature, so SmartScreen warns on first run. An updater would be a second place where Hush goes online, so it is not added without a decision.
+
 ## Build order
 1. Scaffold  2. DB layer + tests  3. Unlock/lock  4. Notes + editor  5. Search  6. Import (test-first), rules editor last. Nice to have: links/backlinks

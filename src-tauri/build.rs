@@ -17,8 +17,13 @@ fn main() {
 fn stage_directml() {
     use std::path::PathBuf;
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
-    // OUT_DIR is <profile dir>/build/<crate>-<hash>/out.
-    let Some(profile) = out.ancestors().nth(3) else {
+    // OUT_DIR is <profile dir>/build/<crate>-<hash>/out, or with newer Cargo
+    // <profile dir>/build/<crate>/<hash>/out: take the folder that holds `build`.
+    let Some(profile) = out
+        .ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "build"))
+        .and_then(|build| build.parent())
+    else {
         return;
     };
     let from = profile.join("DirectML.dll");
