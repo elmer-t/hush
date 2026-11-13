@@ -15,6 +15,7 @@ import { blockHandlers } from "$lib/liveBlocks";
 import { liveBlocks, liveWidget } from "$lib/liveBlocksView";
 import { liveMermaid } from "$lib/liveMermaid";
 import { highlightMarkdown } from "$lib/highlightMark";
+import { subSuperMarkdown } from "$lib/subSuper";
 import { wikilinkMarkdown } from "$lib/wikilink";
 
 /**
@@ -23,9 +24,9 @@ import { wikilinkMarkdown } from "$lib/wikilink";
  * turns it into CodeMirror decorations for the visible ranges and themes them like the preview.
  */
 
-/** Markdown with GFM, `[[wikilinks]]` and `==highlights==`, as the preview reads it; code in fences in its own language (#180). */
+/** Markdown with GFM, `[[wikilinks]]`, `==highlights==`, `~sub~` and `^sup^`, as the preview reads it; code in fences in its own language (#180). */
 export function liveLanguage(): Extension {
-  return markdown({ base: markdownLanguage, extensions: [wikilinkMarkdown, highlightMarkdown], codeLanguages: codeLanguage });
+  return markdown({ base: markdownLanguage, extensions: [wikilinkMarkdown, highlightMarkdown, subSuperMarkdown], codeLanguages: codeLanguage });
 }
 
 const HIDE = Decoration.replace({});
@@ -156,6 +157,10 @@ const theme = EditorView.theme({
   ".cm-live-strong": { fontWeight: "600" },
   ".cm-live-em": { fontStyle: "italic" },
   ".cm-live-strike": { textDecoration: "line-through" },
+  // No line height of their own, so a line with one is as high as the others (as in `Preview.svelte`).
+  ".cm-live-sub, .cm-live-sup": { fontSize: "0.75em", lineHeight: "0" },
+  ".cm-live-sub": { verticalAlign: "sub" },
+  ".cm-live-sup": { verticalAlign: "super" },
   ".cm-live-mark": { background: "var(--highlight)", color: "var(--highlight-text)", borderRadius: "3px" },
   ".cm-live-mark .cm-live-syntax": { color: "var(--highlight-text)", opacity: "0.6" },
   ".cm-live-code": {

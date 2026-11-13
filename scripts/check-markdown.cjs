@@ -49,6 +49,16 @@ const MARKS = [
   "Find me: important.",
 ].join("\n");
 
+const SCRIPTS = [
+  "Water is H~2~O and E = mc^2^.",
+  "",
+  "A plain line of about the same length.",
+  "",
+  "~~Struck H~2~O~~ and ~~plain strike~~.",
+  "",
+  "Not scripts: ~5 minutes, 2^10, `x^2^`, https://example.com/~user/~files.",
+].join("\n");
+
 let failed = 0;
 function check(name, ok, detail = "") {
   if (!ok) failed++;
@@ -195,6 +205,34 @@ async function marks(browser, scheme) {
   await ctx.close();
 }
 
+async function scripts(browser, scheme) {
+  const { ctx, page, errors } = await mounted(browser, scheme, SCRIPTS);
+  const want = "sub:2|sup:2|sub:2";
+  const preview = await page.evaluate(() => [...document.querySelectorAll("#preview sub, #preview sup")].map((e) => `${e.localName}:${e.textContent}`).join("|"));
+  const live = await page.evaluate(() =>
+    [...document.querySelectorAll("#live .cm-live-sub, #live .cm-live-sup")].map((e) => `${e.classList.contains("cm-live-sub") ? "sub" : "sup"}:${e.textContent}`).join("|"),
+  );
+  check(`${scheme}: preview subscript and superscript`, preview === want, preview);
+  check(`${scheme}: Live shows the same, markers hidden`, live === want, live);
+  const style = (sel) => page.evaluate((sel) => { const s = getComputedStyle(document.querySelector(sel)); return `${s.verticalAlign} ${parseFloat(s.fontSize) < parseFloat(getComputedStyle(document.querySelector(sel).parentElement).fontSize)}`; }, sel);
+  check(`${scheme}: lowered and raised, smaller, in both views`, [await style("#preview sub"), await style("#live .cm-live-sub"), await style("#preview sup"), await style("#live .cm-live-sup")].join() === "sub true,sub true,super true,super true");
+  const heights = await page.evaluate(() => ({
+    preview: [...document.querySelectorAll("#preview p")].slice(0, 2).map((p) => p.getBoundingClientRect().height),
+    live: [...document.querySelectorAll("#live .cm-line")].filter((l) => /Water|plain line/.test(l.textContent)).map((l) => l.getBoundingClientRect().height),
+  }));
+  check(`${scheme}: a line with scripts is as high as one without`, heights.preview[0] === heights.preview[1] && heights.live[0] === heights.live[1], JSON.stringify(heights));
+  const strikes = await page.evaluate(() => [[...document.querySelectorAll("#preview s")].map((e) => e.textContent).join("|"), [...document.querySelectorAll("#live .cm-live-strike")].map((e) => e.textContent).join("|")]);
+  check(`${scheme}: strikethrough keeps working in both views`, strikes[0] === "Struck H2O|plain strike" && strikes[1] === strikes[0], strikes.join(" / "));
+  const text = await page.locator("#preview").textContent();
+  check(`${scheme}: lone markers, code and a link stay as written`, text.includes("~5 minutes, 2^10, x^2^, https://example.com/~user/~files."), text);
+  await page.locator("#live .cm-live-sub").first().click();
+  await page.waitForTimeout(200);
+  check(`${scheme}: the markers show while the cursor is on the subscript`, (await page.locator("#live .cm-live-sub").first().textContent()) === "~2~");
+  check(`${scheme}: no errors`, errors.length === 0, errors.join("; "));
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/scripts-${scheme}.png` });
+  await ctx.close();
+}
+
 async function main() {
   const browser = await chromium.launch();
   const colours = {};
@@ -202,6 +240,7 @@ async function main() {
     await tasks(browser, scheme);
     await code(browser, scheme, colours);
     await marks(browser, scheme);
+    await scripts(browser, scheme);
   }
   check("light and dark use different colours", colours.preview.light !== colours.preview.dark);
   await browser.close();

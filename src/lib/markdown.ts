@@ -2,6 +2,7 @@ import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { highlightFence } from "$lib/codeHighlight";
 import { highlightDelimiter } from "$lib/highlightMark";
+import { parseSubSuper } from "$lib/subSuper";
 import { parseWikilink } from "$lib/wikilink";
 
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
@@ -63,6 +64,22 @@ md.inline.ruler2.after("emphasis", "mark", (state) => {
       }
     }
   }
+  return true;
+});
+
+/**
+ * `~text~` as `<sub>` and `^text^` as `<sup>` (#182), as `parseSubSuper` reads them, shared
+ * with the Live editor. The text between the markers is shown as it is.
+ */
+md.inline.ruler.after("emphasis", "sub_sup", (state, silent) => {
+  const found = parseSubSuper(state.src, state.pos, state.posMax);
+  if (!found) return false;
+  if (!silent) {
+    state.push(`${found.tag}_open`, found.tag, 1);
+    state.push("text", "", 0).content = found.text;
+    state.push(`${found.tag}_close`, found.tag, -1);
+  }
+  state.pos = found.to;
   return true;
 });
 

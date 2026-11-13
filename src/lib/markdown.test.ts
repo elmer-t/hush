@@ -199,3 +199,118 @@ describe("highlights (#181)", () => {
     expect(at(11)).toEqual(["mark:2-10", "hide:2-4", "hide:8-10"]);
   });
 });
+
+describe("subscript and superscript (#182)", () => {
+  /** Cases the preview and the Live editor must agree on: the source and its `sub` and `sup` texts, in order. */
+  const CASES: [string, string[]][] = [
+    ["H~2~O", ["sub:2"]],
+    ["x^2^", ["sup:2"]],
+    ["x^2^ + y~i~", ["sup:2", "sub:i"]],
+    ["~a~", ["sub:a"]],
+    ["^a^", ["sup:a"]],
+    ["E = mc^2^.", ["sup:2"]],
+    ["a^b^c^d^", ["sup:b", "sup:d"]],
+    ["x~i~^2^", ["sub:i", "sup:2"]],
+    ["**H~2~O**", ["sub:2"]],
+    ["- CO~2~", ["sub:2"]],
+    ["| x^2^ |\n|---|\n| b |", ["sup:2"]],
+    ["[x^2^](https://example.com)", ["sup:2"]],
+    // The text between the markers is taken as it is.
+    ["~*a*~", ["sub:*a*"]],
+    ["^[[x]]^", ["sup:[[x]]"]],
+    ["~a^b~", ["sub:a^b"]],
+    // An escaped space, marker or backslash is text between the markers.
+    ["~a\\ b~", ["sub:a b"]],
+    ["^a\\^b^", ["sup:a^b"]],
+    ["~a\\\\~", ["sub:a\\"]],
+    // Strikethrough keeps working, alone and next to subscript.
+    ["~~gone~~", []],
+    ["~~a~~ H~2~O", ["sub:2"]],
+    ["~~H~2~O~~", ["sub:2"]],
+    ["H~2~O ~~gone~~", ["sub:2"]],
+    ["~~a~b~~", []],
+    ["~~a~~~b~", []],
+    ["a ~~b~~ c ~d~", ["sub:d"]],
+    // Lone markers in prose.
+    ["~5 minutes", []],
+    ["2^10", []],
+    ["~5 minutes and ~6", []],
+    ["2^10 and 3^4", []],
+    ["a ~ b ~ c", []],
+    ["~a b~", []],
+    ["^a\tb^", []],
+    ["~a\nb~", []],
+    ["~a\\\nb~", []],
+    ["~~", []],
+    ["^^", []],
+    ["^^a^", []],
+    ["~a~~", []],
+    ["\\~a~", []],
+    ["\\^a^", []],
+    // Code.
+    ["`H~2~O`", []],
+    ["``x^2^``", []],
+    ["```\nH~2~O\n```", []],
+    ["    x^2^", []],
+    ["~~~\nx^2^\n~~~", []],
+    // A bare link keeps its `~` and `^`.
+    ["https://example.com/~user/~files", []],
+    ["see www.example.com/~user/~files here", []],
+    ["<https://example.com/~a~b>", []],
+    ["[~a~](https://example.com/~u~v)", ["sub:a"]],
+  ];
+
+  const previewScripts = (src: string) =>
+    [...renderMarkdown(src).matchAll(/<(sub|sup)>([\s\S]*?)<\/\1>/g)].map((m) => `${m[1]}:${shown(m[2])}`);
+
+  function liveScripts(src: string): string[] {
+    const { state } = liveSpecs(src);
+    const out: string[] = [];
+    syntaxTree(state).iterate({
+      enter(n) {
+        if (n.name !== "Subscript" && n.name !== "Superscript") return;
+        out.push(`${n.name === "Subscript" ? "sub" : "sup"}:${state.sliceDoc(n.from + 1, n.to - 1).replace(/\\(.)/g, "$1")}`);
+      },
+    });
+    return out;
+  }
+
+  it("the preview shows the text between the markers lowered or raised", () => {
+    for (const [src, scripts] of CASES) expect(previewScripts(src), src).toEqual(scripts);
+  });
+
+  it("the Live editor reads the same text", () => {
+    for (const [src, scripts] of CASES) expect(liveScripts(src), src).toEqual(scripts);
+  });
+
+  it("renders sub and sup elements and keeps strikethrough", () => {
+    expect(renderMarkdown("H~2~O and x^2^")).toBe("<p>H<sub>2</sub>O and x<sup>2</sup></p>\n");
+    expect(renderMarkdown("~~H~2~O~~")).toBe("<p><s>H<sub>2</sub>O</s></p>\n");
+    expect(renderMarkdown("~~a~b~~")).toBe("<p><s>a~b</s></p>\n");
+    expect(renderMarkdown("~5 minutes, 2^10")).toBe("<p>~5 minutes, 2^10</p>\n");
+    expect(renderMarkdown("`H~2~O`")).toBe("<p><code>H~2~O</code></p>\n");
+  });
+
+  it("keeps a bare link whole", () => {
+    expect(renderMarkdown("https://example.com/~user/~files")).toBe(
+      '<p><a href="https://example.com/~user/~files">https://example.com/~user/~files</a></p>\n',
+    );
+  });
+
+  it("keeps strikethrough in Live next to subscript", () => {
+    expect(liveNodes("~~H~2~O~~", "Strikethrough")).toEqual(["~~H~2~O~~"]);
+    expect(liveNodes("~~a~b~~", "Strikethrough")).toEqual(["~~a~b~~"]);
+    expect(liveNodes("~~gone~~ H~2~O", "Strikethrough")).toEqual(["~~gone~~"]);
+  });
+
+  it("hides the markers in Live off the cursor and shows them on it", () => {
+    const at = (cursor: number) => {
+      const doc = "H~2~O x^2^";
+      const state = parsed(EditorState.create({ doc, selection: EditorSelection.cursor(cursor), extensions: [liveLanguage()] }));
+      return buildLive(state, [{ from: 0, to: doc.length }], inlineHandlers).map((s) => `${s.kind}:${s.from}-${s.kind === "line" ? s.from : s.to}`);
+    };
+    expect(at(0)).toEqual(["mark:1-4", "hide:1-2", "hide:3-4", "mark:7-10", "hide:7-8", "hide:9-10"]);
+    expect(at(2)).toEqual(["mark:1-4", "mark:1-2", "mark:3-4", "mark:7-10", "hide:7-8", "hide:9-10"]);
+    expect(at(10)).toEqual(["mark:1-4", "hide:1-2", "hide:3-4", "mark:7-10", "mark:7-8", "mark:9-10"]);
+  });
+});

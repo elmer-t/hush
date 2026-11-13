@@ -255,6 +255,13 @@
     font-size: 18px;
   }
 
+  /* No line height of their own, so a line with one is as high as the others. */
+  .preview :global(sub),
+  .preview :global(sup) {
+    font-size: 0.75em;
+    line-height: 0;
+  }
+
   .preview :global(a) {
     color: var(--accent);
     text-decoration: underline;
