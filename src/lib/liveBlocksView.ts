@@ -102,7 +102,7 @@ export function liveWidget(widget: LiveWidget): Decoration {
   }
 }
 
-/** Markdown rendered as the preview renders it: the same renderer and sanitiser. */
+/** Markdown rendered and sanitised by `markdown.ts`. */
 function rendered(source: string): HTMLTemplateElement {
   const template = document.createElement("template");
   template.innerHTML = renderMarkdown(source);
@@ -196,7 +196,7 @@ const blocks = StateField.define<BlocksValue>({
   provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
 });
 
-/** The preview's block styles (`Preview.svelte`), for lines and widgets. No vertical margins on widgets: CodeMirror can't measure them. */
+/** The block styles, for lines and widgets. No vertical margins on widgets: CodeMirror can't measure them. */
 const theme = EditorView.theme({
   ".cm-line.cm-live-li-2": { paddingLeft: "calc(24px + 22px)" },
   ".cm-line.cm-live-li-3": { paddingLeft: "calc(24px + 44px)" },
@@ -217,7 +217,7 @@ const theme = EditorView.theme({
       "linear-gradient(to right, transparent 24px, var(--border-strong) 24px, var(--border-strong) 27px, transparent 27px, transparent 43px, var(--border-strong) 43px, var(--border-strong) 46px, transparent 46px)",
   },
   // Callouts (#184): the bar in the kind's colour and a tint behind the text; `app.css` sets
-  // `--callout-color` and the title's icon per kind, for these lines and for the preview.
+  // `--callout-color` and the title's icon per kind.
   ".cm-line.cm-live-callout": {
     color: "var(--text)",
     backgroundImage:

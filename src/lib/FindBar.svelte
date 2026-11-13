@@ -7,15 +7,13 @@
     spec: FindSpec;
     /** Whether the replace row is shown. */
     replacing: boolean;
-    /** Whether replacing is possible here (not in "Preview only"). */
-    canReplace: boolean;
     /** "3 of 12", "No matches", or empty before anything is typed. */
     count: string;
     onstep: (dir: 1 | -1) => void;
     onreplace: (all: boolean) => void;
     onclose: () => void;
   };
-  let { spec = $bindable(), replacing = $bindable(), canReplace, count, onstep, onreplace, onclose }: Props = $props();
+  let { spec = $bindable(), replacing = $bindable(), count, onstep, onreplace, onclose }: Props = $props();
 
   let findInput = $state<HTMLInputElement>();
   let replaceInput = $state<HTMLInputElement>();
@@ -60,17 +58,15 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="find" role="search" aria-label="Find in note" onkeydown={barKeydown}>
   <div class="row">
-    {#if canReplace}
-      <button
-        class="ghost small icon"
-        aria-label="Toggle replace"
-        title="Toggle replace"
-        aria-expanded={replacing}
-        onclick={() => (replacing = !replacing)}
-      >
-        <Icon name={replacing ? "chevronDown" : "chevronRight"} size={14} />
-      </button>
-    {/if}
+    <button
+      class="ghost small icon"
+      aria-label="Toggle replace"
+      title="Toggle replace"
+      aria-expanded={replacing}
+      onclick={() => (replacing = !replacing)}
+    >
+      <Icon name={replacing ? "chevronDown" : "chevronRight"} size={14} />
+    </button>
     <label class="field">
       <Icon name="search" size={14} />
       <span class="visually-hidden">Find</span>
@@ -109,7 +105,7 @@
       <Icon name="close" size={14} />
     </button>
   </div>
-  {#if canReplace && replacing}
+  {#if replacing}
     <div class="row replace-row">
       <label class="field">
         <span class="visually-hidden">Replace with</span>

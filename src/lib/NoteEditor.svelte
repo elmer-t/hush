@@ -322,7 +322,6 @@
       bind:this={findBar}
       bind:spec={find}
       bind:replacing
-      canReplace
       count={findCount}
       onstep={findStep}
       onreplace={(all) => editor?.replaceMatch(all)}

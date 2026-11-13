@@ -159,41 +159,41 @@
 }
 
 /* Code in a fence (#180): the classes `codeHighlight.ts` gives its tokens, the same in the
-   preview, the Live editor's code blocks and the Source editor. */
-:is(.preview pre, .cm-live-codeblock, .cm-source) .tok-comment {
+   Live editor's code blocks and the Source editor. */
+:is(.cm-live-codeblock, .cm-source) .tok-comment {
   color: var(--muted);
   font-style: italic;
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-keyword, .tok-operatorKeyword) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-keyword, .tok-operatorKeyword) {
   color: var(--syn-keyword);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-string, .tok-string2, .tok-inserted) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-string, .tok-string2, .tok-inserted) {
   color: var(--syn-string);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-number, .tok-atom, .tok-bool, .tok-literal) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-number, .tok-atom, .tok-bool, .tok-literal) {
   color: var(--syn-number);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-typeName, .tok-className, .tok-namespace, .tok-labelName) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-typeName, .tok-className, .tok-namespace, .tok-labelName) {
   color: var(--syn-type);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-definition, .tok-macroName, .tok-variableName2, .tok-heading) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-definition, .tok-macroName, .tok-variableName2, .tok-heading) {
   color: var(--syn-def);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-meta, .tok-punctuation, .tok-operator) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-meta, .tok-punctuation, .tok-operator) {
   color: var(--text-2);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-deleted, .tok-invalid) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-deleted, .tok-invalid) {
   color: var(--danger);
 }
 
-:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-link, .tok-url) {
+:is(.cm-live-codeblock, .cm-source) :is(.tok-link, .tok-url) {
   color: var(--accent);
 }
 
@@ -632,35 +632,10 @@ mark {
   color: var(--mark-text);
 }
 
-/* Find in note: every match, and the current one. The preview paints them with the CSS
-   Custom Highlight API, or with `mark.hush-find` where that is missing; the editor uses
-   CodeMirror's search classes, styled in MarkdownEditor. Separate rules, since a browser
-   without ::highlight() drops a whole selector list that contains it. */
-::highlight(hush-find) {
-  background-color: var(--mark);
-  color: var(--mark-text);
-}
-
-::highlight(hush-find-current) {
-  background-color: var(--mark-current);
-  color: var(--mark-current-text);
-}
-
-/* `==highlighted==` text in a note (#181): its own colour, so it is not taken for a find match. */
-.preview mark:not(.hush-find) {
+/* `==highlighted==` text in a table of the Live editor (#181), which `markdown.ts` renders as
+   `<mark>`: the colour of `.cm-live-mark`, so it is not taken for a search match. */
+.cm-live-table mark {
   padding: 0;
   background: var(--highlight);
   color: var(--highlight-text);
-}
-
-mark.hush-find {
-  padding: 0;
-  border-radius: 2px;
-  background-color: var(--mark);
-  color: var(--mark-text);
-}
-
-mark.hush-find.hush-find-current {
-  background-color: var(--mark-current);
-  color: var(--mark-current-text);
 }

@@ -42,7 +42,7 @@
   };
   let { doc, mode = "source", onchange, onfindresult, onwikilink }: Props = $props();
 
-  // Links in Live open as in the preview, and show where they go in the shared link bar (#137).
+  // Links in Live open on a click, and show where they go in the link bar (#137).
   let linkBar: ReturnType<typeof LinkBar>;
   const links = liveLinks((link, x, y) => openLink(link, x, y, onwikilink), {
     show: (el, link, x, y) => linkBar?.show(el, link, x, y),

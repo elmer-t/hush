@@ -10,7 +10,7 @@
     isOpen: (section: Section) => boolean;
     ontoggle: (section: Section, open: boolean) => void;
     onopen: (id: number) => void;
-    /** Follows an outgoing link's target, as a click on it in the preview does. */
+    /** Follows an outgoing link's target, as a click on it in the note does. */
     onfollow: (target: string, x: number, y: number) => void;
   };
   let { id, revision = 0, isOpen, ontoggle, onopen, onfollow }: Props = $props();

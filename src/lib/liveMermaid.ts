@@ -8,8 +8,8 @@ import { onSchemeChange } from "$lib/theme";
 /**
  * Mermaid diagrams in the Live editor (#136). A ```mermaid fence is shown as its rendered
  * diagram while the selection is outside it; while the selection is on one of its lines the
- * source is shown, editable, with the diagram kept below it and updated as the preview does.
- * Rendering goes through `mermaid.ts`, so Live and the preview share one queue and cache.
+ * source is shown, editable, with the diagram kept below it and updated after a pause in typing.
+ * Rendering goes through `mermaid.ts`: one queue and one cache for every diagram.
  *
  * Only fences at the top level of the note count: fences in lists and quotes are left to the
  * block handling of #135. Other code fences are #135's too.
@@ -22,7 +22,7 @@ export type MermaidFence = {
   to: number;
   /** Where a click on the diagram puts the cursor: the start of the source, or the end of the opening line. */
   sourceFrom: number;
-  /** The diagram's source, as markdown-it gives it to the preview, so both hit the same cache. */
+  /** The diagram's source, with the fence's indent taken off, as markdown-it reads a fence. */
   source: string;
   /** Whether the selection touches one of its lines, so the source is shown. */
   open: boolean;
@@ -197,7 +197,7 @@ export const mermaidField = StateField.define<MermaidState>({
   provide: (f) => EditorView.decorations.from(f, (v) => v.decorations),
 });
 
-/** Tells the field when the colour scheme changes (the OS's or the user's), as the preview re-renders then too. */
+/** Tells the field when the colour scheme changes (the OS's or the user's). */
 const schemeWatcher = ViewPlugin.fromClass(
   class {
     stop: () => void;
@@ -216,7 +216,7 @@ const schemeWatcher = ViewPlugin.fromClass(
   },
 );
 
-/** The diagrams' look in Live: the preview's `.mermaid-block` styles, for the editor. */
+/** The diagrams' look in Live. */
 const theme = EditorView.theme({
   ".cm-live-mermaid": {
     margin: "0 24px 16px",

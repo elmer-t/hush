@@ -4,7 +4,7 @@
   import { barLayout, describeLink, type LinkTarget, type WikiResolution } from "$lib/linkTarget";
 
   // The link bar (#131): where the hovered or focused link goes, at the bottom of the window.
-  // Shared by the preview and the Live editor (#137), which call `show` and `hide`.
+  // The Live editor (#137) calls `show` and `hide`.
 
   let bar = $state<{ target: LinkTarget; right: boolean } | null>(null);
   let key: Element | null = null;

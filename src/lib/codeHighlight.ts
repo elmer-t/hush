@@ -6,8 +6,8 @@ import type { Parser } from "@lezer/common";
 import { classHighlighter, highlightCode } from "@lezer/highlight";
 
 /**
- * Syntax highlighting in fenced code blocks (#180), for the preview and both editor modes
- * from the same grammars: the code is parsed by the CodeMirror language named on the fence
+ * Syntax highlighting in fenced code blocks (#180), for both editor modes and the markdown-it
+ * renderer from the same grammars: the code is parsed by the CodeMirror language named on the fence
  * and its tokens get `@lezer/highlight`'s `tok-…` classes, which `app.css` colours. Classes,
  * not `style` attributes, which the markdown sanitizer strips.
  *
@@ -69,13 +69,13 @@ export async function loadGrammar(info: string): Promise<boolean> {
   return true;
 }
 
-/** Longer code stays plain in the preview: it is parsed in one go, on the keystroke that changes it. */
+/** Longer code stays plain in `highlightFence`: it is parsed in one go. */
 export const HIGHLIGHT_LIMIT = 50_000;
 
 /**
- * The preview renders on every edit; code that did not change is not parsed again. The cache
- * is bounded by the characters it holds (code and HTML), not by entries, so a long note of
- * many small blocks fits. It holds note text: in memory only, like the preview itself.
+ * `highlightFence` keeps what it rendered, so code that did not change is not parsed again. The
+ * cache is bounded by the characters it holds (code and HTML), not by entries, so a long note of
+ * many small blocks fits. It holds note text: in memory only.
  */
 const CACHE_CHARS = 4_000_000;
 const cache = new Map<string, string>();

@@ -6,6 +6,12 @@ import { highlightDelimiter } from "$lib/highlightMark";
 import { parseSubSuper } from "$lib/subSuper";
 import { parseWikilink } from "$lib/wikilink";
 
+// The app shows this renderer's output in one place: the tables and images of the Live editor
+// (`liveBlocksView.ts`). Until #193 it also fed a read-only preview pane; comments here and in
+// the shared parsers (`wikilink.ts`, `highlightMark.ts`, `subSuper.ts`, `callout.ts`) that say
+// "the preview" mean this renderer. Its block rules (task lists, callouts, code and mermaid
+// fences) cannot occur inside a table cell, so only the tests reach them now.
+
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
 // Code in a fence with a known language gets a `span` per token (`codeHighlight.ts`, #180).
 const md = new MarkdownIt({ html: false, linkify: true, highlight: highlightFence });
@@ -102,8 +108,8 @@ const TASK = /^\[([ xX])\](?:[ \t]+|$)/;
 /**
  * `- [ ] todo` and `- [x] done` as a checkbox, for the same items the Live editor shows one
  * (`liveBlocks.ts`, `listItem`): the marker opens the item's first paragraph, on the line of
- * the list marker, and is followed by a space or tab. The box is a `span` drawn by
- * `Preview.svelte`, since the sanitizer forbids `input`; it is read-only.
+ * the list marker, and is followed by a space or tab. The box is a `span`, since the sanitizer
+ * forbids `input`; it is read-only and nothing styles it since the preview pane went (#193).
  *
  * Runs before the inline rule, on the paragraph's source: the marker is cut off and the box
  * put in front of the tokens the inline rule adds, so `[x]` is never read as a reference link.
