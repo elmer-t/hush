@@ -47,6 +47,25 @@ The first build compiles OpenSSL and takes several minutes. Make coffee. Write a
 
 Both commands first run `npm run fetch-model`, which downloads the bundled embedding model (about 34 MB) from Hugging Face into `src-tauri/models/` and checks it against the SHA-256s in `src-tauri/models/manifest.json`. A release build fails without it; `tauri dev` carries on and Hush shows "Indexing stopped" until the files are there. The build also downloads ONNX Runtime once (`ort`'s `download-binaries`). After that, the app itself goes online only when you click *Download* in Settings → Model, to a pinned URL, and checks what it downloads by SHA-256.
 
+## Releasing
+
+The installer is built by GitHub Actions ([release.yml](.github/workflows/release.yml)), so cutting a release needs no local toolchain.
+
+1. Set the same version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json`, run `cargo check --manifest-path src-tauri/Cargo.toml` so `Cargo.lock` follows, and merge that.
+2. Tag that commit and push the tag:
+
+   ```powershell
+   git tag v0.3.0
+   git push origin v0.3.0
+   ```
+
+3. The workflow builds `Hush_<version>_x64-setup.exe`, and attaches it with a `SHA256SUMS.txt` to a **draft** release. The build fails when the tag and the three versions disagree.
+4. Install the draft's `setup.exe` on a real machine, open a vault, then publish the draft on GitHub.
+
+To get an installer without releasing, run the workflow by hand (Actions → Release → Run workflow) and download the `hush-windows-x64` artifact. It also runs on pull requests that change the workflow or the bundle config.
+
+The installer is per-user (no administrator rights) and is not code-signed, so Windows SmartScreen warns on first run. There is no updater: a new version is a new download.
+
 ## Tests & checks
 
 ```powershell
