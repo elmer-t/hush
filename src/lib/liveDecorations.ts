@@ -26,11 +26,15 @@ export type LiveSpec =
   /** Source text shown as a small widget (`liveBlocks.ts`). Never spans a line break. */
   | { kind: "widget"; from: number; to: number; widget: LiveWidget };
 
-/** What an inline widget shows: a list bullet, a task checkbox (its `[` at `from + marker`), a rule. */
+/**
+ * What an inline widget shows: a list bullet, a task checkbox (its `[` at `from + marker`), a
+ * rule, the name of a callout that has no title.
+ */
 export type LiveWidget =
   | { type: "bullet" }
   | { type: "task"; checked: boolean; marker: number }
-  | { type: "rule" };
+  | { type: "rule" }
+  | { type: "callout"; label: string };
 
 export class BuildContext {
   readonly specs: LiveSpec[] = [];

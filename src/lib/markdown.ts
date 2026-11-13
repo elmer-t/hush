@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import { parseCallout } from "$lib/callout";
 import { highlightFence } from "$lib/codeHighlight";
 import { highlightDelimiter } from "$lib/highlightMark";
 import { parseSubSuper } from "$lib/subSuper";
@@ -124,6 +125,49 @@ md.core.ruler.before("inline", "task_list", (state) => {
     box.meta = { checked: match[1] !== " " };
     (inline.children ??= []).push(box);
     item.attrJoin("class", "task-item");
+  }
+});
+
+/**
+ * `> [!warning] Title` as a callout (#184): the quote gets `note-callout note-callout-<kind>` and
+ * its first line becomes a title paragraph, `note-callout-title`, with the rest of that paragraph in
+ * a paragraph of its own. Without a written title the type is the title. `parseCallout`,
+ * shared with the Live editor, reads the marker; it must open the quote's first line.
+ * Colours and icons come from the classes (`app.css`), as `style` does not pass the sanitizer.
+ *
+ * Runs before the inline rule, so the title and the body are parsed as markdown afterwards.
+ */
+md.core.ruler.before("inline", "callout", (state) => {
+  const tokens = state.tokens;
+  for (let i = 0; i + 3 < tokens.length; i++) {
+    const quote = tokens[i];
+    const inline = tokens[i + 2];
+    if (quote.type !== "blockquote_open" || tokens[i + 1].type !== "paragraph_open" || inline.type !== "inline") continue;
+    if (quote.map?.[0] !== inline.map?.[0]) continue;
+    const end = inline.content.indexOf("\n");
+    const callout = parseCallout(end < 0 ? inline.content : inline.content.slice(0, end));
+    if (!callout) continue;
+    quote.attrJoin("class", `note-callout note-callout-${callout.kind}`);
+    tokens[i + 1].attrJoin("class", "note-callout-title");
+    const body = end < 0 ? "" : inline.content.slice(end + 1);
+    inline.content = callout.title;
+    if (!callout.title) {
+      const label = new state.Token("text", "", 0);
+      label.content = callout.label;
+      inline.children = [label];
+    }
+    if (body) {
+      const open = new state.Token("paragraph_open", "p", 1);
+      const text = new state.Token("inline", "", 0);
+      const close = new state.Token("paragraph_close", "p", -1);
+      open.level = close.level = tokens[i + 1].level;
+      open.block = close.block = text.block = true;
+      text.level = inline.level;
+      text.content = body;
+      text.children = [];
+      if (inline.map) open.map = text.map = [inline.map[0] + 1, inline.map[1]];
+      tokens.splice(i + 4, 0, open, text, close);
+    }
   }
 });
 

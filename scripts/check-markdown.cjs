@@ -59,14 +59,40 @@ const SCRIPTS = [
   "Not scripts: ~5 minutes, 2^10, `x^2^`, https://example.com/~user/~files.",
 ].join("\n");
 
+const CALLOUTS = [
+  "> [!warning] Check the **passphrase**",
+  "> There is no recovery.",
+  "",
+  "> [!note]",
+  "> A note without a title.",
+  "",
+  "> [!tip]- Folded in Obsidian",
+  "> Shown open here.",
+  "",
+  "> [!custom] An unknown type",
+  "",
+  "> [!important] Outer",
+  "> Text.",
+  ">",
+  "> > [!danger] Inner",
+  "> > Deep.",
+  "",
+  "> An ordinary quote.",
+  "",
+  "> Text first",
+  "> [!note] not a callout",
+  "",
+  ...["abstract", "info", "todo", "success", "question", "caution", "failure", "bug", "example", "quote"].map((k) => `> [!${k}]\n`),
+].join("\n");
+
 let failed = 0;
 function check(name, ok, detail = "") {
   if (!ok) failed++;
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !detail ? "" : `: ${detail}`}`);
 }
 
-async function mounted(browser, scheme, body, find) {
-  const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1400, height: 900 } });
+async function mounted(browser, scheme, body, find, height = 900) {
+  const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1400, height } });
   const page = await ctx.newPage();
   const errors = [];
   const requests = [];
@@ -233,16 +259,72 @@ async function scripts(browser, scheme) {
   await ctx.close();
 }
 
+async function callouts(browser, scheme, seen) {
+  const { ctx, page, errors } = await mounted(browser, scheme, CALLOUTS, undefined, 2200); // tall: the editor only draws the lines in view
+  const want = ["warning:Check the passphrase", "note:Note", "tip:Folded in Obsidian", "note:An unknown type", "important:Outer", "danger:Inner"];
+  const preview = await page.evaluate(() =>
+    [...document.querySelectorAll("#preview blockquote.note-callout")].map((q) => {
+      const title = q.querySelector(":scope > .note-callout-title");
+      const s = getComputedStyle(title);
+      const icon = getComputedStyle(title, "::before");
+      return {
+        id: `${[...q.classList].find((c) => c.startsWith("note-callout-")).slice(13)}:${title.textContent}`,
+        colour: s.color,
+        bar: getComputedStyle(q).borderLeftColor,
+        tint: getComputedStyle(q).backgroundColor,
+        icon: icon.maskImage || icon.webkitMaskImage,
+        iconWidth: parseFloat(icon.width),
+      };
+    }),
+  );
+  const live = await page.evaluate(() =>
+    [...document.querySelectorAll("#live .cm-line.cm-live-callout-title")].map((l) => {
+      const icon = getComputedStyle(l, "::before");
+      return {
+        id: `${[...l.classList].find((c) => /^cm-live-callout-(?!title$)/.test(c)).slice(16)}:${l.textContent}`,
+        colour: getComputedStyle(l).color,
+        background: getComputedStyle(l).backgroundImage,
+        icon: icon.maskImage || icon.webkitMaskImage,
+      };
+    }),
+  );
+  check(`${scheme}: preview callouts with their titles`, preview.slice(0, 6).map((c) => c.id).join("|") === want.join("|"), preview.map((c) => c.id).join("|"));
+  check(`${scheme}: Live shows the same callouts, markers hidden`, live.slice(0, 6).map((c) => c.id).join("|") === want.join("|"), live.map((c) => c.id).join("|"));
+  check(`${scheme}: all sixteen callouts in both views`, preview.length === 16 && live.length === 16, `${preview.length} ${live.length}`);
+  check(`${scheme}: same title colour and icon per callout in both views`, preview.every((c, i) => c.colour === live[i].colour && c.icon === live[i].icon), JSON.stringify([preview.map((c) => c.colour), live.map((c) => c.colour)]));
+  check(`${scheme}: the bar has the title's colour and the box a tint`, preview.every((c) => c.bar === c.colour && c.tint !== "rgba(0, 0, 0, 0)" && c.tint !== c.colour), JSON.stringify(preview[0]));
+  check(`${scheme}: Live lines carry the bar and the tint`, live.every((c) => c.background.includes("linear-gradient")));
+  check(`${scheme}: every icon is drawn from a bundled data URI`, preview.every((c) => c.icon.startsWith('url("data:image/svg+xml') && c.iconWidth > 10), preview.map((c) => c.icon.slice(0, 30)).join());
+  check(`${scheme}: fifteen kinds have fifteen icons`, new Set(preview.map((c) => c.icon)).size === 15, String(new Set(preview.map((c) => c.icon)).size));
+  check(`${scheme}: kinds differ in colour`, new Set(preview.map((c) => c.colour)).size >= 5, [...new Set(preview.map((c) => c.colour))].join());
+  const text = await page.locator("#preview").textContent();
+  check(`${scheme}: no marker is shown as text in a callout`, !(await page.locator("#preview blockquote.note-callout").allTextContents()).some((t) => /\[!/.test(t)));
+  check(`${scheme}: a marker that is not on the first line stays text`, text.includes("[!note] not a callout"));
+  check(`${scheme}: an ordinary quote is not a callout`, (await page.locator("#preview blockquote:not(.note-callout)").count()) === 2);
+  check(`${scheme}: no style attribute in the preview`, (await page.locator("#preview blockquote [style], #preview blockquote[style]").count()) === 0);
+  // The cursor on the title line shows the marker.
+  await page.locator("#live .cm-line.cm-live-callout-title").first().click();
+  await page.waitForTimeout(200);
+  check(`${scheme}: the marker shows while the cursor is on the title line`, (await page.locator("#live .cm-line.cm-live-callout-title").first().textContent()).includes("[!warning] Check the"));
+  check(`${scheme}: no errors`, errors.length === 0, errors.join("; "));
+  seen[scheme] = preview.map((c) => c.colour).join();
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/callouts-${scheme}.png`, fullPage: true });
+  await ctx.close();
+}
+
 async function main() {
   const browser = await chromium.launch();
   const colours = {};
+  const calloutColours = {};
   for (const scheme of ["light", "dark"]) {
     await tasks(browser, scheme);
     await code(browser, scheme, colours);
     await marks(browser, scheme);
     await scripts(browser, scheme);
+    await callouts(browser, scheme, calloutColours);
   }
   check("light and dark use different colours", colours.preview.light !== colours.preview.dark);
+  check("callouts have other colours in the dark theme", calloutColours.light !== calloutColours.dark);
   await browser.close();
   if (failed) {
     console.log(`${failed} failed`);

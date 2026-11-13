@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { buildLive, inlineHandlers } from "$lib/liveDecorations";
+import { CALLOUT_KINDS } from "$lib/callout";
 import { blockHandlers } from "$lib/liveBlocks";
 import { liveLanguage } from "$lib/livePreview";
 import { parsed } from "$lib/testing/parsed";
@@ -312,5 +313,165 @@ describe("subscript and superscript (#182)", () => {
     expect(at(0)).toEqual(["mark:1-4", "hide:1-2", "hide:3-4", "mark:7-10", "hide:7-8", "hide:9-10"]);
     expect(at(2)).toEqual(["mark:1-4", "mark:1-2", "mark:3-4", "mark:7-10", "hide:7-8", "hide:9-10"]);
     expect(at(10)).toEqual(["mark:1-4", "hide:1-2", "hide:3-4", "mark:7-10", "mark:7-8", "mark:9-10"]);
+  });
+});
+
+describe("callouts (#184)", () => {
+  /**
+   * Cases the preview and the Live editor must agree on: the source and its callouts in
+   * document order, each as `kind:title` (the title as shown, without its formatting).
+   */
+  const CASES: [string, string[]][] = [
+    // With and without a title.
+    ["> [!warning] Check the passphrase\n> There is no recovery.", ["warning:Check the passphrase"]],
+    ["> [!note]\n> Body.", ["note:Note"]],
+    ["> [!tip]", ["tip:Tip"]],
+    ["> [!tip] ", ["tip:Tip"]],
+    ["> [!info] Title only", ["info:Title only"]],
+    ["> [!note] Title\n>\n> Body in its own paragraph.", ["note:Title"]],
+    [">[!note] No space after the quote mark", ["note:No space after the quote mark"]],
+    [">   [!note] Indented", ["note:Indented"]],
+    ["> [!note] Lazy\ncontinuation", ["note:Lazy"]],
+    // Every kind, and Obsidian's aliases.
+    ...CALLOUT_KINDS.map((kind): [string, string[]] => [`> [!${kind}] T`, [`${kind}:T`]]),
+    ["> [!summary] T", ["abstract:T"]],
+    ["> [!tldr] T", ["abstract:T"]],
+    ["> [!hint] T", ["tip:T"]],
+    ["> [!check] T", ["success:T"]],
+    ["> [!done] T", ["success:T"]],
+    ["> [!help] T", ["question:T"]],
+    ["> [!faq] T", ["question:T"]],
+    ["> [!attention] T", ["warning:T"]],
+    ["> [!fail] T", ["failure:T"]],
+    ["> [!missing] T", ["failure:T"]],
+    ["> [!error] T", ["danger:T"]],
+    ["> [!cite] T", ["quote:T"]],
+    // The type is case-insensitive; an unknown type is a note that keeps its name as the title.
+    ["> [!WARNING] T", ["warning:T"]],
+    ["> [!Tip]", ["tip:Tip"]],
+    ["> [!custom] T", ["note:T"]],
+    ["> [!my-type]", ["note:My-type"]],
+    // Markdown in the title.
+    ["> [!note] A **bold** and `code` title", ["note:A bold and code title"]],
+    ["> [!note] See [[Other note]]", ["note:See Other note"]],
+    // Fold signs are hidden and the callout is open.
+    ["> [!note]- Folded\n> Body.", ["note:Folded"]],
+    ["> [!note]+ Open\n> Body.", ["note:Open"]],
+    ["> [!faq]-", ["question:Faq"]],
+    // Nested, and next to each other.
+    ["> [!note] Outer\n> > [!tip] Inner\n> > Deep.\n> Back.", ["note:Outer", "tip:Inner"]],
+    ["> [!note] Outer\n> Text.\n>\n> > [!danger]\n> > Deep.", ["note:Outer", "danger:Danger"]],
+    ["> > [!tip] Only the inner quote", ["tip:Only the inner quote"]],
+    ["> [!note] A\n\n> [!tip] B", ["note:A", "tip:B"]],
+    ["- > [!note] In a list", ["note:In a list"]],
+    // The marker is not at the start of the quote's first line.
+    ["> Text first\n> [!note] Not a callout", []],
+    ["> Text [!note] in the middle", []],
+    [">\n> [!note] After an empty line", []],
+    ["> - [!note] In a list in the quote", []],
+    ["> # [!note] In a heading", []],
+    ["[!note] Not in a quote", []],
+    // Not a marker.
+    ["> [!note]Title without a space", []],
+    ["> [!] Empty type", []],
+    ["> [! note] Space in the type", []],
+    ["> [note] No exclamation mark", []],
+    ["> \\[!note] Escaped", []],
+    ["> [!note]x- Not a fold sign", []],
+    // Code.
+    [">     [!note] Indented code in a quote", []],
+    ["> ```\n> [!note] In a fence\n> ```", []],
+    ["```\n> [!note] In a fence\n```", []],
+    ["    > [!note] Indented code", []],
+    ["> `[!note]` In code", []],
+  ];
+
+  const previewCallouts = (src: string) =>
+    [...renderMarkdown(src).matchAll(/<blockquote class="note-callout note-callout-([a-z]+)">\n<p class="note-callout-title">([\s\S]*?)<\/p>/g)].map(
+      (m) => `${m[1]}:${shown(m[2])}`,
+    );
+
+  /** From the Live editor's specs: a title line's kind, and its text without what is hidden, the label widget in the marker's place. */
+  function liveCallouts(src: string): string[] {
+    const { state, specs } = liveSpecs(src);
+    const classes = (from: number) => specs.flatMap((s) => (s.kind === "line" && s.from === from ? [s.class] : []));
+    const out: string[] = [];
+    for (let n = 1; n <= state.doc.lines; n++) {
+      const line = state.doc.line(n);
+      const all = classes(line.from);
+      if (!all.includes("cm-live-callout-title")) continue;
+      const kind = all.find((c) => /^cm-live-callout-(?!title$)/.test(c))!.replace("cm-live-callout-", "");
+      let text = "";
+      for (let pos = line.from; pos < line.to; pos++) {
+        const over = specs.find((s) => (s.kind === "hide" || s.kind === "widget") && s.from <= pos && pos < s.to);
+        if (!over) text += state.sliceDoc(pos, pos + 1);
+        else if (over.kind === "widget" && over.widget.type === "callout" && over.from === pos) text += over.widget.label;
+      }
+      out.push(`${kind}:${text.trim()}`);
+    }
+    return out;
+  }
+
+  it("the preview renders a callout with its kind and title", () => {
+    for (const [src, callouts] of CASES) expect(previewCallouts(src), src).toEqual(callouts);
+  });
+
+  it("the Live editor shows the same callouts", () => {
+    for (const [src, callouts] of CASES) expect(liveCallouts(src), src).toEqual(callouts);
+  });
+
+  it("splits the title from the body, and renders markdown in both", () => {
+    expect(renderMarkdown("> [!warning] Check the **passphrase**\n> There is *no* recovery.")).toBe(
+      '<blockquote class="note-callout note-callout-warning">\n<p class="note-callout-title">Check the <strong>passphrase</strong></p>\n<p>There is <em>no</em> recovery.</p>\n</blockquote>\n',
+    );
+    expect(renderMarkdown("> [!note]\n> Body.")).toBe(
+      '<blockquote class="note-callout note-callout-note">\n<p class="note-callout-title">Note</p>\n<p>Body.</p>\n</blockquote>\n',
+    );
+    expect(renderMarkdown("> [!tip] Title\n>\n> - a\n> - b")).toBe(
+      '<blockquote class="note-callout note-callout-tip">\n<p class="note-callout-title">Title</p>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n',
+    );
+  });
+
+  it("nests a callout in a callout", () => {
+    expect(renderMarkdown("> [!note] Outer\n> > [!tip] Inner\n> > Deep.")).toBe(
+      '<blockquote class="note-callout note-callout-note">\n<p class="note-callout-title">Outer</p>\n<blockquote class="note-callout note-callout-tip">\n<p class="note-callout-title">Inner</p>\n<p>Deep.</p>\n</blockquote>\n</blockquote>\n',
+    );
+  });
+
+  it("leaves an ordinary quote, and a marker that is not on the first line, as they were", () => {
+    expect(renderMarkdown("> quote")).toBe("<blockquote>\n<p>quote</p>\n</blockquote>\n");
+    expect(renderMarkdown("> Text\n> [!note] x")).toBe("<blockquote>\n<p>Text\n[!note] x</p>\n</blockquote>\n");
+  });
+
+  it("renders no style attribute, which the sanitizer strips", () => {
+    expect(renderMarkdown("> [!danger] T\n> body")).not.toContain("style=");
+  });
+
+  it("in Live, a nested callout's lines have its kind, not the outer one's", () => {
+    const { state, specs } = liveSpecs("> [!note] Outer\n> > [!tip] Inner\n> > Deep.\n>\n> Back.");
+    const kinds = (n: number) =>
+      specs.flatMap((s) => (s.kind === "line" && s.from === state.doc.line(n).from && /^cm-live-callout-(?!title$)/.test(s.class) ? [s.class] : []));
+    expect([1, 2, 3, 4, 5].map(kinds)).toEqual([
+      ["cm-live-callout-note"],
+      ["cm-live-callout-tip"],
+      ["cm-live-callout-tip"],
+      ["cm-live-callout-note"],
+      ["cm-live-callout-note"],
+    ]);
+  });
+
+  it("in Live, the marker shows while the cursor is on the title line", () => {
+    const at = (cursor: number) => {
+      const doc = "> [!note]- Title\n> Body.";
+      const state = parsed(EditorState.create({ doc, selection: EditorSelection.cursor(cursor), extensions: [liveLanguage()] }));
+      return buildLive(state, [{ from: 0, to: doc.length }], { ...inlineHandlers, ...blockHandlers })
+        .filter((s) => s.kind !== "line")
+        .map((s) => `${s.kind}:${state.sliceDoc(s.from, s.to)}`);
+    };
+    // Off the line: the `> ` and the marker with its fold sign are hidden.
+    expect(at(20)).toContain("hide:[!note]- ");
+    // On it: the marker is shown as syntax.
+    expect(at(3)).toContain("mark:[!note]- ");
+    expect(at(3).some((s) => s.startsWith("hide:[!note]"))).toBe(false);
   });
 });

@@ -304,6 +304,25 @@
     color: var(--text-2);
   }
 
+  /* A callout (`markdown.ts`, `callout`); `app.css` sets its colour and icon per kind. */
+  .preview :global(blockquote.note-callout) {
+    padding: 10px 14px 10px 16px;
+    border-left-color: var(--callout-color);
+    border-radius: 0 6px 6px 0;
+    background: var(--callout-tint);
+    color: var(--text);
+  }
+
+  .preview :global(blockquote.note-callout > :last-child) {
+    margin-bottom: 0;
+  }
+
+  .preview :global(.note-callout-title) {
+    margin-bottom: 6px;
+    color: var(--callout-color);
+    font-weight: 600;
+  }
+
   .preview :global(table) {
     border-collapse: collapse;
     margin: 0 0 16px;

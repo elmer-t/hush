@@ -639,6 +639,19 @@ mod tests {
         assert!(tags("---\ntag: \"#1, #b\"\n---\n").is_empty());
     }
 
+    /// A callout marker (#184) is neither a link nor a tag; what is written in the callout still counts.
+    #[test]
+    fn callout_markers_are_not_links_or_tags() {
+        for body in ["> [!warning] Check the passphrase\n> There is no recovery.", "> [!note]-\n> > [!tip]+ Inner", "> [!my-type]"] {
+            let p = parse(body);
+            assert!(p.links.is_empty(), "{body}");
+            assert!(p.tags.is_empty(), "{body}");
+        }
+        let p = parse("> [!note] See [[Other]] #topic\n> and [[Second|alias]].");
+        assert_eq!(p.links.iter().map(|l| l.title.as_str()).collect::<Vec<_>>(), ["Other", "Second"]);
+        assert_eq!(p.tags, ["topic"]);
+    }
+
     #[test]
     fn is_tag_rules() {
         for good in ["ok", "work", "two/sub", "café", "cafe", "bad", "2024-review", "x1", "Ab"] {
