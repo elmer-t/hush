@@ -157,6 +157,7 @@ export const inlineHandlers: Record<string, NodeHandler> = {
   StrongEmphasis: span("cm-live-strong", "EmphasisMark"),
   Emphasis: span("cm-live-em", "EmphasisMark"),
   Strikethrough: span("cm-live-strike", "StrikethroughMark"),
+  Highlight: span("cm-live-mark", "HighlightMark"),
   InlineCode: span("cm-live-code", "CodeMark"),
   ATXHeading1: heading(1),
   ATXHeading2: heading(2),

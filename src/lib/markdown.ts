@@ -1,6 +1,7 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { highlightFence } from "$lib/codeHighlight";
+import { highlightDelimiter } from "$lib/highlightMark";
 import { parseWikilink } from "$lib/wikilink";
 
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
@@ -26,6 +27,42 @@ md.inline.ruler.before("link", "wikilink", (state, silent) => {
     state.push("wikilink_close", "a", -1);
   }
   state.pos = link.to;
+  return true;
+});
+
+/**
+ * `==text==` as `<mark>` (#181). The delimiters are found by `highlightDelimiter`, shared
+ * with the Live editor, and paired by markdown-it like those of `~~strikethrough~~`, so other
+ * inline formatting works inside and an unclosed `==` stays text.
+ */
+md.inline.ruler.after("emphasis", "mark", (state, silent) => {
+  if (silent || state.pos + 1 >= state.posMax) return false;
+  const delimiter = highlightDelimiter(state.src, state.pos);
+  if (!delimiter) return false;
+  const token = state.push("text", "", 0);
+  token.content = "==";
+  state.delimiters.push({ marker: 0x3d, length: 0, token: state.tokens.length - 1, end: -1, open: delimiter.open, close: delimiter.close });
+  state.pos += 2;
+  return true;
+});
+
+md.inline.ruler2.after("emphasis", "mark", (state) => {
+  // `tokens_meta` has holes (a task's box has no entry), which `map` would keep.
+  const lists = [state.delimiters];
+  for (const meta of state.tokens_meta) if (meta?.delimiters) lists.push(meta.delimiters);
+  for (const delimiters of lists) {
+    for (const open of delimiters) {
+      if (open.marker !== 0x3d || open.end === -1) continue;
+      for (const [index, type, nesting] of [[open.token, "mark_open", 1], [delimiters[open.end].token, "mark_close", -1]] as const) {
+        const token = state.tokens[index];
+        token.type = type;
+        token.tag = "mark";
+        token.nesting = nesting;
+        token.markup = "==";
+        token.content = "";
+      }
+    }
+  }
   return true;
 });
 
