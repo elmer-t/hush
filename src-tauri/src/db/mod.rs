@@ -11,6 +11,7 @@ mod links;
 mod lock;
 mod metadata;
 mod notes;
+mod readme;
 mod reasons;
 mod recent;
 mod retag;
