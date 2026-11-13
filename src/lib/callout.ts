@@ -1,6 +1,6 @@
 /**
  * Callouts (#184): a block quote whose first line starts with `[!type]`, as in Obsidian and
- * GitHub. Read here for both the preview (`markdown.ts`) and the Live editor (`liveBlocks.ts`).
+ * GitHub. Read here for the Live editor (`liveBlocks.ts`).
  */
 
 /** The kinds a callout is drawn as: each has a colour and an icon (`app.css`). */

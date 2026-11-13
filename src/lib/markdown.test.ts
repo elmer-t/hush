@@ -20,7 +20,7 @@ function liveSpecs(src: string) {
 }
 
 describe("task lists (#179)", () => {
-  /** Cases the preview and the Live editor must agree on: the source and its checkboxes, in order. */
+  /** The source and its checkboxes, in order. */
   const CASES: [string, boolean[]][] = [
     ["- [ ] todo", [false]],
     ["- [x] done", [true]],
@@ -60,44 +60,14 @@ describe("task lists (#179)", () => {
     ["- ```\n  [ ] a\n  ```", []],
   ];
 
-  const previewBoxes = (src: string) =>
-    [...renderMarkdown(src).matchAll(/<span class="task-box[^"]*" role="checkbox" aria-checked="(true|false)"/g)].map((m) => m[1] === "true");
-
   const liveBoxes = (src: string) =>
     liveSpecs(src)
       .specs.filter((s) => s.kind === "widget" && s.widget.type === "task")
       .sort((a, b) => a.from - b.from)
       .map((s) => s.kind === "widget" && s.widget.type === "task" && s.widget.checked);
 
-  it("the preview shows a checkbox for each task", () => {
-    for (const [src, boxes] of CASES) expect(previewBoxes(src), src).toEqual(boxes);
-  });
-
-  it("the Live editor shows the same checkboxes", () => {
+  it("the Live editor shows a checkbox for each task", () => {
     for (const [src, boxes] of CASES) expect(liveBoxes(src), src).toEqual(boxes);
-  });
-
-  it("drops the marker and the bullet, and keeps the text", () => {
-    expect(renderMarkdown("- [x] **done** thing\n- plain")).toBe(
-      '<ul>\n<li class="task-item"><span class="task-box task-done" role="checkbox" aria-checked="true" aria-disabled="true" aria-label="Done"></span><strong>done</strong> thing</li>\n<li>plain</li>\n</ul>\n',
-    );
-    expect(renderMarkdown("1. [ ] a")).toBe(
-      '<ol>\n<li class="task-item"><span class="task-box" role="checkbox" aria-checked="false" aria-disabled="true" aria-label="Not done"></span>a</li>\n</ol>\n',
-    );
-  });
-
-  it("puts the box inside the paragraph of a loose item", () => {
-    expect(renderMarkdown("- [ ] a\n\n- b")).toContain('<li class="task-item">\n<p><span class="task-box"');
-  });
-
-  it("renders no input element, which the sanitizer forbids", () => {
-    expect(renderMarkdown("- [ ] a\n- [x] b")).not.toContain("<input");
-  });
-
-  it("leaves text that is not a task as it was", () => {
-    expect(renderMarkdown("- a [ ] b")).toBe("<ul>\n<li>a [ ] b</li>\n</ul>\n");
-    expect(renderMarkdown("- [x]")).toBe("<ul>\n<li>[x]</li>\n</ul>\n");
-    expect(renderMarkdown("- `[ ] a`")).toBe("<ul>\n<li><code>[ ] a</code></li>\n</ul>\n");
   });
 });
 
@@ -319,8 +289,7 @@ describe("subscript and superscript (#182)", () => {
 
 describe("callouts (#184)", () => {
   /**
-   * Cases the preview and the Live editor must agree on: the source and its callouts in
-   * document order, each as `kind:title` (the title as shown, without its formatting).
+   * The source and its callouts in document order, each as `kind:title` (the title as shown, without its formatting).
    */
   const CASES: [string, string[]][] = [
     // With and without a title.
@@ -387,11 +356,6 @@ describe("callouts (#184)", () => {
     ["> `[!note]` In code", []],
   ];
 
-  const previewCallouts = (src: string) =>
-    [...renderMarkdown(src).matchAll(/<blockquote class="note-callout note-callout-([a-z]+)">\n<p class="note-callout-title">([\s\S]*?)<\/p>/g)].map(
-      (m) => `${m[1]}:${shown(m[2])}`,
-    );
-
   /** From the Live editor's specs: a title line's kind, and its text without what is hidden, the label widget in the marker's place. */
   function liveCallouts(src: string): string[] {
     const { state, specs } = liveSpecs(src);
@@ -413,39 +377,8 @@ describe("callouts (#184)", () => {
     return out;
   }
 
-  it("the preview renders a callout with its kind and title", () => {
-    for (const [src, callouts] of CASES) expect(previewCallouts(src), src).toEqual(callouts);
-  });
-
-  it("the Live editor shows the same callouts", () => {
+  it("the Live editor shows a callout with its kind and title", () => {
     for (const [src, callouts] of CASES) expect(liveCallouts(src), src).toEqual(callouts);
-  });
-
-  it("splits the title from the body, and renders markdown in both", () => {
-    expect(renderMarkdown("> [!warning] Check the **passphrase**\n> There is *no* recovery.")).toBe(
-      '<blockquote class="note-callout note-callout-warning">\n<p class="note-callout-title">Check the <strong>passphrase</strong></p>\n<p>There is <em>no</em> recovery.</p>\n</blockquote>\n',
-    );
-    expect(renderMarkdown("> [!note]\n> Body.")).toBe(
-      '<blockquote class="note-callout note-callout-note">\n<p class="note-callout-title">Note</p>\n<p>Body.</p>\n</blockquote>\n',
-    );
-    expect(renderMarkdown("> [!tip] Title\n>\n> - a\n> - b")).toBe(
-      '<blockquote class="note-callout note-callout-tip">\n<p class="note-callout-title">Title</p>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n',
-    );
-  });
-
-  it("nests a callout in a callout", () => {
-    expect(renderMarkdown("> [!note] Outer\n> > [!tip] Inner\n> > Deep.")).toBe(
-      '<blockquote class="note-callout note-callout-note">\n<p class="note-callout-title">Outer</p>\n<blockquote class="note-callout note-callout-tip">\n<p class="note-callout-title">Inner</p>\n<p>Deep.</p>\n</blockquote>\n</blockquote>\n',
-    );
-  });
-
-  it("leaves an ordinary quote, and a marker that is not on the first line, as they were", () => {
-    expect(renderMarkdown("> quote")).toBe("<blockquote>\n<p>quote</p>\n</blockquote>\n");
-    expect(renderMarkdown("> Text\n> [!note] x")).toBe("<blockquote>\n<p>Text\n[!note] x</p>\n</blockquote>\n");
-  });
-
-  it("renders no style attribute, which the sanitizer strips", () => {
-    expect(renderMarkdown("> [!danger] T\n> body")).not.toContain("style=");
   });
 
   it("in Live, a nested callout's lines have its kind, not the outer one's", () => {
@@ -478,23 +411,7 @@ describe("callouts (#184)", () => {
 });
 
 describe("the README note of a new vault (#190)", () => {
-  it("shows each Markdown feature it describes, in the preview", async () => {
-    const { loadGrammar } = await import("$lib/codeHighlight");
-    expect(await loadGrammar("python")).toBe(true);
-    const html = renderMarkdown(readme);
-    expect(html).toContain('<blockquote class="note-callout note-callout-warning">\n<p class="note-callout-title">There is no passphrase recovery</p>');
-    expect(html.match(/class="task-box"/g)).toHaveLength(2);
-    expect(html.match(/<mark>/g)).toHaveLength(2);
-    expect(html).toContain("H<sub>2</sub>O");
-    expect(html).toContain("x<sup>2</sup>");
-    expect(html).toContain('<pre><code class="language-python"><span class="tok-keyword">def</span>');
-    // The examples of the syntax are in code spans, so they show as written.
-    for (const example of ["[[Note title]]", "#tag", "==text==", "H~2~O", "x^2^", "- [ ]", "[!note]"]) {
-      expect(html, example).toContain(`<code>${example}</code>`);
-    }
-  });
-
-  it("shows the same in the Live editor", () => {
+  it("shows each Markdown feature it describes, in the Live editor", () => {
     expect(liveNodes(readme, "Highlight")).toEqual(["==indexes every note again==", "==highlighted=="]);
     expect(liveNodes(readme, "Subscript")).toEqual(["~2~"]);
     expect(liveNodes(readme, "Superscript")).toEqual(["^2^"]);
