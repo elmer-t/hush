@@ -37,6 +37,8 @@
   --mark-text: #1a1b19;
   --mark-current: #f0b232;
   --mark-current-text: #1a1b19;
+  --highlight: #d3efcf;
+  --highlight-text: #1a1b19;
   --syn-keyword: #8f2d56;
   --syn-string: #2a6a36;
   --syn-number: #8a4b00;
@@ -93,6 +95,8 @@
   --mark-text: #fcefc4;
   --mark-current: #d9a53a;
   --mark-current-text: #1a1b19;
+  --highlight: #2c5233;
+  --highlight-text: #e6f4e3;
   --syn-keyword: #e79bb9;
   --syn-string: #9ccf98;
   --syn-number: #e3b56b;
@@ -135,6 +139,8 @@
     --mark-text: #fcefc4;
     --mark-current: #d9a53a;
     --mark-current-text: #1a1b19;
+    --highlight: #2c5233;
+    --highlight-text: #e6f4e3;
     --syn-keyword: #e79bb9;
     --syn-string: #9ccf98;
     --syn-number: #e3b56b;
@@ -520,6 +526,13 @@ mark {
 ::highlight(hush-find-current) {
   background-color: var(--mark-current);
   color: var(--mark-current-text);
+}
+
+/* `==highlighted==` text in a note (#181): its own colour, so it is not taken for a find match. */
+.preview mark:not(.hush-find) {
+  padding: 0;
+  background: var(--highlight);
+  color: var(--highlight-text);
 }
 
 mark.hush-find {

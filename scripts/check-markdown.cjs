@@ -39,13 +39,23 @@ const CODE = [
   fenced("mermaid", "flowchart TD\n  A --> B"),
 ].join("\n");
 
+const MARKS = [
+  "Plain and ==important== text, ==**bold** inside== and a==b==c.",
+  "",
+  "Not marks: a == b, ==open, `==code==`.",
+  "",
+  "- ==in a list==",
+  "",
+  "Find me: important.",
+].join("\n");
+
 let failed = 0;
 function check(name, ok, detail = "") {
   if (!ok) failed++;
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok || !detail ? "" : `: ${detail}`}`);
 }
 
-async function mounted(browser, scheme, body) {
+async function mounted(browser, scheme, body, find) {
   const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
   const errors = [];
@@ -62,7 +72,7 @@ async function mounted(browser, scheme, body) {
   await page.waitForTimeout(800);
   await page.evaluate(() => import("/src/lib/checks/markdown-harness.svelte.ts"));
   errors.length = 0;
-  await page.evaluate((b) => window.__mountMarkdown(b), body);
+  await page.evaluate(([b, f]) => window.__mountMarkdown(b, f), [body, find]);
   await page.waitForSelector("#live .cm-content");
   await page.waitForTimeout(300);
   return { ctx, page, errors, requests };
@@ -153,12 +163,45 @@ async function code(browser, scheme, colours) {
   await ctx.close();
 }
 
+async function marks(browser, scheme) {
+  const { ctx, page, errors } = await mounted(browser, scheme, MARKS, "important");
+  const want = ["important", "bold inside", "b", "in a list"];
+  const preview = await page.evaluate(() => [...document.querySelectorAll("#preview mark")].map((m) => m.textContent));
+  // Off the cursor the `==` are hidden, so a Live mark's text is the highlighted text.
+  const live = await page.evaluate(() => [...document.querySelectorAll("#live .cm-live-mark")].map((m) => m.textContent));
+  check(`${scheme}: preview highlights`, preview.join("|") === want.join("|"), preview.join("|"));
+  check(`${scheme}: Live shows the same highlights, markers hidden`, live.join("|") === want.join("|"), live.join("|"));
+  const colour = (sel) => page.evaluate((sel) => { const s = getComputedStyle(document.querySelector(sel)); return `${s.backgroundColor} ${s.color}`; }, sel);
+  const p = await colour("#preview mark");
+  check(`${scheme}: same colours in the preview and in Live`, p === (await colour("#live .cm-live-mark")), `${p} / ${await colour("#live .cm-live-mark")}`);
+  const find = await page.evaluate(() => {
+    const probe = document.createElement("mark");
+    probe.className = "hush-find";
+    document.body.append(probe);
+    const c = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { colour: c, matches: CSS.highlights.get("hush-find")?.size ?? -1 };
+  });
+  check(`${scheme}: not the colour of a find match`, !p.startsWith(find.colour), `${p} / ${find.colour}`);
+  check(`${scheme}: find-in-note finds text inside and outside a highlight, and leaves the marks`, find.matches === 2 && preview.length === 4, JSON.stringify(find));
+  const text = await page.locator("#preview").textContent();
+  check(`${scheme}: text that is not a highlight keeps its ==`, text.includes("a == b") && text.includes("==open") && text.includes("==code=="));
+  // The cursor on a highlight shows its markers.
+  await page.locator("#live .cm-live-mark").first().click();
+  await page.waitForTimeout(200);
+  check(`${scheme}: the markers show while the cursor is on the highlight`, (await page.locator("#live .cm-live-mark").first().textContent()) === "==important==");
+  check(`${scheme}: no errors`, errors.length === 0, errors.join("; "));
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/marks-${scheme}.png` });
+  await ctx.close();
+}
+
 async function main() {
   const browser = await chromium.launch();
   const colours = {};
   for (const scheme of ["light", "dark"]) {
     await tasks(browser, scheme);
     await code(browser, scheme, colours);
+    await marks(browser, scheme);
   }
   check("light and dark use different colours", colours.preview.light !== colours.preview.dark);
   await browser.close();

@@ -6,7 +6,9 @@ import { mount, unmount } from "svelte";
 import MarkdownEditor from "$lib/MarkdownEditor.svelte";
 import Preview from "$lib/Preview.svelte";
 
-(window as any).__mountMarkdown = (body: string) => {
+/** `find`: a query for the preview's find-in-note, as the find bar would pass it. */
+(window as any).__mountMarkdown = (body: string, find?: string) => {
+  const spec = find ? { query: find, replace: "", caseSensitive: false, wholeWord: false, regexp: false } : null;
   document.body.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;height:100vh">
       <div id="preview" style="overflow:auto"></div>
@@ -15,7 +17,7 @@ import Preview from "$lib/Preview.svelte";
     </div>`;
   const el = (id: string) => document.getElementById(id)!;
   const apps = [
-    mount(Preview, { target: el("preview"), props: { body, large: true } }),
+    mount(Preview, { target: el("preview"), props: { body, large: true, find: spec, findLead: true } }),
     // The cursor starts at the top, so the note opens with a line that has no syntax to reveal.
     mount(MarkdownEditor, { target: el("live"), props: { doc: "Live\n\n" + body, mode: "live", onchange: () => {} } }),
     mount(MarkdownEditor, { target: el("source"), props: { doc: "Source\n\n" + body, mode: "source", onchange: () => {} } }),
