@@ -53,7 +53,7 @@ const listItem: NodeHandler = (node, cx) => {
   });
   if (cx.revealedLines(mark.from, mark.to)) return;
   const bullet = node.parent?.name === "BulletList";
-  // A task is the item's first paragraph, on the list marker's line, as in the preview (`markdown.ts`).
+  // A task is the item's first paragraph, on the list marker's line.
   const marker = node.getChild("Task")?.getChild("TaskMarker");
   if (marker && marker.from <= cx.state.doc.lineAt(mark.from).to) {
     const checked = cx.state.sliceDoc(marker.from + 1, marker.from + 2) !== " ";

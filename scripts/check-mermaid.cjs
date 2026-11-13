@@ -1,6 +1,7 @@
-// Browser check for Mermaid diagrams in the preview (#89). Needs `npm run dev` (Vite on :1420)
-// and Playwright: `node scripts/check-mermaid.cjs [screenshot dir]`. It mounts the preview
-// alone through src/lib/checks/mermaid-harness.svelte.ts, under the app's CSP, and exits 1 when a check fails.
+// Browser check for Mermaid diagrams in the Live editor (#89, #136). Needs `npm run dev` (Vite
+// on :1420) and Playwright: `node scripts/check-mermaid.cjs [screenshot dir]`. It mounts the
+// Live editor alone through src/lib/checks/mermaid-harness.svelte.ts, under the app's CSP, and
+// exits 1 when a check fails.
 const { chromium } = require("playwright");
 const crypto = require("crypto");
 const URL = "http://127.0.0.1:1420/";
@@ -8,6 +9,10 @@ const SHOTS = process.argv[2];
 // Tauri adds hashes for the page's inline boot script; the dev server doesn't, so this does.
 const CSP = (hashes) => `default-src 'self'; script-src 'self' ${hashes}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:1420 ws://localhost:1420; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'`;
 const fence = (s) => "```mermaid\n" + s + "\n```\n";
+// The cursor starts on the first line; a fence there would be shown as source, for editing.
+const INTRO = "Intro\n\n";
+// Tall enough to have every diagram of a small note in view: the editor draws nothing else.
+const TALL = 6000;
 const four = [
   "flowchart TD\n  A[Start] --> B{Ok?}\n  B -->|yes| C[Done]\n  B -->|no| D[Retry] --> A",
   "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi\n  Note over Alice,Bob: a note",
@@ -44,18 +49,19 @@ async function main() {
     await page.evaluate(() => import("/src/lib/checks/mermaid-harness.svelte.ts"));
     const mark = requests.length;
     // 1. no diagrams: mermaid not requested
-    await page.evaluate(() => (window.h = window.__mountPreview("# Plain\n\nNo diagrams here.\n\n```js\nlet a = 1;\n```\n")));
+    await page.evaluate(() => (window.h = window.__mountLive("# Plain\n\nNo diagrams here.\n\n```js\nlet a = 1;\n```\n")));
     await page.waitForTimeout(1000);
     out[scheme + ":plain mermaid requests"] = requests.slice(mark).filter((u) => /mermaid/.test(u)).length;
     // 2. four diagrams
-    await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, four.map(fence).join("\n"));
+    await page.setViewportSize({ width: 1000, height: TALL });
+    await page.evaluate(([b, h]) => { window.h.unmount(); window.h = window.__mountLive(b, h); }, [INTRO + four.map(fence).join("\n"), TALL]);
         await page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0, null, { timeout: 30000 });
     out[scheme + ":four"] = await page.evaluate(() => [...document.querySelectorAll(".mermaid-block")].map((b) => b.dataset.state + ":" + (b.querySelector("svg")?.getAttribute("aria-roledescription") ?? b.textContent.slice(0, 80))));
     out[scheme + ":labels"] = await page.evaluate(() => ["Start", "Ok?", "Alice", "Animal", "Task one"].every((t) => document.getElementById("scroller").querySelector(".mermaid-block svg") && document.getElementById("scroller").textContent.includes(t)));
     out[scheme + ":mermaid requests now"] = requests.slice(mark).filter((u) => /mermaid/.test(u)).length;
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/four-${scheme}.png`, fullPage: true });
     // 3. one broken of three
-    await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, "Intro\n\n" + fence(four[0]) + fence("flowchart TD\n  A --> --> ]]") + fence(four[1]) + "\nOutro\n");
+    await page.evaluate(([b, h]) => { window.h.unmount(); window.h = window.__mountLive(b, h); }, [INTRO + fence(four[0]) + fence("flowchart TD\n  A --> --> ]]") + fence(four[1]) + "\nOutro\n", TALL]);
     await page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0, null, { timeout: 30000 });
     out[scheme + ":broken"] = await page.evaluate(() => [...document.querySelectorAll(".mermaid-block")].map((b) => b.dataset.state));
     out[scheme + ":body strays"] = await page.evaluate(() => [...document.body.children].filter((c) => c.id !== "scroller").map((c) => c.tagName + "#" + c.id));
@@ -70,7 +76,7 @@ async function main() {
         'sequenceDiagram\n  Alice->>Bob: <img src=x onerror=window.__pwned=7>',
         'flowchart TD\n  A --> B\n  click A "https://example.com" "tip"',
       ];
-      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, hostile.map(fence).join("\n"));
+      await page.evaluate(([b, h]) => { window.h.unmount(); window.h = window.__mountLive(b, h); }, [INTRO + hostile.map(fence).join("\n"), TALL]);
       await page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0, null, { timeout: 30000 });
       await page.waitForTimeout(500);
       // click and hover everything
@@ -89,14 +95,15 @@ async function main() {
       // 5. limits
       const many = "flowchart TD\n" + Array.from({ length: 1200 }, (_, i) => `  n${i} --> n${i + 1}`).join("\n");
       const huge = "flowchart TD\n" + "  A --> B\n".repeat(6000);
-      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, fence(many) + fence(huge));
+      await page.evaluate(([b, h]) => { window.h.unmount(); window.h = window.__mountLive(b, h); }, [INTRO + fence(many) + fence(huge), TALL]);
       const t0 = Date.now();
-      await page.waitForFunction(() => { const s = document.getElementById("scroller"); s.scrollTop = s.scrollHeight; return document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0; }, null, { timeout: 60000, polling: 200 });
+      await page.waitForFunction(() => document.querySelectorAll(".mermaid-block").length === 2 && document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0, null, { timeout: 60000, polling: 200 });
       out["limits"] = { ms: Date.now() - t0, errs: await page.evaluate(() => [...document.querySelectorAll(".mermaid-error p")].map((p) => p.textContent.slice(0, 120))) };
       // 6. 50 diagrams
       const fifty = Array.from({ length: 50 }, (_, i) => `## Section ${i}\n\nSome text ${i}.\n\n` + fence(four[i % 4].replace("Start", "Start " + i))).join("\n");
       const t1 = Date.now();
-      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, fifty);
+      await page.setViewportSize({ width: 1000, height: 800 });
+      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountLive(b); }, fifty);
       const firstText = Date.now() - t1;
       await page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="done"]').length >= 1, null, { timeout: 30000 });
       const firstDiagram = Date.now() - t1;
@@ -104,7 +111,7 @@ async function main() {
       const doneAfterWait = await page.evaluate(() => document.querySelectorAll('.mermaid-block[data-state="done"]').length);
       // scroll through, measure longest frame gap
       const scroll = await page.evaluate(async () => {
-        const s = document.getElementById("scroller"); let worst = 0; let last = performance.now();
+        const s = document.querySelector(".cm-scroller"); let worst = 0; let last = performance.now();
         let run = true; (function f() { const n = performance.now(); worst = Math.max(worst, n - last); last = n; if (run) requestAnimationFrame(f); })();
         for (let y = 0; y < s.scrollHeight; y += 200) { s.scrollTop = y; await new Promise((r) => setTimeout(r, 50)); }
         run = false; return { worstFrameMs: Math.round(worst), height: s.scrollHeight };
@@ -112,7 +119,7 @@ async function main() {
       await page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="pending"]').length === 0, null, { timeout: 60000 });
       out["fifty"] = { firstTextMs: firstText, firstDiagramMs: firstDiagram, doneAfter1500ms: doneAfterWait, scroll, allMs: Date.now() - t1 };
       // 7. typing outside a diagram: no re-render
-      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, "Text\n\n" + fence(four[0]));
+      await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountLive(b); }, "Text\n\n" + fence(four[0]));
       await page.waitForFunction(() => document.querySelector('.mermaid-block[data-state="done"]'));
       out["typing"] = await page.evaluate(async (base) => {
         const ids = []; 
@@ -127,7 +134,7 @@ async function main() {
       }, "Text\n\n" + fence(four[0]));
     }
     // 8. theme switch while open
-    await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountPreview(b); }, fence(four[0]));
+    await page.evaluate((b) => { window.h.unmount(); window.h = window.__mountLive(b); }, INTRO + fence(four[0]));
     await page.waitForFunction(() => document.querySelector('.mermaid-block[data-state="done"]'));
     const before = await page.evaluate(() => document.querySelector(".mermaid-block svg").id);
     await page.emulateMedia({ colorScheme: scheme === "light" ? "dark" : "light" });

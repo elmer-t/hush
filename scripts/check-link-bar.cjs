@@ -1,9 +1,10 @@
 // Browser check for the link bar (#131). Needs `npm run dev` (Vite on :1420) and Playwright:
-// `node scripts/check-link-bar.cjs [screenshot dir]`. Mounts the preview alone through
+// `node scripts/check-link-bar.cjs [screenshot dir]`. Mounts the Live editor alone through
 // src/lib/checks/mermaid-harness.svelte.ts with `resolve_link` mocked; exits 1 when a check fails.
 const { chromium } = require("playwright");
 const URL = "http://127.0.0.1:1420/";
 const SHOTS = process.argv[2];
+const LINK = "#scroller :is(.cm-live-link, .cm-live-wikilink)";
 const body = [
   "# Links",
   "",
@@ -39,14 +40,14 @@ async function main() {
   await page.goto(URL);
   await page.waitForTimeout(1500);
   await page.evaluate(() => import("/src/lib/checks/mermaid-harness.svelte.ts"));
-  await page.evaluate((b) => (window.h = window.__mountPreview(b)), body);
-  await page.waitForSelector(".preview a");
+  await page.evaluate((b) => (window.h = window.__mountLive(b)), body);
+  await page.waitForSelector(LINK);
 
   const bar = () => page.evaluate(() => document.querySelector(".link-bar")?.textContent.trim() ?? null);
   const results = [];
   const check = (name, got, ok) => results.push({ name, got, ok: ok(got) });
   const hover = async (sel, shot) => {
-    await page.locator(".preview a", { hasText: sel }).first().hover();
+    await page.locator(LINK, { hasText: sel }).first().hover();
     await page.waitForTimeout(120);
     if (SHOTS && shot) await page.screenshot({ path: `${SHOTS}/${shot}.png` });
     return bar();
@@ -66,23 +67,19 @@ async function main() {
   await page.mouse.move(900, 100);
   await page.waitForTimeout(120);
   check("hidden after leaving", await bar(), (s) => s === null);
-  await page.locator(".preview a", { hasText: "the docs" }).focus();
-  check("keyboard focus", await bar(), (s) => s === "https://example.com/docs?x=1");
-  await page.keyboard.press("Tab");
-  check("focus moves", await bar(), (s) => s === "https://bare.example.org/page");
   // A link under the bar's own corner moves the bar to the right.
   await page.mouse.move(900, 100);
-  const right = await page.evaluate(async () => {
-    const a = document.querySelector(".preview a");
+  const right = await page.evaluate(async (sel) => {
+    const a = document.querySelector(sel);
     a.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, clientX: 10, clientY: innerHeight - 5 }));
     await new Promise((r) => setTimeout(r, 50));
     const r = document.querySelector(".link-bar").getBoundingClientRect();
     return Math.round(innerWidth - r.right);
-  });
+  }, LINK);
   check("flips right under the pointer", right, (gap) => gap === 0);
   await page.evaluate(() => window.h.set("# Changed\n\n[x](https://x.example)"));
   await page.waitForTimeout(120);
-  check("hidden after re-render", await bar(), (s) => s === null);
+  check("hidden after an edit", await bar(), (s) => s === null);
 
   for (const r of results) console.log(`${r.ok ? "ok  " : "FAIL"} ${r.name}: ${JSON.stringify(r.got)}`);
   if (errors.length) console.log("page errors:", errors);

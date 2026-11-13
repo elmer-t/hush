@@ -133,7 +133,7 @@ const frontmatter = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** The preview's typography (`Preview.svelte`, `large`), for the editor. */
+/** The typography of a note in Live: one centred serif column. */
 const theme = EditorView.theme({
   "&": { height: "100%", color: "var(--text)", backgroundColor: "transparent" },
   ".cm-scroller": { fontFamily: "var(--serif)", fontSize: "18px", lineHeight: "1.7" },
@@ -157,7 +157,7 @@ const theme = EditorView.theme({
   ".cm-live-strong": { fontWeight: "600" },
   ".cm-live-em": { fontStyle: "italic" },
   ".cm-live-strike": { textDecoration: "line-through" },
-  // No line height of their own, so a line with one is as high as the others (as in `Preview.svelte`).
+  // No line height of their own, so a line with one is as high as the others.
   ".cm-live-sub, .cm-live-sup": { fontSize: "0.75em", lineHeight: "0" },
   ".cm-live-sub": { verticalAlign: "sub" },
   ".cm-live-sup": { verticalAlign: "super" },

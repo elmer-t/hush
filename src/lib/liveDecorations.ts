@@ -120,8 +120,10 @@ const linkMark = (cx: BuildContext, from: number, to: number, url: SyntaxNode) =
 /** `[text](url "title")`: the text as a link. Links without a URL (references) stay text. */
 const link: NodeHandler = (node, cx) => {
   const marks = node.getChildren("LinkMark");
-  const url = node.getChild("URL");
-  if (!url || marks.length < 3 || cx.state.sliceDoc(marks[1].from, marks[1].to) !== "]") return;
+  if (marks.length < 3 || cx.state.sliceDoc(marks[1].from, marks[1].to) !== "]") return;
+  // The destination, after the `]`: a URL written as the link's text is a `URL` node too.
+  const url = node.getChildren("URL").find((u) => u.from >= marks[1].to);
+  if (!url) return;
   const revealed = cx.revealed(node.from, node.to);
   linkMark(cx, marks[0].to, marks[1].from, url);
   cx.syntax(marks[0].from, marks[0].to, revealed);

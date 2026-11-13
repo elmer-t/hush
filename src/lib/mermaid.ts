@@ -1,12 +1,11 @@
 import DOMPurify from "dompurify";
 import type { Mermaid, MermaidConfig } from "mermaid";
-import { currentScheme, onSchemeChange } from "$lib/theme";
+import { currentScheme } from "$lib/theme";
 
 /**
- * Mermaid diagrams in the preview. `markdown.ts` turns a ```mermaid fence into a
- * `.mermaid-block` placeholder holding the escaped source; this module replaces each one
- * with the rendered SVG once it is near the viewport. Mermaid itself is loaded with a
- * dynamic import the first time a note has a diagram, so notes without one never fetch it.
+ * Mermaid diagrams: rendering, sanitising and caching, for the Live editor's widgets
+ * (`liveMermaid.ts`). Mermaid itself is loaded with a dynamic import the first time a note has
+ * a diagram, so notes without one never fetch it.
  */
 
 const MAX_TEXT = 50_000;
@@ -14,8 +13,6 @@ const MAX_EDGES = 1_000;
 const CACHE_SIZE = 200;
 /** Quiet time after the last keystroke before a changed diagram renders. */
 const DEBOUNCE_MS = 300;
-/** Updates closer together than this count as typing, and their diagrams wait for `DEBOUNCE_MS`. */
-const TYPING_MS = 1_000;
 
 /**
  * Keys a `%%{init: …}%%` directive in a note may not change. Mermaid's own list covers the
@@ -204,125 +201,10 @@ function show(block: HTMLElement, source: string, result: Result) {
   block.replaceChildren(box);
 }
 
-function scroller(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const { overflowY } = getComputedStyle(p);
-    if (overflowY === "auto" || overflowY === "scroll") return p;
-  }
-  return null;
-}
-
 /**
- * Keeps the diagrams in `root` rendered. Call `update()` after every change to its HTML: cached
- * diagrams are put back at once, the rest render one at a time once near the viewport.
- */
-export function diagrams(root: HTMLElement) {
-  const sources = new WeakMap<HTMLElement, string>();
-  const timers = new Set<ReturnType<typeof setTimeout>>();
-  let theme: Theme | null = null;
-  let lastUpdate = 0;
-  let notBefore = 0;
-  let observer: IntersectionObserver | null = null;
-  /** What each block showed before the last `{@html}` update, by position in the note. */
-  let previous: (Node[] | null)[] = [];
-
-  function watch(block: HTMLElement) {
-    observer ??= new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) if (entry.isIntersecting) request(entry.target as HTMLElement);
-      },
-      { root: scroller(root), rootMargin: "600px 0px" },
-    );
-    observer.unobserve(block);
-    observer.observe(block);
-  }
-
-  function request(block: HTMLElement) {
-    const wait = notBefore - Date.now();
-    if (wait > 0) {
-      const timer = setTimeout(() => {
-        timers.delete(timer);
-        request(block);
-      }, wait);
-      timers.add(timer);
-      return;
-    }
-    // Replaced by a newer update (typing), or already rendered for this theme.
-    if (!block.isConnected || block.dataset.state !== "pending" || !theme) return;
-    const source = sources.get(block)!;
-    void render(source, theme).then(() => fillFromCache());
-  }
-
-  /** Puts finished renders into every block still waiting for that source and theme. */
-  function fillFromCache() {
-    if (!theme) return;
-    for (const block of root.querySelectorAll<HTMLElement>('.mermaid-block[data-state="pending"]')) {
-      const source = sources.get(block)!;
-      const hit = cached(`${theme.key}\n${source}`);
-      if (hit) {
-        observer?.unobserve(block);
-        show(block, source, hit);
-      }
-    }
-  }
-
-  function refresh(blocks: Iterable<HTMLElement>) {
-    for (const block of blocks) {
-      block.dataset.state = "pending";
-      watch(block);
-    }
-    fillFromCache();
-  }
-
-  function onScheme() {
-    const next = readTheme();
-    if (next.key === theme?.key) return;
-    theme = next;
-    // Old diagrams stay up until their new rendering is ready.
-    refresh(root.querySelectorAll<HTMLElement>(".mermaid-block"));
-  }
-  const stopWatching = onSchemeChange(onScheme);
-
-  return {
-    /** Call before the HTML is replaced, so a diagram being edited keeps showing its last rendering. */
-    snapshot() {
-      previous = [...root.querySelectorAll<HTMLElement>(".mermaid-block")].map((block) =>
-        block.dataset.state === "pending" && block.dataset.stale === undefined ? null : [...block.childNodes],
-      );
-    },
-    update() {
-      const blocks = [...root.querySelectorAll<HTMLElement>(".mermaid-block:not([data-state])")];
-      const now = Date.now();
-      const typing = now - lastUpdate < TYPING_MS;
-      if (typing) notBefore = now + DEBOUNCE_MS;
-      lastUpdate = now;
-      const stale = typing ? previous : [];
-      previous = [];
-      if (blocks.length === 0) return;
-      theme = readTheme();
-      blocks.forEach((block, i) => {
-        sources.set(block, block.textContent ?? "");
-        const nodes = stale[i];
-        if (nodes) {
-          block.replaceChildren(...nodes);
-          block.dataset.stale = "";
-        }
-      });
-      refresh(blocks);
-    },
-    destroy() {
-      stopWatching();
-      observer?.disconnect();
-      for (const timer of timers) clearTimeout(timer);
-    },
-  };
-}
-
-/**
- * One diagram in one element, for the Live editor (#136), through the same render queue and
- * cache as the preview. `set` shows a cached rendering at once; otherwise the element keeps its
- * last rendering, faded, (or shows the source, muted) until the new one is ready. `typing`
- * waits for the same quiet time as the preview does. `onShow` runs after each change of
+ * One diagram in one element, for the Live editor (#136). `set` shows a cached rendering at
+ * once; otherwise the element keeps its last rendering, faded, (or shows the source, muted)
+ * until the new one is ready. `typing` waits for `DEBOUNCE_MS` of quiet first. `onShow` runs after each change of
  * content, so the editor can measure the new height.
  */
 export function diagram(block: HTMLElement, onShow: () => void = () => {}) {
@@ -343,7 +225,8 @@ export function diagram(block: HTMLElement, onShow: () => void = () => {}) {
       clearTimeout(timer);
       const hit = cached(key);
       if (hit) return put(source, hit);
-      if (block.dataset.state === "done" || block.dataset.state === "error") {
+      // A rendering, or one already faded by an edit that is still waiting: it stays up.
+      if (block.dataset.state === "done" || block.dataset.state === "error" || block.dataset.stale !== undefined) {
         block.dataset.stale = "";
       } else {
         const pre = document.createElement("pre");

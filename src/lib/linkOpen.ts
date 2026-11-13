@@ -1,15 +1,15 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 /**
- * What a rendered link points at, read from the element the preview or the Live editor drew
- * for it, and what clicking it does. One set of rules for every place a link is shown
- * (Preview, Live, and diagrams in either), so they all open the same things (#131, #137).
+ * What a rendered link points at, read from the element the Live editor drew for it (a link
+ * mark, or an `<a>` in a table rendered by `markdown.ts`), and what clicking it does. One set of
+ * rules for every place a link is shown, so they all open the same things (#131, #137).
  */
 
 export type Link = { kind: "wiki"; target: string } | { kind: "href"; href: string; text: string };
 
 /**
- * The link an element stands for: a preview `<a>` (`a.wikilink` with `data-target`, an
+ * The link an element stands for: a rendered `<a>` (`a.wikilink` with `data-target`, an
  * `href`, or a diagram's SVG `<a>`, which may only carry `xlink:href`) or a Live link mark
  * (`data-target` / `data-href`).
  */

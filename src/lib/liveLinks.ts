@@ -5,7 +5,7 @@ import type { DocRange } from "$lib/liveDecorations";
 import { canOpen, linkOfElement, type Link } from "$lib/linkOpen";
 
 /**
- * Links in the Live editor (#137): clicking opens them as the preview does, and hovering shows
+ * Links in the Live editor (#137): clicking opens them (`linkOpen.ts`), and hovering shows
  * the link bar. The link marks come from `liveDecorations.ts` (`data-href` / `data-target`);
  * this only adds event handlers, so the document and its decorations are left as they are.
  */
@@ -32,7 +32,7 @@ export type ClickAction = "open" | "cursor" | "ignore";
  * What a primary-button press on `link` does: open it, leave it to the editor (place the
  * cursor or extend the selection), or nothing at all.
  *
- * Ctrl/Cmd+click opens any link that opens in the preview, and does nothing on one that
+ * Ctrl/Cmd+click opens any link that can open (`canOpen`), and does nothing on one that
  * doesn't. A plain click opens a link that isn't being edited (as in Obsidian), and places the
  * cursor in one whose source is revealed, or one that can't open. Shift+click selects.
  */
@@ -78,7 +78,7 @@ export function liveLinks(open: (link: Link, x: number, y: number) => void, bar:
       pressed: Element | null = null;
       constructor(readonly view: EditorView) {}
       update(u: ViewUpdate) {
-        // The edit may have changed or dropped the hovered link, as a re-render does in Preview.
+        // The edit may have changed or dropped the hovered link.
         if (u.docChanged) {
           bar.hide();
           bar.reset();

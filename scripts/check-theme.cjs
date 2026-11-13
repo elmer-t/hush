@@ -1,5 +1,5 @@
 // Browser check for the theme setting (#173): Settings > General > Theme switches the whole
-// page, diagrams in Preview and Live and the graph, follows the OS on System, persists, and is
+// page, diagrams in Live and the graph, follows the OS on System, persists, and is
 // applied before the first paint. Needs `npm run dev` (Vite on :1420, or HUSH_DEV_URL) and
 // Playwright: `node scripts/check-theme.cjs [screenshot dir]`. Exits 1 when a check fails.
 const { chromium } = require("playwright");
@@ -74,7 +74,7 @@ async function main() {
     await ctx.close();
   }
 
-  // 2. Switching in Settings, with Preview, Live and the graph on screen.
+  // 2. Switching in Settings, with Live and the graph on screen.
   const ctx = await browser.newContext({ colorScheme: "light", viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
   const errors = [];
@@ -85,7 +85,7 @@ async function main() {
   await page.evaluate(() => import("/src/lib/checks/theme-harness.svelte.ts"));
   errors.length = 0;
   await page.evaluate((b) => window.__mountAll(b), DIAGRAM);
-  const settled = () => page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="done"]').length >= 2 && !document.querySelector('.mermaid-block[data-state="pending"]'), null, { timeout: 30000 });
+  const settled = () => page.waitForFunction(() => document.querySelectorAll('.mermaid-block[data-state="done"]').length >= 1 && !document.querySelector('.mermaid-block[data-state="pending"]'), null, { timeout: 30000 });
   await settled().catch(() => console.log("not settled; errors so far:", errors.join("; ")));
   await page.waitForTimeout(1500); // the graph layout
   const group = page.getByRole("group", { name: "Theme" });
@@ -94,7 +94,7 @@ async function main() {
   check("System selected on a fresh install", (await pressed()) === "System");
 
   // Diagram colours: mermaid writes the text colour into each SVG's <style>.
-  const diagramText = () => page.evaluate(() => [...document.querySelectorAll(".mermaid-block svg")].map((s) => /#e7e9e5/i.test(s.innerHTML) ? "dark" : /#1a1b19/i.test(s.innerHTML) ? "light" : "?"));
+  const diagramText = () => page.evaluate(() => [...document.querySelectorAll("#live .mermaid-block svg")].map((s) => /#e7e9e5/i.test(s.innerHTML) ? "dark" : /#1a1b19/i.test(s.innerHTML) ? "light" : "?"));
   // Graph labels: sigma draws them on a 2D canvas in the label colour.
   const labelLuma = () => page.evaluate(() => {
     const c = document.querySelector("#graph canvas.sigma-labels");
@@ -116,7 +116,7 @@ async function main() {
   check("Dark: page dark at once", (await bg(page)) === DARK_BG, await bg(page));
   check("Dark: pressed", (await pressed()) === "Dark");
   check("Dark: stored", (await page.evaluate(() => localStorage.getItem("hush.theme"))) === '"dark"');
-  check("Dark: Preview and Live diagrams re-rendered dark", (await diagramText()).every((s) => s === "dark"), (await diagramText()).join());
+  check("Dark: the Live diagram re-rendered dark", (await diagramText()).every((s) => s === "dark"), (await diagramText()).join());
   check("Dark: graph labels redrawn light", (await graphScheme()) === "dark", JSON.stringify(await labelLuma()));
   check("Dark: native controls dark", (await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme)) === "dark");
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/switch-dark.png` });

@@ -119,6 +119,14 @@ describe("links", () => {
     });
   });
 
+  it("links to the destination when the link's text is a URL too", () => {
+    const { specs: all } = specs("[https://bank.com](https://evil.example/login) ^");
+    const links = all.filter((s) => s.kind === "mark" && s.class === "cm-live-link");
+    expect(links).toEqual([
+      { kind: "mark", from: 1, to: 17, class: "cm-live-link", attributes: { "data-href": "https://evil.example/login" } },
+    ]);
+  });
+
   it("shows the source of a link the cursor is on", () => {
     expect(hidden("[te^xt](u)")).toEqual([]);
     expect(styled("[te^xt](u)", "cm-live-link")).toEqual(["text"]);

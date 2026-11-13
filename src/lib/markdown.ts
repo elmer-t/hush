@@ -1,14 +1,17 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
-import { parseCallout } from "$lib/callout";
-import { highlightFence } from "$lib/codeHighlight";
 import { highlightDelimiter } from "$lib/highlightMark";
 import { parseSubSuper } from "$lib/subSuper";
 import { parseWikilink } from "$lib/wikilink";
 
+// The app shows this renderer's output in one place: the tables and images of the Live editor
+// (`liveBlocksView.ts`). Until #193 it also fed a read-only preview pane; comments here and in
+// the shared parsers (`wikilink.ts`, `highlightMark.ts`, `subSuper.ts`) that say "the preview"
+// mean this renderer. Only inline syntax gets rules of its own here: what a table cell can
+// hold. Task lists, callouts, code highlighting and diagrams are the Live editor's alone.
+
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
-// Code in a fence with a known language gets a `span` per token (`codeHighlight.ts`, #180).
-const md = new MarkdownIt({ html: false, linkify: true, highlight: highlightFence });
+const md = new MarkdownIt({ html: false, linkify: true });
 
 /**
  * `[[target#heading|alias]]` as `<a class="wikilink" data-target="target">`, the way
@@ -49,7 +52,7 @@ md.inline.ruler.after("emphasis", "mark", (state, silent) => {
 });
 
 md.inline.ruler2.after("emphasis", "mark", (state) => {
-  // `tokens_meta` has holes (a task's box has no entry), which `map` would keep.
+  // `tokens_meta` can have holes, which `map` would keep.
   const lists = [state.delimiters];
   for (const meta of state.tokens_meta) if (meta?.delimiters) lists.push(meta.delimiters);
   for (const delimiters of lists) {
@@ -83,98 +86,6 @@ md.inline.ruler.after("emphasis", "sub_sup", (state, silent) => {
   state.pos = found.to;
   return true;
 });
-
-/**
- * A ```mermaid fence becomes a placeholder holding its source as escaped text, which the
- * markdown sanitizer keeps; `mermaid.ts` swaps in the diagram after the HTML is in the DOM,
- * since its SVG needs `<style>` and `style`, which the sanitizer here removes.
- */
-const fence = md.renderer.rules.fence!;
-md.renderer.rules.fence = (tokens, idx, options, env, self) => {
-  const token = tokens[idx];
-  if (token.info.trim().split(/\s+/)[0].toLowerCase() !== "mermaid") return fence(tokens, idx, options, env, self);
-  return `<div class="mermaid-block"><pre class="mermaid-source"><code>${md.utils.escapeHtml(token.content)}</code></pre></div>\n`;
-};
-
-/** A task marker at the start of a list item's text, as `@lezer/markdown`'s `TaskList` reads it. */
-const TASK = /^\[([ xX])\](?:[ \t]+|$)/;
-
-/**
- * `- [ ] todo` and `- [x] done` as a checkbox, for the same items the Live editor shows one
- * (`liveBlocks.ts`, `listItem`): the marker opens the item's first paragraph, on the line of
- * the list marker, and is followed by a space or tab. The box is a `span` drawn by
- * `Preview.svelte`, since the sanitizer forbids `input`; it is read-only.
- *
- * Runs before the inline rule, on the paragraph's source: the marker is cut off and the box
- * put in front of the tokens the inline rule adds, so `[x]` is never read as a reference link.
- */
-md.core.ruler.before("inline", "task_list", (state) => {
-  const tokens = state.tokens;
-  let lines: string[] | undefined;
-  for (let i = 2; i < tokens.length; i++) {
-    const inline = tokens[i];
-    const item = tokens[i - 2];
-    if (inline.type !== "inline" || tokens[i - 1].type !== "paragraph_open" || item.type !== "list_item_open") continue;
-    const match = TASK.exec(inline.content);
-    const line = inline.map?.[0];
-    if (!match || line === undefined || item.map?.[0] !== line) continue;
-    // markdown-it trims the paragraph, so a marker with nothing after it is checked in the source.
-    if (match[0].length === 3 && !/\][ \t]+$/.test((lines ??= state.src.split("\n"))[line] ?? "")) continue;
-    inline.content = inline.content.slice(match[0].length);
-    const box = new state.Token("task_box", "span", 0);
-    box.meta = { checked: match[1] !== " " };
-    (inline.children ??= []).push(box);
-    item.attrJoin("class", "task-item");
-  }
-});
-
-/**
- * `> [!warning] Title` as a callout (#184): the quote gets `note-callout note-callout-<kind>` and
- * its first line becomes a title paragraph, `note-callout-title`, with the rest of that paragraph in
- * a paragraph of its own. Without a written title the type is the title. `parseCallout`,
- * shared with the Live editor, reads the marker; it must open the quote's first line.
- * Colours and icons come from the classes (`app.css`), as `style` does not pass the sanitizer.
- *
- * Runs before the inline rule, so the title and the body are parsed as markdown afterwards.
- */
-md.core.ruler.before("inline", "callout", (state) => {
-  const tokens = state.tokens;
-  for (let i = 0; i + 3 < tokens.length; i++) {
-    const quote = tokens[i];
-    const inline = tokens[i + 2];
-    if (quote.type !== "blockquote_open" || tokens[i + 1].type !== "paragraph_open" || inline.type !== "inline") continue;
-    if (quote.map?.[0] !== inline.map?.[0]) continue;
-    const end = inline.content.indexOf("\n");
-    const callout = parseCallout(end < 0 ? inline.content : inline.content.slice(0, end));
-    if (!callout) continue;
-    quote.attrJoin("class", `note-callout note-callout-${callout.kind}`);
-    tokens[i + 1].attrJoin("class", "note-callout-title");
-    const body = end < 0 ? "" : inline.content.slice(end + 1);
-    inline.content = callout.title;
-    if (!callout.title) {
-      const label = new state.Token("text", "", 0);
-      label.content = callout.label;
-      inline.children = [label];
-    }
-    if (body) {
-      const open = new state.Token("paragraph_open", "p", 1);
-      const text = new state.Token("inline", "", 0);
-      const close = new state.Token("paragraph_close", "p", -1);
-      open.level = close.level = tokens[i + 1].level;
-      open.block = close.block = text.block = true;
-      text.level = inline.level;
-      text.content = body;
-      text.children = [];
-      if (inline.map) open.map = text.map = [inline.map[0] + 1, inline.map[1]];
-      tokens.splice(i + 4, 0, open, text, close);
-    }
-  }
-});
-
-md.renderer.rules.task_box = (tokens, idx) => {
-  const checked = tokens[idx].meta?.checked === true;
-  return `<span class="task-box${checked ? " task-done" : ""}" role="checkbox" aria-checked="${checked}" aria-disabled="true" aria-label="${checked ? "Done" : "Not done"}"></span>`;
-};
 
 /** Matches the frontmatter block the way `markdown::split_frontmatter` does in Rust. */
 export const FRONTMATTER = /^---\r?\n(?:[\s\S]*?\n)?(?:---|\.\.\.)\r?(?:\n|$)/;
