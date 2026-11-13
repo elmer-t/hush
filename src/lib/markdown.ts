@@ -1,9 +1,14 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import { parseCallout } from "$lib/callout";
+import { highlightFence } from "$lib/codeHighlight";
+import { highlightDelimiter } from "$lib/highlightMark";
+import { parseSubSuper } from "$lib/subSuper";
 import { parseWikilink } from "$lib/wikilink";
 
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
-const md = new MarkdownIt({ html: false, linkify: true });
+// Code in a fence with a known language gets a `span` per token (`codeHighlight.ts`, #180).
+const md = new MarkdownIt({ html: false, linkify: true, highlight: highlightFence });
 
 /**
  * `[[target#heading|alias]]` as `<a class="wikilink" data-target="target">`, the way
@@ -24,6 +29,58 @@ md.inline.ruler.before("link", "wikilink", (state, silent) => {
     state.push("wikilink_close", "a", -1);
   }
   state.pos = link.to;
+  return true;
+});
+
+/**
+ * `==text==` as `<mark>` (#181). The delimiters are found by `highlightDelimiter`, shared
+ * with the Live editor, and paired by markdown-it like those of `~~strikethrough~~`, so other
+ * inline formatting works inside and an unclosed `==` stays text.
+ */
+md.inline.ruler.after("emphasis", "mark", (state, silent) => {
+  if (silent || state.pos + 1 >= state.posMax) return false;
+  const delimiter = highlightDelimiter(state.src, state.pos);
+  if (!delimiter) return false;
+  const token = state.push("text", "", 0);
+  token.content = "==";
+  state.delimiters.push({ marker: 0x3d, length: 0, token: state.tokens.length - 1, end: -1, open: delimiter.open, close: delimiter.close });
+  state.pos += 2;
+  return true;
+});
+
+md.inline.ruler2.after("emphasis", "mark", (state) => {
+  // `tokens_meta` has holes (a task's box has no entry), which `map` would keep.
+  const lists = [state.delimiters];
+  for (const meta of state.tokens_meta) if (meta?.delimiters) lists.push(meta.delimiters);
+  for (const delimiters of lists) {
+    for (const open of delimiters) {
+      if (open.marker !== 0x3d || open.end === -1) continue;
+      for (const [index, type, nesting] of [[open.token, "mark_open", 1], [delimiters[open.end].token, "mark_close", -1]] as const) {
+        const token = state.tokens[index];
+        token.type = type;
+        token.tag = "mark";
+        token.nesting = nesting;
+        token.markup = "==";
+        token.content = "";
+      }
+    }
+  }
+  return true;
+});
+
+/**
+ * `~text~` as `<sub>` and `^text^` as `<sup>` (#182), as `parseSubSuper` reads them, shared
+ * with the Live editor. The text between the markers is shown as it is.
+ */
+md.inline.ruler.after("emphasis", "sub_sup", (state, silent) => {
+  const found = parseSubSuper(state.src, state.pos, state.posMax);
+  if (!found) return false;
+  if (!silent) {
+    state.push(`${found.tag}_open`, found.tag, 1);
+    state.push("text", "", 0).content = found.text;
+    state.push(`${found.tag}_close`, found.tag, -1);
+  }
+  state.pos = found.to;
   return true;
 });
 
@@ -68,6 +125,49 @@ md.core.ruler.before("inline", "task_list", (state) => {
     box.meta = { checked: match[1] !== " " };
     (inline.children ??= []).push(box);
     item.attrJoin("class", "task-item");
+  }
+});
+
+/**
+ * `> [!warning] Title` as a callout (#184): the quote gets `note-callout note-callout-<kind>` and
+ * its first line becomes a title paragraph, `note-callout-title`, with the rest of that paragraph in
+ * a paragraph of its own. Without a written title the type is the title. `parseCallout`,
+ * shared with the Live editor, reads the marker; it must open the quote's first line.
+ * Colours and icons come from the classes (`app.css`), as `style` does not pass the sanitizer.
+ *
+ * Runs before the inline rule, so the title and the body are parsed as markdown afterwards.
+ */
+md.core.ruler.before("inline", "callout", (state) => {
+  const tokens = state.tokens;
+  for (let i = 0; i + 3 < tokens.length; i++) {
+    const quote = tokens[i];
+    const inline = tokens[i + 2];
+    if (quote.type !== "blockquote_open" || tokens[i + 1].type !== "paragraph_open" || inline.type !== "inline") continue;
+    if (quote.map?.[0] !== inline.map?.[0]) continue;
+    const end = inline.content.indexOf("\n");
+    const callout = parseCallout(end < 0 ? inline.content : inline.content.slice(0, end));
+    if (!callout) continue;
+    quote.attrJoin("class", `note-callout note-callout-${callout.kind}`);
+    tokens[i + 1].attrJoin("class", "note-callout-title");
+    const body = end < 0 ? "" : inline.content.slice(end + 1);
+    inline.content = callout.title;
+    if (!callout.title) {
+      const label = new state.Token("text", "", 0);
+      label.content = callout.label;
+      inline.children = [label];
+    }
+    if (body) {
+      const open = new state.Token("paragraph_open", "p", 1);
+      const text = new state.Token("inline", "", 0);
+      const close = new state.Token("paragraph_close", "p", -1);
+      open.level = close.level = tokens[i + 1].level;
+      open.block = close.block = text.block = true;
+      text.level = inline.level;
+      text.content = body;
+      text.children = [];
+      if (inline.map) open.map = text.map = [inline.map[0] + 1, inline.map[1]];
+      tokens.splice(i + 4, 0, open, text, close);
+    }
   }
 });
 

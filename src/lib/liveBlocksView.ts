@@ -69,6 +69,22 @@ class TaskWidget extends WidgetType {
   }
 }
 
+/** The title of a callout that has none written: its type, in place of the `[!type]` marker. */
+class CalloutLabelWidget extends WidgetType {
+  constructor(readonly label: string) {
+    super();
+  }
+  eq(other: CalloutLabelWidget) {
+    return other.label === this.label;
+  }
+  toDOM() {
+    const dom = document.createElement("span");
+    dom.className = "cm-live-callout-label";
+    dom.textContent = this.label;
+    return dom;
+  }
+}
+
 const BULLET = Decoration.replace({ widget: new BulletWidget() });
 const RULE = Decoration.replace({ widget: new RuleWidget() });
 
@@ -81,6 +97,8 @@ export function liveWidget(widget: LiveWidget): Decoration {
       return RULE;
     case "task":
       return Decoration.replace({ widget: new TaskWidget(widget.checked, widget.marker) });
+    case "callout":
+      return Decoration.replace({ widget: new CalloutLabelWidget(widget.label) });
   }
 }
 
@@ -198,6 +216,18 @@ const theme = EditorView.theme({
     backgroundImage:
       "linear-gradient(to right, transparent 24px, var(--border-strong) 24px, var(--border-strong) 27px, transparent 27px, transparent 43px, var(--border-strong) 43px, var(--border-strong) 46px, transparent 46px)",
   },
+  // Callouts (#184): the bar in the kind's colour and a tint behind the text; `app.css` sets
+  // `--callout-color` and the title's icon per kind, for these lines and for the preview.
+  ".cm-line.cm-live-callout": {
+    color: "var(--text)",
+    backgroundImage:
+      "linear-gradient(to right, transparent 24px, var(--callout-color) 24px, var(--callout-color) 27px, var(--callout-tint) 27px, var(--callout-tint) calc(100% - 24px), transparent calc(100% - 24px))",
+  },
+  ".cm-line.cm-live-callout.cm-live-quote-nested": {
+    backgroundImage:
+      "linear-gradient(to right, transparent 24px, var(--border-strong) 24px, var(--border-strong) 27px, transparent 27px, transparent 43px, var(--callout-color) 43px, var(--callout-color) 46px, var(--callout-tint) 46px, var(--callout-tint) calc(100% - 24px), transparent calc(100% - 24px))",
+  },
+  ".cm-line.cm-live-callout-title": { color: "var(--callout-color)", fontWeight: "600" },
   ".cm-line.cm-live-codeblock": {
     margin: "0 24px",
     padding: "0 14px",

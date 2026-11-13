@@ -1,6 +1,6 @@
 // Test helpers only: nothing in the app imports this.
 import type { EditorState } from "@codemirror/state";
-import { ensureSyntaxTree, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 
 /**
  * `state` with its document (up to `upto`, by default all of it) parsed into the tree
@@ -16,7 +16,8 @@ import { ensureSyntaxTree, syntaxTree, syntaxTreeAvailable } from "@codemirror/l
 export function parsed(state: EditorState, upto = state.doc.length, timeout = 5000): EditorState {
   if (!ensureSyntaxTree(state, upto, timeout)) throw new Error(`document not parsed within ${timeout} ms`);
   const next = state.update({}).state;
-  if (!syntaxTreeAvailable(next, upto) || syntaxTree(next).length < upto)
-    throw new Error(`syntax tree covers ${syntaxTree(next).length} of ${upto} characters`);
+  // Not `syntaxTreeAvailable`: it stays false while a fence names a language whose grammar has
+  // not loaded (#180), though the markdown around the fence's code is parsed in full.
+  if (syntaxTree(next).length < upto) throw new Error(`syntax tree covers ${syntaxTree(next).length} of ${upto} characters`);
   return next;
 }

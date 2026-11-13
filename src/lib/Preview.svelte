@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { onGrammar } from "$lib/codeHighlight";
   import { findPattern, step, type FindSpec } from "$lib/find";
   import { renderMarkdown } from "$lib/markdown";
   import { diagrams } from "$lib/mermaid";
@@ -22,7 +23,14 @@
   };
   let { body, large = false, onwikilink, find = null, findLead = false, onfindresult }: Props = $props();
 
-  const html = $derived(renderMarkdown(body));
+  // A code block is plain until its language's grammar has loaded; the note is then rendered again.
+  let grammars = $state(0);
+  $effect(() => onGrammar(() => grammars++));
+
+  const html = $derived.by(() => {
+    void grammars;
+    return renderMarkdown(body);
+  });
 
   let article: HTMLElement;
   let mermaid: ReturnType<typeof diagrams> | undefined;
@@ -247,6 +255,13 @@
     font-size: 18px;
   }
 
+  /* No line height of their own, so a line with one is as high as the others. */
+  .preview :global(sub),
+  .preview :global(sup) {
+    font-size: 0.75em;
+    line-height: 0;
+  }
+
   .preview :global(a) {
     color: var(--accent);
     text-decoration: underline;
@@ -287,6 +302,25 @@
     padding-left: 16px;
     border-left: 3px solid var(--border-strong);
     color: var(--text-2);
+  }
+
+  /* A callout (`markdown.ts`, `callout`); `app.css` sets its colour and icon per kind. */
+  .preview :global(blockquote.note-callout) {
+    padding: 10px 14px 10px 16px;
+    border-left-color: var(--callout-color);
+    border-radius: 0 6px 6px 0;
+    background: var(--callout-tint);
+    color: var(--text);
+  }
+
+  .preview :global(blockquote.note-callout > :last-child) {
+    margin-bottom: 0;
+  }
+
+  .preview :global(.note-callout-title) {
+    margin-bottom: 6px;
+    color: var(--callout-color);
+    font-weight: 600;
   }
 
   .preview :global(table) {

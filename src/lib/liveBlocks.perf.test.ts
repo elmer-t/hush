@@ -2,6 +2,7 @@
 // measured on a busy or shared machine says little. See vitest.perf.config.js.
 import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
+import { loadGrammar } from "$lib/codeHighlight";
 import { buildLive, inlineHandlers } from "$lib/liveDecorations";
 import { liveLanguage } from "$lib/livePreview";
 import { parsed } from "$lib/testing/parsed";
@@ -10,7 +11,9 @@ import { blockHandlers, findBlocks, shownBlocks } from "$lib/liveBlocks";
 const handlers = { ...inlineHandlers, ...blockHandlers };
 
 describe("performance", () => {
-  it("types into a 5,000-line note with lists, quotes, code, tables and images quickly", () => {
+  it("types into a 5,000-line note with lists, quotes, code, tables and images quickly", async () => {
+    // The steady state: the fences' grammar has loaded and their code is parsed (#180).
+    await loadGrammar("js");
     const chunk = [
       "## Heading",
       "- item **b**",

@@ -2,6 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import { isolateHistory } from "@codemirror/commands";
 import { Transaction, type EditorState, type TransactionSpec } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
+import { parseCallout, type Callout } from "$lib/callout";
 import { frontmatterRange, type BuildContext, type NodeHandler } from "$lib/liveDecorations";
 
 /**
@@ -76,7 +77,34 @@ function quoteMarks(quote: SyntaxNode): SyntaxNode[] {
   return out;
 }
 
-/** `> quote`: the markers hidden off the cursor's line, every line styled with the quote bar. */
+/** The callout a quote is (#184), with where its marker starts: `parseCallout` on the first line of its first paragraph. */
+function calloutOf(state: EditorState, quote: SyntaxNode): (Callout & { from: number }) | null {
+  let first = quote.firstChild;
+  while (first?.name === "QuoteMark") first = first.nextSibling;
+  const line = state.doc.lineAt(quote.from);
+  if (first?.name !== "Paragraph" || first.from > line.to) return null;
+  const callout = parseCallout(state.sliceDoc(first.from, Math.min(first.to, line.to)));
+  return callout && { ...callout, from: first.from };
+}
+
+/** The quotes directly or deeper inside `quote` that are callouts: they colour their own lines. */
+function nestedCallouts(state: EditorState, quote: SyntaxNode): SyntaxNode[] {
+  const out: SyntaxNode[] = [];
+  const walk = (n: SyntaxNode) => {
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.name === "Blockquote" && calloutOf(state, c)) out.push(c);
+      else if (c.name !== "FencedCode" && c.name !== "CodeBlock") walk(c);
+    }
+  };
+  walk(quote);
+  return out;
+}
+
+/**
+ * `> quote`: the markers hidden off the cursor's line, every line styled with the quote bar.
+ * A callout's lines also get its kind, and its `[!type]` marker hides off the cursor's line:
+ * the written title stays, or the type's name is shown in the marker's place.
+ */
 const blockquote: NodeHandler = (node, cx) => {
   let nested = false;
   for (let p = node.parent; p && !nested; p = p.parent) nested = p.name === "Blockquote";
@@ -85,6 +113,19 @@ const blockquote: NodeHandler = (node, cx) => {
     const to = cx.state.sliceDoc(m.to, m.to + 1) === " " ? m.to + 1 : m.to;
     cx.syntax(m.from, to, cx.revealedLines(m.from, m.to));
   }
+  const callout = calloutOf(cx.state, node);
+  if (!callout) return;
+  const inner = nestedCallouts(cx.state, node);
+  eachLine(cx.state, node.from, node.to, (from) => {
+    if (inner.some((q) => from >= cx.state.doc.lineAt(q.from).from && from <= q.to)) return;
+    cx.line(from, "cm-live-callout");
+    cx.line(from, `cm-live-callout-${callout.kind}`);
+  });
+  cx.line(node.from, "cm-live-callout-title");
+  const to = callout.from + callout.marker;
+  if (cx.revealedLines(node.from, node.from)) cx.mark(callout.from, to, "cm-live-syntax");
+  else if (callout.title) cx.hide(callout.from, to);
+  else cx.widget(callout.from, to, { type: "callout", label: callout.label });
 };
 
 /** The first word of a fence's info string, lowercased, as `markdown.ts` reads it. */

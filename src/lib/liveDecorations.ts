@@ -26,11 +26,15 @@ export type LiveSpec =
   /** Source text shown as a small widget (`liveBlocks.ts`). Never spans a line break. */
   | { kind: "widget"; from: number; to: number; widget: LiveWidget };
 
-/** What an inline widget shows: a list bullet, a task checkbox (its `[` at `from + marker`), a rule. */
+/**
+ * What an inline widget shows: a list bullet, a task checkbox (its `[` at `from + marker`), a
+ * rule, the name of a callout that has no title.
+ */
 export type LiveWidget =
   | { type: "bullet" }
   | { type: "task"; checked: boolean; marker: number }
-  | { type: "rule" };
+  | { type: "rule" }
+  | { type: "callout"; label: string };
 
 export class BuildContext {
   readonly specs: LiveSpec[] = [];
@@ -157,6 +161,9 @@ export const inlineHandlers: Record<string, NodeHandler> = {
   StrongEmphasis: span("cm-live-strong", "EmphasisMark"),
   Emphasis: span("cm-live-em", "EmphasisMark"),
   Strikethrough: span("cm-live-strike", "StrikethroughMark"),
+  Highlight: span("cm-live-mark", "HighlightMark"),
+  Subscript: span("cm-live-sub", "SubscriptMark"),
+  Superscript: span("cm-live-sup", "SuperscriptMark"),
   InlineCode: span("cm-live-code", "CodeMark"),
   ATXHeading1: heading(1),
   ATXHeading2: heading(2),
