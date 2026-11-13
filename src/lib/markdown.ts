@@ -1,9 +1,11 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import { highlightFence } from "$lib/codeHighlight";
 import { parseWikilink } from "$lib/wikilink";
 
 // Raw HTML in notes is shown as text, never rendered; DOMPurify is the second line of defence.
-const md = new MarkdownIt({ html: false, linkify: true });
+// Code in a fence with a known language gets a `span` per token (`codeHighlight.ts`, #180).
+const md = new MarkdownIt({ html: false, linkify: true, highlight: highlightFence });
 
 /**
  * `[[target#heading|alias]]` as `<a class="wikilink" data-target="target">`, the way

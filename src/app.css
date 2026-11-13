@@ -37,6 +37,11 @@
   --mark-text: #1a1b19;
   --mark-current: #f0b232;
   --mark-current-text: #1a1b19;
+  --syn-keyword: #8f2d56;
+  --syn-string: #2a6a36;
+  --syn-number: #8a4b00;
+  --syn-type: #1b5a85;
+  --syn-def: #5a44a8;
   --inverse-button: #3a3c38;
   --scrim: rgba(26, 27, 25, 0.32);
   --shadow: 0 2px 4px rgba(20, 20, 15, 0.06), 0 12px 32px rgba(20, 20, 15, 0.12);
@@ -88,6 +93,11 @@
   --mark-text: #fcefc4;
   --mark-current: #d9a53a;
   --mark-current-text: #1a1b19;
+  --syn-keyword: #e79bb9;
+  --syn-string: #9ccf98;
+  --syn-number: #e3b56b;
+  --syn-type: #88c0e8;
+  --syn-def: #bcaef2;
   --inverse-button: #c9ccc6;
   --scrim: rgba(0, 0, 0, 0.55);
   --shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
@@ -125,10 +135,54 @@
     --mark-text: #fcefc4;
     --mark-current: #d9a53a;
     --mark-current-text: #1a1b19;
+    --syn-keyword: #e79bb9;
+    --syn-string: #9ccf98;
+    --syn-number: #e3b56b;
+    --syn-type: #88c0e8;
+    --syn-def: #bcaef2;
     --inverse-button: #c9ccc6;
     --scrim: rgba(0, 0, 0, 0.55);
     --shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
   }
+}
+
+/* Code in a fence (#180): the classes `codeHighlight.ts` gives its tokens, the same in the
+   preview, the Live editor's code blocks and the Source editor. */
+:is(.preview pre, .cm-live-codeblock, .cm-source) .tok-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-keyword, .tok-operatorKeyword) {
+  color: var(--syn-keyword);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-string, .tok-string2, .tok-inserted) {
+  color: var(--syn-string);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-number, .tok-atom, .tok-bool, .tok-literal) {
+  color: var(--syn-number);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-typeName, .tok-className, .tok-namespace, .tok-labelName) {
+  color: var(--syn-type);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-definition, .tok-macroName, .tok-variableName2, .tok-heading) {
+  color: var(--syn-def);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-meta, .tok-punctuation, .tok-operator) {
+  color: var(--text-2);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-deleted, .tok-invalid) {
+  color: var(--danger);
+}
+
+:is(.preview pre, .cm-live-codeblock, .cm-source) :is(.tok-link, .tok-url) {
+  color: var(--accent);
 }
 
 * {
