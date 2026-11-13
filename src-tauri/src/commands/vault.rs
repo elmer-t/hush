@@ -64,7 +64,10 @@ pub async fn create_vault(
     passphrase: String,
 ) -> Result<VaultInfo> {
     let passphrase = Zeroizing::new(passphrase);
-    let vault = Vault::create(&path, &passphrase)?;
+    let mut vault = Vault::create(&path, &passphrase)?;
+    // Only here, not in `Vault::create`: a vault made by the app starts with the README
+    // (#177), one made by a test or a benchmark starts empty.
+    vault.add_readme()?;
     unlock(&app, &session, &config, vault, path)
 }
 
