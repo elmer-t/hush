@@ -1,0 +1,131 @@
+# Builds the Windows installer (NSIS setup.exe).
+#
+#   tag v<version>   build, then attach the installer to a draft GitHub Release
+#   pull request     build only, when this file or the bundle config changes
+#   manual run       build only; the installer is a workflow artifact
+#
+# The build job runs npm and cargo build scripts, so it only gets a read token.
+# Publishing is a separate job that never runs repository code.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - src-tauri/tauri.conf.json
+      - src-tauri/tauri.windows.conf.json
+      - src-tauri/build.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build installer (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check that the versions agree
+        shell: pwsh
+        run: |
+          $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $npm = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $cargo = [regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          Write-Host "tauri.conf.json $conf, package.json $npm, Cargo.toml $cargo"
+          if ($conf -ne $npm -or $conf -ne $cargo) {
+            Write-Error "The version differs between tauri.conf.json, package.json and Cargo.toml."
+            exit 1
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$conf") {
+            Write-Error "Tag $env:GITHUB_REF_NAME does not match version $conf (expected v$conf)."
+            exit 1
+          }
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust (stable)
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+
+      # OpenSSL (SQLCipher's crypto provider) is compiled from source and needs a native
+      # Windows Perl. Git's MSYS perl.exe does not work, so point the build at Strawberry Perl.
+      - name: Find Strawberry Perl
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          if (-not (Test-Path $perl)) {
+            choco install strawberryperl --no-progress -y
+          }
+          if (-not (Test-Path $perl)) {
+            Write-Error "Strawberry Perl not found at $perl."
+            exit 1
+          }
+          & $perl -v
+          "OPENSSL_SRC_PERL=$perl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Release builds start from an empty target folder; only test builds use the cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: github.ref_type != 'tag'
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Fetches the embedding model (checked against the pinned SHA-256s) and builds
+      # the frontend first: beforeBuildCommand in tauri.conf.json.
+      - name: Build
+        run: npm run tauri build -- --bundles nsis
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hush-windows-x64
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Draft GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hush-windows-x64
+          path: dist
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -- *-setup.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cat > notes.md <<'NOTES'
+          ## Install
+
+          Download the `setup.exe` below and run it. It installs for the current user and needs no administrator rights. Windows 10 or later, x64.
+
+          The installer is not code-signed. Windows SmartScreen shows "Windows protected your PC" on first run: choose **More info**, then **Run anyway**. To check the download, compare its SHA-256 (`Get-FileHash .\Hush_*-setup.exe`) with `SHA256SUMS.txt`.
+
+          NOTES
+          gh release create "$TAG" --draft --verify-tag --title "Hush $TAG" \
+            --notes-file notes.md --generate-notes \
+            -- *-setup.exe SHA256SUMS.txt
