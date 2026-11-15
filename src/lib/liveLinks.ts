@@ -61,6 +61,11 @@ function linkElement(node: EventTarget | null): Element | null {
   return node instanceof Element ? node.closest(LINK) : null;
 }
 
+/** Made once, not per editor: see `editorTheme.ts`. */
+const theme = EditorView.theme({
+  [`.${OPENS} .cm-live-link, .${OPENS} .cm-live-wikilink`]: { cursor: "pointer" },
+});
+
 /**
  * Clicks and hovers on the Live editor's links. `open` opens a link clicked at `x`, `y`
  * (`openLink` in `linkOpen.ts`); `bar` is the shared link bar.
@@ -127,10 +132,6 @@ export function liveLinks(open: (link: Link, x: number, y: number) => void, bar:
       },
     },
   );
-
-  const theme = EditorView.theme({
-    [`.${OPENS} .cm-live-link, .${OPENS} .cm-live-wikilink`]: { cursor: "pointer" },
-  });
 
   return [plugin, theme];
 }
