@@ -4,7 +4,7 @@
   import { EditorView, drawSelection, highlightActiveLine, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+  import { syntaxHighlighting } from "@codemirror/language";
   import {
     closeSearchPanel,
     findNext,
@@ -21,6 +21,7 @@
     setSearchQuery,
   } from "@codemirror/search";
   import { codeHighlighting, codeLanguage } from "$lib/codeHighlight";
+  import { editorTheme, sourceHighlight, sourceTheme } from "$lib/editorTheme";
   import type { FindSpec } from "$lib/find";
   import type { EditorMode } from "$lib/layout";
   import LinkBar from "$lib/LinkBar.svelte";
@@ -28,7 +29,6 @@
   import { frontmatterRange } from "$lib/liveDecorations";
   import { liveLinks } from "$lib/liveLinks";
   import { livePreview } from "$lib/livePreview";
-  import { tags as t } from "@lezer/highlight";
 
   type Props = {
     doc: string;
@@ -54,40 +54,6 @@
   let host: HTMLDivElement;
   let view: EditorView | undefined;
 
-  const highlight = HighlightStyle.define([
-    // The source is monospaced, so headings stand out by weight alone.
-    { tag: [t.heading1, t.heading2, t.heading3, t.heading4, t.heading5, t.heading6], fontWeight: "600" },
-    { tag: t.emphasis, fontStyle: "italic" },
-    { tag: t.strong, fontWeight: "600" },
-    { tag: t.strikethrough, textDecoration: "line-through" },
-    { tag: [t.link, t.url], color: "var(--accent)" },
-    { tag: [t.processingInstruction, t.meta, t.contentSeparator, t.quote, t.list], color: "var(--muted)" },
-  ]);
-
-  const sourceTheme = EditorView.theme({
-    "&": { height: "100%", color: "var(--text)", backgroundColor: "var(--code)" },
-    ".cm-scroller": { fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.75" },
-    ".cm-content": { padding: "20px 0", caretColor: "var(--text)" },
-    ".cm-line": { padding: "0 24px" },
-    ".cm-cursor": { borderLeftColor: "var(--text)" },
-    ".cm-activeLine": { backgroundColor: "var(--hover)" },
-  });
-
-  // Both modes.
-  const theme = EditorView.theme({
-    "&.cm-focused": { outline: "none" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-      backgroundColor: "var(--selection)",
-    },
-    // Find: the note's find bar drives CodeMirror's search, whose own panel stays hidden.
-    ".cm-panels": { display: "none" },
-    "& .cm-searchMatch": { backgroundColor: "var(--mark)", color: "var(--mark-text)", borderRadius: "2px" },
-    "& .cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: "var(--mark-current)",
-      color: "var(--mark-current-text)",
-    },
-  });
-
   // The mode's own extensions; switching them keeps the document, selection and undo history.
   const modeConfig = new Compartment();
   const modeExtensions = (m: EditorMode): Extension =>
@@ -96,7 +62,7 @@
       : [
           highlightActiveLine(),
           markdown({ base: markdownLanguage, codeLanguages: codeLanguage }),
-          syntaxHighlighting(highlight),
+          syntaxHighlighting(sourceHighlight),
           codeHighlighting(),
           EditorView.editorAttributes.of({ class: "cm-source" }),
           sourceTheme,
@@ -139,7 +105,7 @@
           highlightSelectionMatches(),
           EditorView.lineWrapping,
           modeConfig.of(modeExtensions(shownMode)),
-          theme,
+          editorTheme,
           search({ top: true, createPanel: () => ({ dom: document.createElement("div") }) }),
           keymap.of([...defaultKeymap, ...historyKeymap, ...findKeys, indentWithTab]),
           EditorView.updateListener.of((u) => {
