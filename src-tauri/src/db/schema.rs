@@ -336,6 +336,16 @@ WHEN old.deleted_at IS NULL AND new.deleted_at IS NULL AND old.folder IS new.fol
 BEGIN
     UPDATE folders SET bytes = bytes + octet_length(new.body) - octet_length(old.body) WHERE path = new.folder;
 END;
+"#, r#"
+-- What the note lists show of a note, in an index, so listing never reads note bodies.
+-- `deleted_at`, `rating` and `read_status` come after the body in a row, so reading them
+-- from the table reads the whole body first. One index is in the tree's order (a
+-- folder's notes by title), the other newest first, as lists without search text are.
+-- `deleted_at` is in both (always NULL) so that a query naming it stays in the index.
+CREATE INDEX notes_list_folder ON notes(folder, title, author, topic, created_at, updated_at, rating, read_status, deleted_at)
+    WHERE deleted_at IS NULL;
+-- `notes_list_updated` is created by `create_list_indexes`, so the unlock screen can
+-- say how far this is: each index reads every note once.
 "#];
 
 /// The migration that recreates the full-text index; [`fill_fts`] refills it.
@@ -357,6 +367,8 @@ pub enum UpgradeStep {
     SearchIndex,
     /// Measuring note sizes for the folder tree.
     FolderSizes,
+    /// Building the indexes the note lists read; `done` of `total` indexes, not notes.
+    ListIndexes,
 }
 
 /// How far a migration that takes a while has got, for the unlock screen.
@@ -415,6 +427,25 @@ fn fill_folder_sizes(tx: &Connection, progress: &mut dyn FnMut(Upgrade)) -> Resu
     Ok(())
 }
 
+/// The migration that adds the note list indexes; [`create_list_indexes`] finishes it.
+const LIST_INDEXES_VERSION: usize = 15;
+
+/// Creates the second list index and reports both: an index is built in one statement,
+/// which reads every note (the indexed columns lie after the body), so on a large vault
+/// each takes a while and the progress is one step per index.
+fn create_list_indexes(tx: &rusqlite::Transaction<'_>, first_sql: &str, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
+    let report = |done| Upgrade { step: UpgradeStep::ListIndexes, done, total: 2 };
+    progress(report(0));
+    tx.execute_batch(first_sql)?;
+    progress(report(1));
+    tx.execute_batch(
+        "CREATE INDEX notes_list_updated ON notes(updated_at, id, folder, title, author, topic, created_at, rating, read_status, deleted_at)
+             WHERE deleted_at IS NULL;",
+    )?;
+    progress(report(2));
+    Ok(())
+}
+
 /// Vaults created before this version get the default import rules.
 const IMPORT_RULES_VERSION: usize = 2;
 
@@ -426,7 +457,11 @@ pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) 
     }
     let tx = conn.transaction()?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
-        tx.execute_batch(sql)?;
+        if i + 1 == LIST_INDEXES_VERSION {
+            create_list_indexes(&tx, sql, progress)?;
+        } else {
+            tx.execute_batch(sql)?;
+        }
         if i + 1 == IMPORT_RULES_VERSION {
             rules::write_rules(&tx, &Rule::defaults())?;
         }
@@ -597,7 +632,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -911,7 +946,8 @@ mod tests {
         assert_eq!(stored(&conn), direct(&conn));
         assert!(stored(&conn).iter().all(|(_, b)| *b > 0));
 
-        assert!(reports.iter().all(|u| u.step == UpgradeStep::FolderSizes));
+        // Later migrations report too.
+        reports.retain(|u| u.step == UpgradeStep::FolderSizes);
         let at = |done| Upgrade { step: UpgradeStep::FolderSizes, done, total: NOTES as usize };
         assert_eq!(reports.first(), Some(&at(0)));
         assert_eq!(reports.last(), Some(&at(NOTES as usize)));
@@ -924,5 +960,31 @@ mod tests {
         conn.execute("UPDATE notes SET folder = 'moved' WHERE id = 3", []).unwrap();
         conn.execute("DELETE FROM notes WHERE id = 4", []).unwrap();
         assert_eq!(stored(&conn), direct(&conn), "the triggers keep it up from here");
+    }
+    /// A vault from before the list indexes gets both, holding its live notes only.
+    #[test]
+    fn list_indexes_migration_indexes_the_live_notes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..14] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 14).unwrap();
+        conn.execute_batch(
+            "INSERT INTO notes(id, folder, title, body, created_at, updated_at) VALUES (1, 'a', 'T', 'one', 1, 5);
+             INSERT INTO notes(id, folder, title, body, created_at, updated_at) VALUES (2, 'a', 'U', 'two', 2, 4);
+             INSERT INTO notes(id, folder, title, body, created_at, updated_at, deleted_at) VALUES (3, 'a', 'V', 'gone', 3, 6, 9);",
+        )
+        .unwrap();
+
+        let mut reports = Vec::new();
+        migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
+        let at = |done| Upgrade { step: UpgradeStep::ListIndexes, done, total: 2 };
+        assert_eq!(reports, [at(0), at(1), at(2)]);
+        for (index, order, expected) in [("notes_list_folder", "title", [1, 2]), ("notes_list_updated", "updated_at DESC, id DESC", [1, 2])] {
+            let sql = format!("SELECT id FROM notes INDEXED BY {index} WHERE deleted_at IS NULL ORDER BY {order}");
+            let ids: Vec<i64> = conn.prepare(&sql).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+            assert_eq!(ids, expected, "{index}");
+        }
     }
 }

@@ -190,8 +190,9 @@ export type SearchResult = {
 
 /** Emitted while opening a vault runs a schema upgrade that rebuilds derived data. */
 export const VAULT_UPGRADE_EVENT = "vault-upgrade";
-/** `step`: which upgrade is running, so the unlock screen can say what it does. */
-export type VaultUpgrade = { step: "searchIndex" | "folderSizes"; done: number; total: number };
+/** `step`: which upgrade is running, so the unlock screen can say what it does. `done`
+ * and `total` count notes, or for `listIndexes` the indexes built. */
+export type VaultUpgrade = { step: "searchIndex" | "folderSizes" | "listIndexes"; done: number; total: number };
 export const HIGHLIGHT_START = "\u0002";
 export const HIGHLIGHT_END = "\u0003";
 

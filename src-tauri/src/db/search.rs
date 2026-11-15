@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, params, params_from_iter};
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 
-use super::notes::{NoteSummary, ReadStatus, SUMMARY_COLUMNS};
+use super::notes::{NoteSummary, ReadStatus, SUMMARY_COLUMNS, subtree_params};
 use super::{Result, Vault};
 use crate::markdown;
 
@@ -148,7 +148,7 @@ impl Vault {
         let limit = i64::from(q.limit.unwrap_or(200));
         let offset = i64::from(q.offset);
         let Some(fts) = fts_query(&q.text) else {
-            let sql = browse_sql(q, &filters);
+            let sql = browse_sql(q, &filters, self.browse_by_folder(q, limit + offset)?);
             args.push(limit.into());
             args.push(offset.into());
             let mut stmt = self.conn.prepare(&sql)?;
@@ -387,6 +387,24 @@ impl Vault {
         Ok(ids)
     }
 
+    /// Whether a list of `q`'s folder without search text, `wanted` notes long, is
+    /// cheaper read from the folder's part of the index and sorted than found by walking
+    /// the vault newest first. The walk passes about `wanted × vault / folder` notes
+    /// before it has `wanted` of the folder; the other way reads the folder's notes. The
+    /// counts come from the `folders` table.
+    fn browse_by_folder(&self, q: &SearchQuery, wanted: i64) -> Result<bool> {
+        let Some(folder) = q.folder.as_deref().map(markdown::normalize_folder).filter(|f| !f.is_empty()) else {
+            return Ok(false);
+        };
+        let (exact, below, end) = subtree_params(&folder);
+        let (inside, vault): (i64, i64) = self.conn.prepare_cached(
+            "SELECT coalesce(sum(notes) FILTER (WHERE path >= ?1 AND path < ?3 AND (path = ?1 OR path > ?2)), 0), coalesce(sum(notes), 0)
+             FROM folders",
+        )?
+        .query_row(rusqlite::params![exact, below, end], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(inside.saturating_mul(inside) < wanted.max(1).saturating_mul(vault))
+    }
+
     /// The number of notes in `folder` and its subfolders; every note for the root.
     pub fn count_in_folder(&self, folder: &str) -> Result<usize> {
         let folder = markdown::normalize_folder(folder);
@@ -445,16 +463,22 @@ struct WordRanking {
 
 /// A search without text: the notes matching `filters` (from [`filters`]), most recently
 /// updated first, with the limit and offset as the last two parameters.
-fn browse_sql(q: &SearchQuery, filters: &[String]) -> String {
-    // Left to itself SQLite walks `notes_updated` newest first and checks each note's
-    // rating, which reads the whole vault when few notes are rated. Most notes are
+///
+/// `by_folder` (see [`Vault::browse_by_folder`]) reads the folder's notes from
+/// `notes_list_folder` and sorts them, instead of walking every note newest first until
+/// the page is full, which for a small folder is the whole vault.
+fn browse_sql(q: &SearchQuery, filters: &[String], by_folder: bool) -> String {
+    // Left to itself SQLite walks `notes_list_updated` newest first and checks each
+    // note's rating, which reads the whole index when few notes are rated. Most notes are
     // unrated, so reading the rated ones and sorting them is the cheaper bet. The same
     // goes for notes marked partly read or read; unread is nearly every note, so that
-    // filter walks `notes_updated` as before.
+    // filter walks `notes_list_updated` as before.
     let index = if q.min_rating.is_some_and(|m| m > 0) {
         " INDEXED BY notes_rating"
     } else if matches!(q.read_status, Some(ReadFilter::PartlyRead | ReadFilter::Read)) {
         " INDEXED BY notes_read"
+    } else if by_folder {
+        " INDEXED BY notes_list_folder"
     } else {
         ""
     };
@@ -495,10 +519,11 @@ fn filters(q: &SearchQuery) -> (Vec<String>, Vec<Value>) {
     if let Some(folder) = &q.folder {
         let folder = markdown::normalize_folder(folder);
         if !folder.is_empty() {
-            filters.push("(n.folder = ? OR n.folder LIKE ? ESCAPE '\\')".into());
-            let pattern = format!("{}/%", escape_like(&folder));
-            args.push(folder.into());
-            args.push(pattern.into());
+            // The folder and all below it, as one range of an index on `folder` (see
+            // `IN_SUBTREE`); `folder = ? OR folder LIKE ?` can only be checked row by row.
+            filters.push("(n.folder >= ? AND n.folder < ? AND (n.folder = ? OR n.folder > ?))".into());
+            let (exact, below, end) = subtree_params(&folder);
+            args.extend([exact.clone().into(), end.into(), exact.into(), below.into()]);
         }
     }
     let date_col = match q.date_field {
@@ -617,7 +642,7 @@ mod tests {
 
     /// The query plan of a search without text, as `search_page` runs it.
     fn browse_plan(vault: &Vault, q: &SearchQuery) -> String {
-        let sql = browse_sql(q, &filters(q).0);
+        let sql = browse_sql(q, &filters(q).0, false);
         let mut stmt = vault.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         // Unbound parameters are NULL, which doesn't change the plan.
         let mut rows = stmt.raw_query();
@@ -641,7 +666,7 @@ mod tests {
             ..Default::default()
         };
         let none = browse_plan(&vault, &q(None, None));
-        assert!(none.contains("notes_updated"), "{none}");
+        assert!(none.contains("notes_list_updated"), "{none}");
         for f in [ReadFilter::Unread, ReadFilter::NotFinished] {
             assert_eq!(browse_plan(&vault, &q(Some(f), None)), none, "{f:?}");
             assert_eq!(browse_plan(&vault, &q(Some(f), Some("a"))), browse_plan(&vault, &q(None, Some("a"))), "{f:?} in a folder");
@@ -653,6 +678,56 @@ mod tests {
                 assert!(!plan.contains("TEMP B-TREE"), "{f:?}: already in order: {plan}");
             }
         }
+    }
+
+    /// Without text, the list comes from an index alone, in a folder too: the note rows
+    /// hold the bodies, and the columns after the body can't be read without it.
+    #[test]
+    fn browsing_reads_an_index_not_the_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
+        for folder in [None, Some("a")] {
+            let plan = browse_plan(&vault, &SearchQuery { folder: folder.map(Into::into), ..Default::default() });
+            assert!(plan.contains("USING COVERING INDEX notes_list_"), "{folder:?}: {plan}");
+            assert!(!plan.contains("SCAN n\n") && !plan.ends_with("SCAN n"), "{folder:?}: {plan}");
+        }
+    }
+
+    /// A small folder's list reads the folder's range of the index, not every note of
+    /// the vault; a folder holding most of the vault is walked newest first.
+    #[test]
+    fn a_small_folders_list_reads_only_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
+        for i in 0..40 {
+            vault.create_note("big/sub", &format!("n{i}"), "x").unwrap();
+        }
+        let small = vault.create_note("small", "a", "x").unwrap();
+        vault.create_note("Small/Below", "b", "x").unwrap();
+        vault.create_note("smaller", "c", "x").unwrap();
+        let q = |folder: &str| SearchQuery { folder: Some(folder.into()), limit: Some(5), ..Default::default() };
+        assert!(vault.browse_by_folder(&q("small"), 5).unwrap());
+        assert!(!vault.browse_by_folder(&q("big"), 5).unwrap());
+        assert!(!vault.browse_by_folder(&SearchQuery::default(), 5).unwrap());
+        let sql = browse_sql(&q("small"), &filters(&q("small")).0, true);
+        let mut plan = String::new();
+        {
+            let mut stmt = vault.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let mut rows = stmt.raw_query();
+            while let Some(r) = rows.next().unwrap() {
+                plan.push_str(&r.get::<_, String>(3).unwrap());
+                plan.push('\n');
+            }
+        }
+        assert!(plan.contains("USING COVERING INDEX notes_list_folder (folder>? AND folder<?)"), "{plan}");
+        let titles: Vec<String> = vault.search(&q("small")).unwrap().into_iter().map(|h| h.note.title).collect();
+        assert_eq!(titles, ["b", "a"], "newest first, with the subfolder, without `smaller`");
+        // Timestamps are in milliseconds: make sure the edit is later than `b`.
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        vault.update_body(small, "edited").unwrap();
+        let titles: Vec<String> = vault.search(&q("SMALL")).unwrap().into_iter().map(|h| h.note.title).collect();
+        assert_eq!(titles, ["a", "b"]);
+        assert_eq!(vault.search(&q("big")).unwrap().len(), 5);
     }
 
     /// A broad read status filter (nearly every note passes) lists the few notes it

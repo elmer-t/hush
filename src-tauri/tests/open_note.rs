@@ -13,6 +13,11 @@
 //! suggestions, backlinks, outgoing links and related notes. They all take the one
 //! vault, so a slow panel query of the note just left delays the next note's
 //! `open_note`: "next open" is what a quick second click waits for.
+//!
+//! Selecting a folder in the tree sends three more: the sidebar stores the folder, lists
+//! its notes newest first, and the tree loads the folder's first page. They are timed for
+//! a small folder, a top-level one, one with a third of the vault and one of 100 kB
+//! imported documents.
 
 mod common;
 
@@ -20,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hush_lib::db::{NewNote, Vault};
+use hush_lib::db::{NewNote, SearchQuery, Vault};
 use hush_lib::embed::job::{self, EmbedderSource};
 use hush_lib::embed::{self, EmbedError, Embedder, related};
 use hush_lib::markdown;
@@ -30,12 +35,17 @@ const MODEL: &str = "fake-384";
 const DIMS: usize = 384;
 const MAX_NOTES: usize = 10_000;
 /// Bumped when the generator changes, so a kept vault from an older one isn't reused.
-const GENERATOR: &str = "open-v1";
+const GENERATOR: &str = "open-v4";
 const GENERATOR_SETTING: &str = "open_benchmark";
 const IMPORT_BATCH: usize = 500;
 const HUBS: usize = 5;
 const TAGS: usize = 40;
 const SAMPLES: usize = 40;
+const BIG_FOLDER: &str = "archive/big";
+/// One note in 25 is an imported document of about 100 kB, all in this folder.
+const IMPORTS_FOLDER: &str = "archive/imports";
+/// The sidebar's page (`PAGE_SIZE` in Sidebar.svelte and explorer.svelte.ts).
+const PAGE: u32 = 500;
 
 /// SplitMix64: small, deterministic, no dependency.
 struct Rng(u64);
@@ -80,19 +90,31 @@ fn title(i: usize) -> String {
     }
 }
 
+fn in_imports(i: usize) -> bool {
+    i % 25 == 11 && i >= HUBS
+}
+
 fn folder(i: usize, notes: usize) -> String {
+    if in_imports(i) {
+        return IMPORTS_FOLDER.into();
+    }
+    // A third of the vault is in one folder, as an archive or an inbox is.
+    if i % 3 == 0 && i % 100 != 99 && i >= HUBS {
+        return BIG_FOLDER.into();
+    }
     let folders = (notes / 50).max(1);
     // The `Notes` notes each get a folder of their own: a folder holds a title once.
     let f = if i % 100 == 99 { (i / 100) % folders } else { i % folders };
     format!("area {}/year {}/folder {f}", f % 7, 2000 + f % 25)
 }
 
-/// 100-400 words for most notes, 5,000 for one in 20, 60,000 (about 400 kB) for one in
+/// 100-400 words for most notes, 5,000 for one in 20, 15,000 (about 100 kB) for the one in 25 in [`IMPORTS_FOLDER`], 60,000 (about 400 kB) for one in
 /// 200; frontmatter tags, inline tags, 0-6 links to other notes, links to the hubs and
 /// to a `Notes` note (ambiguous unless written with its folder).
 fn body(i: usize, notes: usize, rng: &mut Rng) -> String {
     let words = match i {
         _ if i % 200 == 7 => 60_000,
+        _ if in_imports(i) => 15_000,
         _ if i % 20 == 3 => 5_000,
         _ => 100 + rng.below(300),
     };
@@ -251,8 +273,7 @@ fn switch(session: &Session, id: i64) -> Switch {
                 let note = v.note(id)?;
                 let meta = markdown::parse(&note.body);
                 v.record_opened(id)?;
-                // As the command does: the note goes to the webview as JSON.
-                Ok(serde_json::to_string(&(note, meta.tags)).unwrap().len())
+                Ok(note.body.len() + meta.tags.len())
             })
             .unwrap()
     })
@@ -326,6 +347,39 @@ fn open_note_benchmark() {
     for hub in 0..HUBS {
         let backlinks = session.with_vault(|v| v.backlinks(id(hub))).unwrap().len();
         report(&format!("hub {hub} ({backlinks} backlinks)"), (0..5).map(|_| switch(&session, id(hub))).collect());
+    }
+
+    // Selecting a folder in the tree: the sidebar stores it, lists the folder's notes
+    // newest first (for the Recent view, also while the tree shows) and the tree loads
+    // the folder's first page. A note clicked right after waits for all three.
+    println!();
+    println!("== Selecting a folder, then opening a note in it ==");
+    let select = |folder: &str| {
+        let stored = timed(|| session.with_vault(|v| v.set_setting("sidebar_folder", folder)).unwrap()).1;
+        let query = SearchQuery { folder: Some(folder.into()), limit: Some(PAGE), ..Default::default() };
+        let (listed, browse) = timed(|| session.with_vault(|v| v.search(&query)).unwrap().len());
+        let (page, tree) = timed(|| session.with_vault(|v| v.folder_notes(folder, 0, PAGE)).unwrap().len());
+        (stored, browse, tree, listed, page)
+    };
+    let small: Vec<String> = (0..12).map(|n| folder(1 + n * 37, notes)).filter(|f| f.starts_with("area ")).collect();
+    for (label, folders) in [
+        ("a folder of about 30 notes", small),
+        ("a top-level folder (a seventh of the vault below it)", (0..7).map(|n| format!("area {n}")).collect()),
+        ("the folder with a third of the vault", vec![BIG_FOLDER.to_string(); 5]),
+        ("the folder of imported documents (100 kB each)", vec![IMPORTS_FOLDER.to_string(); 5]),
+    ] {
+        let mut runs: Vec<_> = folders.iter().map(|f| select(f)).collect();
+        runs.sort_by_key(|r| r.0 + r.1 + r.2);
+        let (stored, browse, tree, listed, page) = runs[runs.len() / 2];
+        let worst = runs.last().unwrap();
+        println!(
+            "{label}\n  the note's open waits: median {}, worst {}\n    store the folder {}, newest-first list {} ({listed} notes), tree page {} ({page} notes)",
+            ms(stored + browse + tree),
+            ms(worst.0 + worst.1 + worst.2),
+            ms(stored),
+            ms(browse),
+            ms(tree),
+        );
     }
     session.lock();
 }
