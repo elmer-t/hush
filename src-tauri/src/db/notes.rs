@@ -473,9 +473,11 @@ impl Vault {
     /// subfolders, sorted by title case-insensitively. For the explorer tree, which
     /// loads one folder at a time.
     pub fn folder_notes(&self, folder: &str, offset: u32, limit: u32) -> Result<Vec<NoteSummary>> {
-        // The size is measured here, one page at a time, rather than stored.
+        // The size is measured here, one page at a time, rather than stored: the length
+        // is in the row's header, so the body itself isn't read. The rest comes from the
+        // index, in its order (a folder holds a title once, so the title alone orders it).
         let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT {SUMMARY_COLUMNS}, octet_length(n.body) FROM notes n WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title, n.id LIMIT ?2 OFFSET ?3"
+            "SELECT {SUMMARY_COLUMNS}, octet_length(n.body) FROM notes n INDEXED BY notes_list_folder WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title LIMIT ?2 OFFSET ?3"
         ))?;
         let notes = stmt
             .query_map(params![markdown::normalize_folder(folder), limit, offset], |r| {
@@ -983,6 +985,32 @@ mod tests {
         assert_eq!(sizes(&v), [], "the folder's row goes with its last note");
         v.restore_note(b).unwrap();
         assert_eq!(sizes(&v), [("Archive/docs".to_string(), 4)]);
+    }
+
+    /// The tree's page comes from the list index, in its order; only the body's length
+    /// is read from the note itself.
+    #[test]
+    fn folder_notes_read_the_list_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut v = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
+        for title in ["b", "A", "c"] {
+            v.create_note("f", title, "x").unwrap();
+        }
+        let trashed = v.create_note("f", "0 gone", "x").unwrap();
+        v.trash_notes(&[trashed]).unwrap();
+        let titles: Vec<String> = v.folder_notes("F", 0, 10).unwrap().into_iter().map(|n| n.title).collect();
+        assert_eq!(titles, ["A", "b", "c"]);
+        assert_eq!(v.folder_notes("f", 1, 1).unwrap()[0].title, "b");
+        let sql = format!("EXPLAIN QUERY PLAN SELECT {SUMMARY_COLUMNS}, octet_length(n.body) FROM notes n INDEXED BY notes_list_folder WHERE n.folder = ?1 AND n.deleted_at IS NULL ORDER BY n.title LIMIT ?2 OFFSET ?3");
+        let mut stmt = v.conn.prepare(&sql).unwrap();
+        // Unbound parameters are NULL, which doesn't change the plan.
+        let mut rows = stmt.raw_query();
+        let mut plan = String::new();
+        while let Some(r) = rows.next().unwrap() {
+            plan.push_str(&r.get::<_, String>(3).unwrap());
+            plan.push('\n');
+        }
+        assert!(plan.contains("notes_list_folder") && !plan.contains("TEMP B-TREE"), "{plan}");
     }
 
     /// Notes listed for the tree carry their size; other summaries don't read the body.

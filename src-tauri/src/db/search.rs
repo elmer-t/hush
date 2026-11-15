@@ -446,11 +446,11 @@ struct WordRanking {
 /// A search without text: the notes matching `filters` (from [`filters`]), most recently
 /// updated first, with the limit and offset as the last two parameters.
 fn browse_sql(q: &SearchQuery, filters: &[String]) -> String {
-    // Left to itself SQLite walks `notes_updated` newest first and checks each note's
-    // rating, which reads the whole vault when few notes are rated. Most notes are
+    // Left to itself SQLite walks `notes_list_updated` newest first and checks each
+    // note's rating, which reads the whole index when few notes are rated. Most notes are
     // unrated, so reading the rated ones and sorting them is the cheaper bet. The same
     // goes for notes marked partly read or read; unread is nearly every note, so that
-    // filter walks `notes_updated` as before.
+    // filter walks `notes_list_updated` as before.
     let index = if q.min_rating.is_some_and(|m| m > 0) {
         " INDEXED BY notes_rating"
     } else if matches!(q.read_status, Some(ReadFilter::PartlyRead | ReadFilter::Read)) {
@@ -641,7 +641,7 @@ mod tests {
             ..Default::default()
         };
         let none = browse_plan(&vault, &q(None, None));
-        assert!(none.contains("notes_updated"), "{none}");
+        assert!(none.contains("notes_list_updated"), "{none}");
         for f in [ReadFilter::Unread, ReadFilter::NotFinished] {
             assert_eq!(browse_plan(&vault, &q(Some(f), None)), none, "{f:?}");
             assert_eq!(browse_plan(&vault, &q(Some(f), Some("a"))), browse_plan(&vault, &q(None, Some("a"))), "{f:?} in a folder");
@@ -652,6 +652,19 @@ mod tests {
                 assert!(plan.contains("USING INDEX notes_read"), "{f:?}: {plan}");
                 assert!(!plan.contains("TEMP B-TREE"), "{f:?}: already in order: {plan}");
             }
+        }
+    }
+
+    /// Without text, the list comes from an index alone, in a folder too: the note rows
+    /// hold the bodies, and the columns after the body can't be read without it.
+    #[test]
+    fn browsing_reads_an_index_not_the_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::create(&dir.path().join("v.hush"), "test passphrase").unwrap();
+        for folder in [None, Some("a")] {
+            let plan = browse_plan(&vault, &SearchQuery { folder: folder.map(Into::into), ..Default::default() });
+            assert!(plan.contains("USING COVERING INDEX notes_list_"), "{folder:?}: {plan}");
+            assert!(!plan.contains("SCAN n\n") && !plan.ends_with("SCAN n"), "{folder:?}: {plan}");
         }
     }
 

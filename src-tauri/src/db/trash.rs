@@ -444,12 +444,17 @@ mod tests {
     #[test]
     fn folder_queries_use_the_folder_index() {
         let (_dir, v) = vault();
+        // Either index that starts with `folder` will do: SQLite picks between them.
+        let ranged = |plan: &str| {
+            ["notes_folder_title", "notes_list_folder"].iter().any(|i| plan.contains(&format!("{i} (folder>? AND folder<?)")))
+                && !plan.contains("SCAN notes")
+        };
         let live = plan(&v, &format!("SELECT count(*) FROM notes WHERE deleted_at IS NULL AND {IN_SUBTREE}"));
-        assert!(live.contains("notes_folder_title (folder>? AND folder<?)") && !live.contains("SCAN notes"), "{live}");
+        assert!(ranged(&live), "{live}");
         let update = plan(&v, &format!("UPDATE notes SET deleted_at = ?4 WHERE deleted_at IS NULL AND {IN_SUBTREE}"));
-        assert!(update.contains("notes_folder_title (folder>? AND folder<?)") && !update.contains("SCAN notes"), "{update}");
+        assert!(ranged(&update), "{update}");
         let distinct = plan(&v, "SELECT DISTINCT folder FROM notes WHERE deleted_at IS NULL AND folder > ?1 AND folder < ?2");
-        assert!(distinct.contains("notes_folder_title (folder>? AND folder<?)") && !distinct.contains("SCAN notes"), "{distinct}");
+        assert!(ranged(&distinct), "{distinct}");
     }
 
     /// A group's notes are found by `deleted_at` through its index.
