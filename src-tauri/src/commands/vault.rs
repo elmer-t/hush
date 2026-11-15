@@ -11,7 +11,7 @@ use std::time::Instant;
 use super::{LOCKED_EVENT, Result, activity, embeddings, training};
 use crate::activity::{Job, count};
 use crate::config::Config;
-use crate::db::{self, Compacted, Vault, VaultSpace};
+use crate::db::{self, Compacted, UpgradeStep, Vault, VaultSpace};
 use crate::session::{self, Session};
 
 /// Emitted with a [`crate::db::Upgrade`] while opening a vault runs a migration that
@@ -94,7 +94,11 @@ pub async fn open_vault(
         session.activity().reporter(session.generation()).record(
             Job::Migration,
             opened,
-            format!("upgraded the vault, rebuilding the search index for {} notes", count(upgrade.total as u64)),
+            match upgrade.step {
+                // Its total counts indexes, not notes.
+                UpgradeStep::ListIndexes => "upgraded the vault, building the note list indexes".to_string(),
+                _ => format!("upgraded the vault, rebuilding the search index for {} notes", count(upgrade.total as u64)),
+            },
         );
     }
     Ok(info)

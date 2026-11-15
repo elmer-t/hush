@@ -265,9 +265,14 @@
         </button>
         {#if busy && showUpgrade && upgrade && upgrade.total > 0}
           <p class="muted upgrade" role="status">
-            {upgrade.step === "folderSizes" ? "Measuring note sizes for the folder tree" : "Upgrading the search index"}:
-            {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
-            of {upgrade.total.toLocaleString()} notes). This happens once.
+            {#if upgrade.step === "listIndexes"}
+              Building the note list indexes: {Math.min(upgrade.done + 1, upgrade.total)} of {upgrade.total}.
+              Each reads every note, which takes minutes in a large vault. This happens once.
+            {:else}
+              {upgrade.step === "folderSizes" ? "Measuring note sizes for the folder tree" : "Upgrading the search index"}:
+              {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
+              of {upgrade.total.toLocaleString()} notes). This happens once.
+            {/if}
           </p>
         {/if}
       {/if}
