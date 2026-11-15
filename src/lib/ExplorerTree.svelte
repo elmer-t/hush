@@ -7,6 +7,7 @@
   import ReadMark from "$lib/ReadMark.svelte";
   import { collator, folderChildren } from "$lib/folderTree";
   import { normalizeFolder } from "$lib/markdown";
+  import { rowWindow, scrollTopFor } from "$lib/rowWindow";
   import { selectionKeys } from "$lib/selection";
   import { formatSize } from "$lib/size";
 
@@ -105,6 +106,16 @@
   });
 
   let tree = $state<HTMLElement>();
+
+  // Only the rows in view are drawn, each placed by its index: a folder can hold thousands
+  // of notes, and every drawn row costs on each note switch (its selection state is worked
+  // out again, and the page's style and layout cover it). The CSS has the same heights.
+  const ROW_HEIGHT = 30;
+  const ROW_GAP = 1;
+  const ROW_PITCH = ROW_HEIGHT + ROW_GAP;
+  let scrollTop = $state(0);
+  let viewHeight = $state(0);
+  const drawn = $derived(rowWindow(scrollTop, viewHeight, rows.length, ROW_PITCH));
   // The row that takes Tab focus (roving tabindex).
   let focusKey = $state<string | null>(null);
   const activeKey = $derived(
@@ -114,6 +125,16 @@
         ? `n:${selectedNote.id}`
         : (rows[0]?.key ?? null),
   );
+  // The row with keyboard focus is drawn even when it is scrolled out of view, so
+  // scrolling with the wheel doesn't take the focus away from the tree.
+  const shown = $derived.by(() => {
+    const { first, last } = drawn;
+    const out = rows.slice(first, last).map((row, i) => ({ row, index: first + i }));
+    const at = activeKey === null ? -1 : rows.findIndex((r) => r.key === activeKey);
+    if (at >= 0 && at < first) out.unshift({ row: rows[at], index: at });
+    else if (at >= last) out.push({ row: rows[at], index: at });
+    return out;
+  });
   let naming = $state(false);
   let newName = $state("");
 
@@ -142,7 +163,15 @@
     }
     ensureNote(note);
     await tick();
-    rowElement(`n:${note.id}`)?.scrollIntoView({ block: "nearest" });
+    scrollToRow(`n:${note.id}`);
+  }
+
+  /** Scrolls just far enough to bring a row into view, whether it is drawn or not. */
+  function scrollToRow(k: string) {
+    const index = rows.findIndex((r) => r.key === k);
+    if (!tree || index < 0) return;
+    const top = scrollTopFor(index, tree.scrollTop, tree.clientHeight, ROW_PITCH, ROW_HEIGHT);
+    if (top !== tree.scrollTop) tree.scrollTop = top;
   }
 
   function rowElement(k: string): HTMLElement | null {
@@ -415,6 +444,8 @@
     aria-label="Folders and notes"
     aria-multiselectable="true"
     bind:this={tree}
+    bind:clientHeight={viewHeight}
+    onscroll={() => (scrollTop = tree?.scrollTop ?? 0)}
     {onkeydown}
     ondragover={dragOver}
     ondragleave={dragLeave}
@@ -424,79 +455,85 @@
     {#if rows.length === 0}
       <p class="muted empty">No notes yet.</p>
     {/if}
-    {#each rows as row (row.key)}
-      {#if row.kind === "folder"}
-        <div
-          class="row folder"
-          class:selected={isSelectedFolder(row.path)}
-          class:drop-target={dropKey === key(row.path)}
-          role="treeitem"
-          aria-level={row.level}
-          aria-expanded={row.open}
-          aria-selected={isSelectedFolder(row.path)}
-          tabindex={row.key === activeKey ? 0 : -1}
-          data-key={row.key}
-          title={row.path}
-          style:padding-left="{indent(row.level)}px"
-          draggable="true"
-          ondragstart={(e) => dragFolderStart(row.path, e)}
-          ondragend={dragEnd}
-          onclick={() => clickFolder(row)}
-          oncontextmenu={(e) => openMenu(row, e)}
-          onkeydown={() => {}}
-          onfocus={() => (focusKey = row.key)}
-        >
-          <span class="twisty"><Icon name={row.open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={2} /></span>
-          <span class="glyph"><Icon name="folder" /></span>
-          <span class="name">{row.name}</span>
-          {#if sizes.has(key(row.path))}<span class="size">{formatSize(sizes.get(key(row.path)) ?? 0)}</span>{/if}
-        </div>
-      {:else if row.kind === "note"}
-        <div
-          class="row note"
-          class:selected={row.note.id === selectedNote?.id}
-          class:picked={picked.has(row.note.id)}
-          role="treeitem"
-          aria-level={row.level}
-          aria-selected={picked.size > 0 ? picked.has(row.note.id) : row.note.id === selectedNote?.id}
-          aria-current={row.note.id === selectedNote?.id}
-          tabindex={row.key === activeKey ? 0 : -1}
-          data-key={row.key}
-          title={row.note.folder ? `${row.note.folder}/${row.note.title}` : row.note.title}
-          style:padding-left="{indent(row.level)}px"
-          draggable="true"
-          ondragstart={(e) => dragStart(row.note, e)}
-          ondragend={dragEnd}
-          onclick={(e) => activate(row, e)}
-          oncontextmenu={(e) => openMenu(row, e)}
-          onkeydown={() => {}}
-          onfocus={() => (focusKey = row.key)}
-        >
-          <span class="twisty"></span>
-          <span class="glyph note-glyph"><Icon name="note" /></span>
-          <span class="name">{row.note.title}</span>
-          {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
-          <ReadMark status={readStatusOf(row.note)} />
-          {#if row.note.size !== undefined}<span class="size">{formatSize(row.note.size)}</span>{/if}
-        </div>
-      {:else}
-        <div
-          class="row more"
-          role="treeitem"
-          aria-level={row.level}
-          aria-selected="false"
-          tabindex={row.key === activeKey ? 0 : -1}
-          data-key={row.key}
-          style:padding-left="{indent(row.level)}px"
-          onclick={(e) => activate(row, e)}
-          onkeydown={() => {}}
-          onfocus={() => (focusKey = row.key)}
-        >
-          <span class="twisty"></span>
-          <span class="name muted">Show more…</span>
-        </div>
-      {/if}
-    {/each}
+    <div class="sizer" role="none" style:height="{Math.max(0, rows.length * ROW_PITCH - ROW_GAP)}px">
+      {#each shown as item (item.row.key)}
+        {@const row = item.row}
+        {#if row.kind === "folder"}
+          <div
+            class="row folder"
+            class:selected={isSelectedFolder(row.path)}
+            class:drop-target={dropKey === key(row.path)}
+            role="treeitem"
+            aria-level={row.level}
+            aria-expanded={row.open}
+            aria-selected={isSelectedFolder(row.path)}
+            tabindex={row.key === activeKey ? 0 : -1}
+            data-key={row.key}
+            title={row.path}
+            style:top="{item.index * ROW_PITCH}px"
+            style:padding-left="{indent(row.level)}px"
+            draggable="true"
+            ondragstart={(e) => dragFolderStart(row.path, e)}
+            ondragend={dragEnd}
+            onclick={() => clickFolder(row)}
+            oncontextmenu={(e) => openMenu(row, e)}
+            onkeydown={() => {}}
+            onfocus={() => (focusKey = row.key)}
+          >
+            <span class="twisty"><Icon name={row.open ? "chevronDown" : "chevronRight"} size={14} strokeWidth={2} /></span>
+            <span class="glyph"><Icon name="folder" /></span>
+            <span class="name">{row.name}</span>
+            {#if sizes.has(key(row.path))}<span class="size">{formatSize(sizes.get(key(row.path)) ?? 0)}</span>{/if}
+          </div>
+        {:else if row.kind === "note"}
+          <div
+            class="row note"
+            class:selected={row.note.id === selectedNote?.id}
+            class:picked={picked.has(row.note.id)}
+            role="treeitem"
+            aria-level={row.level}
+            aria-selected={picked.size > 0 ? picked.has(row.note.id) : row.note.id === selectedNote?.id}
+            aria-current={row.note.id === selectedNote?.id}
+            tabindex={row.key === activeKey ? 0 : -1}
+            data-key={row.key}
+            title={row.note.folder ? `${row.note.folder}/${row.note.title}` : row.note.title}
+            style:top="{item.index * ROW_PITCH}px"
+            style:padding-left="{indent(row.level)}px"
+            draggable="true"
+            ondragstart={(e) => dragStart(row.note, e)}
+            ondragend={dragEnd}
+            onclick={(e) => activate(row, e)}
+            oncontextmenu={(e) => openMenu(row, e)}
+            onkeydown={() => {}}
+            onfocus={() => (focusKey = row.key)}
+          >
+            <span class="twisty"></span>
+            <span class="glyph note-glyph"><Icon name="note" /></span>
+            <span class="name">{row.note.title}</span>
+            {#if row.note.rating}<span class="rating" aria-label="{row.note.rating} of 5 stars">★{row.note.rating}</span>{/if}
+            <ReadMark status={readStatusOf(row.note)} />
+            {#if row.note.size !== undefined}<span class="size">{formatSize(row.note.size)}</span>{/if}
+          </div>
+        {:else}
+          <div
+            class="row more"
+            role="treeitem"
+            aria-level={row.level}
+            aria-selected="false"
+            tabindex={row.key === activeKey ? 0 : -1}
+            data-key={row.key}
+            style:top="{item.index * ROW_PITCH}px"
+            style:padding-left="{indent(row.level)}px"
+            onclick={(e) => activate(row, e)}
+            onkeydown={() => {}}
+            onfocus={() => (focusKey = row.key)}
+          >
+            <span class="twisty"></span>
+            <span class="name muted">Show more…</span>
+          </div>
+        {/if}
+      {/each}
+    </div>
   </div>
 </div>
 
@@ -546,9 +583,11 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
+  }
+
+  /* As high as all the rows; the rows that are drawn sit in it at their own offsets. */
+  .sizer {
+    position: relative;
   }
 
   .empty {
@@ -556,8 +595,11 @@
     padding: 4px 8px;
   }
 
+  /* 30px high and 1px apart: ROW_HEIGHT and ROW_GAP in the script. */
   .row {
-    flex: none;
+    position: absolute;
+    left: 0;
+    right: 0;
     display: flex;
     align-items: center;
     gap: 6px;
