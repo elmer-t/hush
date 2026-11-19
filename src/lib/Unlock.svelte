@@ -272,6 +272,10 @@
               {upgrade.step === "folderSizes" ? "Measuring note sizes for the folder tree" : "Upgrading the search index"}:
               {Math.floor((upgrade.done / upgrade.total) * 100)}% ({upgrade.done.toLocaleString()}
               of {upgrade.total.toLocaleString()} notes). This happens once.
+              {#if upgrade.step === "searchIndex"}
+                The new index is smaller. To give the freed space back to the disk, compact the vault afterwards (Settings,
+                Storage).
+              {/if}
             {/if}
           </p>
         {/if}

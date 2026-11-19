@@ -194,8 +194,9 @@ INSERT INTO embedding_dirty(note_id) SELECT id FROM notes WHERE deleted_at IS NU
 "#, r#"
 -- Search as you type at 1M notes: the full-text index gains prefix indexes for 2 and 3
 -- characters, so a short prefix reads one list instead of merging every word that
--- starts with it. The index is derived from `notes`, so it is dropped and refilled
--- (by `fill_fts`, in batches, with progress); no note content is at risk.
+-- starts with it. The index is derived from `notes`, so it is dropped and recreated;
+-- no note content is at risk. It is left empty here: the migration that removes the
+-- prefix indexes again (`FTS_REFILL_VERSION`) drops it and refills its own.
 DROP TRIGGER notes_fts_insert;
 DROP TRIGGER notes_fts_delete;
 DROP TRIGGER notes_fts_update;
@@ -346,10 +347,39 @@ CREATE INDEX notes_list_folder ON notes(folder, title, author, topic, created_at
     WHERE deleted_at IS NULL;
 -- `notes_list_updated` is created by `create_list_indexes`, so the unlock screen can
 -- say how far this is: each index reads every note once.
+"#, r#"
+-- The prefix indexes go again: on a 569,170-note vault they took 7.5 GB, 55% of the
+-- full-text index, to save a fraction of a second on a 2- or 3-letter search. A word
+-- start is matched from 3 letters on (`search::PREFIX_MIN_CHARS`), from the whole-word
+-- index. As before the index is derived from `notes`: it is dropped and refilled (by
+-- `fill_fts`, in batches, with progress), and no note content is touched. The pages of
+-- the old index are free for the new one right away; what is left over stays in the
+-- file until the vault is compacted.
+DROP TRIGGER notes_fts_insert;
+DROP TRIGGER notes_fts_delete;
+DROP TRIGGER notes_fts_update;
+DROP TABLE notes_fts;
+CREATE VIRTUAL TABLE notes_fts USING fts5(
+    title, body,
+    content = 'notes', content_rowid = 'id',
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
+CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+END;
+CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, body ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
 "#];
 
-/// The migration that recreates the full-text index; [`fill_fts`] refills it.
-const FTS_PREFIX_VERSION: usize = 9;
+/// The last migration that recreates the full-text index; [`fill_fts`] refills it. An
+/// earlier one (version 9, which added the prefix indexes this one removes) leaves the
+/// index empty, so a vault from before it indexes its notes once, not twice.
+const FTS_REFILL_VERSION: usize = 16;
 /// Notes indexed per step while refilling, between progress reports.
 const FTS_FILL_BATCH: i64 = 2_000;
 
@@ -449,12 +479,28 @@ fn create_list_indexes(tx: &rusqlite::Transaction<'_>, first_sql: &str, progress
 /// Vaults created before this version get the default import rules.
 const IMPORT_RULES_VERSION: usize = 2;
 
-pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
+/// Brings the vault to the current schema, in one transaction: a failure part way (an
+/// error, a full disk, a crash) leaves the vault at the version it had. Returns whether
+/// there was anything to do.
+pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) -> Result<bool> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let version = version as usize;
     if version > MIGRATIONS.len() {
         return Err(Error::UnsupportedVersion);
     }
+    if version == MIGRATIONS.len() {
+        return Ok(false);
+    }
+    apply_migrations(conn, version, progress).map_err(|e| if disk_full(&e) { Error::UpgradeDiskFull } else { e })?;
+    Ok(true)
+}
+
+/// Whether SQLite gave up because the drive (or the `-wal` file's drive) is full.
+fn disk_full(e: &Error) -> bool {
+    matches!(e, Error::Sql(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ErrorCode::DiskFull)
+}
+
+fn apply_migrations(conn: &mut Connection, version: usize, progress: &mut dyn FnMut(Upgrade)) -> Result<()> {
     let tx = conn.transaction()?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
         if i + 1 == LIST_INDEXES_VERSION {
@@ -465,7 +511,7 @@ pub(super) fn migrate(conn: &mut Connection, progress: &mut dyn FnMut(Upgrade)) 
         if i + 1 == IMPORT_RULES_VERSION {
             rules::write_rules(&tx, &Rule::defaults())?;
         }
-        if i + 1 == FTS_PREFIX_VERSION {
+        if i + 1 == FTS_REFILL_VERSION {
             fill_fts(&tx, progress)?;
         }
         if i + 1 == FOLDER_SIZES_VERSION {
@@ -632,7 +678,7 @@ mod tests {
         migrate(&mut conn, &mut |_| {}).unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(version as usize, MIGRATIONS.len());
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         let body: String = conn.query_row("SELECT body FROM notes WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert_eq!(body, "body #jr");
         let vectors: i64 = conn.query_row("SELECT count(*) FROM note_embeddings", [], |r| r.get(0)).unwrap();
@@ -700,9 +746,10 @@ mod tests {
     }
 
     /// A vault from before the prefix index (version 8) gets its full-text index rebuilt
-    /// with every note, trashed ones too, and reports progress; search works after.
+    /// with every note, trashed ones too, and reports progress; search works after. The
+    /// index is recreated twice on the way (versions 9 and 16) but filled once.
     #[test]
-    fn fts_prefix_migration_rebuilds_the_index() {
+    fn a_vault_from_before_the_prefix_indexes_gets_its_index_filled_once() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         for sql in &MIGRATIONS[..8] {
@@ -738,6 +785,290 @@ mod tests {
         conn.execute("DELETE FROM notes WHERE id = 2", []).unwrap();
         assert_eq!(count("lighthouse"), 4_498);
         conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')", []).unwrap();
+    }
+
+    fn fts_definition(conn: &Connection) -> String {
+        conn.query_row("SELECT sql FROM sqlite_master WHERE name = 'notes_fts'", [], |r| r.get(0)).unwrap()
+    }
+
+    /// A vault with the prefix indexes (version 15) gets its full-text index rebuilt
+    /// without them, with every note, trashed ones too, and reports progress. Whole
+    /// words and word starts of 3 and 4 letters find the same notes as before.
+    #[test]
+    fn fts_without_prefix_migration_finds_the_same_notes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..15] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE INDEX notes_list_updated ON notes(updated_at, id, folder, title, author, topic, created_at, rating, read_status, deleted_at)
+                 WHERE deleted_at IS NULL;",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 15).unwrap();
+        assert!(fts_definition(&conn).contains("prefix"), "the vault starts with the prefix indexes");
+        const WORDS: [&str; 6] = ["lighthouse", "light", "lignite", "harbour", "hark", "Café"];
+        for i in 0..4_500usize {
+            conn.execute(
+                "INSERT INTO notes(title, body, created_at, updated_at, deleted_at) VALUES (?1, ?2, 1, 1, ?3)",
+                params![format!("Note {i}"), format!("{} {} number{i}", WORDS[i % 6], WORDS[i % 5]), (i == 7).then_some(5)],
+            )
+            .unwrap();
+        }
+        let ids = |conn: &Connection, q: &str| -> Vec<i64> {
+            let mut stmt = conn.prepare("SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?1 ORDER BY rowid").unwrap();
+            stmt.query_map([q], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        // Whole words, 3-letter and 4-letter word starts, in a title, with a diacritic,
+        // as a phrase and combined.
+        let queries = [
+            "\"lighthouse\"", "\"hark\"", "\"cafe\"", "\"7\"", "\"lig\"*", "\"har\"*", "\"caf\"*", "\"not\"*", "\"ligh\"*",
+            "\"harb\"*", "\"numb\"*", "\"number44\"*", "\"light har\"*", "\"note\" \"lign\"*", "\"xyz\"*",
+        ];
+        let before: Vec<Vec<i64>> = queries.iter().map(|q| ids(&conn, q)).collect();
+        for (q, found) in queries.iter().zip(&before) {
+            assert_eq!(found.is_empty(), *q == "\"xyz\"*", "{q} finds something to compare");
+        }
+        assert_eq!(before[11].len(), 111, "number44, 440–449 and 4400–4499");
+
+        let mut reports = Vec::new();
+        migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
+        let at = |done| Upgrade { step: UpgradeStep::SearchIndex, done, total: 4_500 };
+        assert_eq!(reports, [at(0), at(2_000), at(4_000), at(4_500)]);
+
+        assert!(!fts_definition(&conn).contains("prefix"), "{}", fts_definition(&conn));
+        for (q, before) in queries.iter().zip(&before) {
+            assert_eq!(&ids(&conn, q), before, "{q}");
+        }
+        // The triggers are back: edits keep the index in step.
+        let count = |q: &str| ids(&conn, q).len();
+        let lighthouses = before[0].len();
+        assert_eq!(before[0][..2], [1, 6], "notes 1 and 6 have the word");
+        conn.execute("UPDATE notes SET body = 'breakwater' WHERE id = 1", []).unwrap();
+        assert_eq!(count("breakwater"), 1);
+        assert_eq!(count("lighthouse"), lighthouses - 1);
+        conn.execute("DELETE FROM notes WHERE id = 6", []).unwrap();
+        assert_eq!(count("lighthouse"), lighthouses - 2);
+        conn.execute("INSERT INTO notes(title, created_at, updated_at) VALUES ('Mole', 1, 1)", []).unwrap();
+        assert_eq!(count("\"mol\"*"), 1);
+        conn.execute("INSERT INTO notes_fts(notes_fts) VALUES ('integrity-check')", []).unwrap();
+    }
+
+    /// When the drive fills up during the refill the upgrade says so, and the vault is
+    /// as it was: same version, same notes, and it upgrades once there is room.
+    #[test]
+    fn a_full_disk_leaves_the_vault_at_its_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for sql in &MIGRATIONS[..15] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 15).unwrap();
+        for i in 0..500 {
+            let body: String = (0..200).map(|w| format!("word{} ", i * 200 + w)).collect();
+            conn.execute("INSERT INTO notes(title, body, created_at, updated_at) VALUES (?1, ?2, 1, 1)", params![format!("Note {i}"), body])
+                .unwrap();
+        }
+        // An empty index and no free pages, so the refill has to grow the file; then no
+        // room to grow.
+        conn.execute_batch("INSERT INTO notes_fts(notes_fts) VALUES ('delete-all'); VACUUM;").unwrap();
+        let pages: i64 = conn.pragma_query_value(None, "page_count", |r| r.get(0)).unwrap();
+        let limit = |conn: &Connection, max: i64| {
+            conn.query_row(&format!("PRAGMA max_page_count = {max}"), [], |r| r.get::<_, i64>(0)).unwrap();
+        };
+        limit(&conn, pages + 10);
+
+        let err = migrate(&mut conn, &mut |_| {}).unwrap_err();
+        assert!(matches!(err, Error::UpgradeDiskFull), "{err:?}");
+        assert_eq!(conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 15);
+        assert!(fts_definition(&conn).contains("prefix"), "the old index is still there");
+        assert_eq!(conn.query_row("SELECT count(*) FROM notes", [], |r| r.get::<_, i64>(0)).unwrap(), 500);
+
+        limit(&conn, 1_000_000);
+        assert!(migrate(&mut conn, &mut |_| {}).unwrap());
+        let found: i64 =
+            conn.query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH '\"word4\"*'", [], |r| r.get(0)).unwrap();
+        assert_eq!(found, 1 + 1 + 5 + 50, "word4… is in the first note, the third, 5 from the 21st and 50 from the 201st");
+        assert!(!migrate(&mut conn, &mut |_| {}).unwrap(), "nothing left to do");
+    }
+
+    /// Benchmark, not a check: what removing the prefix indexes costs and gives on a
+    /// generated vault (`HUSH_PREFIX_NOTES` notes of 400 words, default 50,000). Builds an
+    /// encrypted vault at version 15, times searches, upgrades it through `Vault::open`,
+    /// times the same searches again, and prints sizes along the way.
+    /// `cargo test --release --lib prefix_indexes_size_and_speed -- --ignored --nocapture`
+    #[test]
+    #[ignore = "benchmark; run by hand"]
+    fn prefix_indexes_size_and_speed() {
+        use crate::db::{NewNote, SearchQuery, Vault, compact::available_space, run_pragma};
+        use std::time::Instant;
+
+        const PASS: &str = "correct horse battery staple";
+        const COMMON: [&str; 40] = [
+            "the", "of", "and", "to", "a", "in", "is", "it", "you", "that", "he", "was", "for", "on", "are", "with", "as", "his",
+            "they", "be", "at", "one", "have", "this", "from", "or", "had", "by", "not", "word", "but", "what", "some", "we", "can",
+            "out", "other", "were", "all", "there",
+        ];
+        const ONSETS: [&str; 20] =
+            ["b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z", "br", "st", "tr", "pl", "gr", "sh"];
+        const VOWELS: [&str; 8] = ["a", "e", "i", "o", "u", "ai", "ou", "ee"];
+        const CODAS: [&str; 8] = ["", "n", "r", "s", "t", "l", "nd", "st"];
+        // SplitMix64: the same vault every run.
+        let mut state = 7u64;
+        let mut next = move || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut words: Vec<String> = COMMON.iter().map(|w| w.to_string()).collect();
+        while words.len() < 30_000 {
+            let word: String = (0..2 + next() % 3)
+                .map(|_| {
+                    let mut pick = |from: &[&'static str]| from[(next() % from.len() as u64) as usize];
+                    format!("{}{}{}", pick(&ONSETS), pick(&VOWELS), pick(&CODAS))
+                })
+                .collect();
+            if !words.contains(&word) {
+                words.push(word);
+            }
+        }
+        let notes: usize = std::env::var("HUSH_PREFIX_NOTES").ok().and_then(|n| n.parse().ok()).unwrap_or(50_000);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.hush");
+        let size = |suffix: &str| std::fs::metadata(format!("{}{suffix}", path.display())).map(|m| m.len()).unwrap_or(0);
+        let mb = |bytes: u64| format!("{:.1} MB", bytes as f64 / 1e6);
+
+        let mut vault = Vault::create(&path, PASS).unwrap();
+        // Back to the index of version 15, so the notes below fill its prefix indexes.
+        vault.conn.execute_batch(MIGRATIONS[8]).unwrap();
+        vault.conn.pragma_update(None, "user_version", 15).unwrap();
+        let started = Instant::now();
+        let mut text_bytes = 0;
+        for chunk in 0..notes.div_ceil(1_000) {
+            let rows: Vec<(String, String)> = (chunk * 1_000..notes.min((chunk + 1) * 1_000))
+                .map(|i| {
+                    // Zipf (s = 1) over the vocabulary, like word frequencies in text.
+                    let body: Vec<&str> = (0..400)
+                        .map(|_| {
+                            let unit = (next() >> 11) as f64 / (1u64 << 53) as f64;
+                            words[((words.len() as f64 + 1.0).powf(unit) as usize).saturating_sub(1).min(words.len() - 1)].as_str()
+                        })
+                        .collect();
+                    (format!("Note {i}"), body.join(" "))
+                })
+                .collect();
+            text_bytes += rows.iter().map(|(_, body)| body.len()).sum::<usize>();
+            let new: Vec<NewNote> =
+                rows.iter().map(|(title, body)| NewNote { folder: "", title, body, created_at: 1, updated_at: 1 }).collect();
+            assert!(vault.import_notes(&new).unwrap().iter().all(|r| r.is_ok()));
+        }
+        run_pragma(&vault.conn, "PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+        println!("{notes} notes, {} of text, written in {:.0?}", mb(text_bytes as u64), started.elapsed());
+
+        let index_bytes = |vault: &Vault| -> u64 {
+            let sql = "SELECT (SELECT coalesce(sum(length(block)), 0) FROM notes_fts_data)
+                            + (SELECT coalesce(sum(length(term) + 16), 0) FROM notes_fts_idx)";
+            vault.conn.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap() as u64
+        };
+        let segments = |vault: &Vault| -> i64 {
+            vault.conn.query_row("SELECT count(DISTINCT segid) FROM notes_fts_idx", [], |r| r.get(0)).unwrap()
+        };
+        // The most common word start of a length, the median one and the rarest, by how
+        // often the words that start with it are drawn.
+        let starts = |len: usize| -> [String; 3] {
+            let mut weight = std::collections::BTreeMap::<&str, f64>::new();
+            for (rank, word) in words.iter().enumerate().filter(|(_, w)| w.len() >= len) {
+                *weight.entry(&word[..len]).or_default() += 1.0 / (rank as f64 + 1.0);
+            }
+            let mut by_weight: Vec<(&str, f64)> = weight.into_iter().collect();
+            by_weight.sort_by(|a, b| b.1.total_cmp(&a.1));
+            [0, by_weight.len() / 2, by_weight.len() - 1].map(|i| by_weight[i].0.to_string())
+        };
+        let typed: Vec<String> = [starts(3), starts(4)].concat();
+        let two = starts(2);
+        let timings = |vault: &Vault| -> Vec<(f64, usize)> {
+            typed
+                .iter()
+                .map(|typed| {
+                    let q = SearchQuery { text: typed.to_string(), ..Default::default() };
+                    let mut ms: Vec<f64> = (0..5)
+                        .map(|_| {
+                            let started = Instant::now();
+                            vault.search_page(&q).unwrap();
+                            started.elapsed().as_secs_f64() * 1e3
+                        })
+                        .collect();
+                    ms.sort_by(f64::total_cmp);
+                    let matches: i64 = vault
+                        .conn
+                        .query_row("SELECT count(*) FROM notes_fts WHERE notes_fts MATCH ?1", [format!("\"{typed}\"*")], |r| r.get(0))
+                        .unwrap();
+                    (ms[2], matches as usize)
+                })
+                .collect()
+        };
+        // A word start of 2 letters as version 15 ran it, on whichever index there is.
+        let two_letter_starts = |vault: &Vault| -> Vec<f64> {
+            two.iter()
+                .map(|typed| {
+                    let mut ms: Vec<f64> = (0..5)
+                        .map(|_| {
+                            let started = Instant::now();
+                            let sql = "SELECT count(*) FROM (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?1 LIMIT 10001)";
+                            vault.conn.query_row(sql, [format!("\"{typed}\"*")], |r| r.get::<_, i64>(0)).unwrap();
+                            started.elapsed().as_secs_f64() * 1e3
+                        })
+                        .collect();
+                    ms.sort_by(f64::total_cmp);
+                    ms[2]
+                })
+                .collect()
+        };
+
+        let (file_with, index_with, segments_with) = (size(""), index_bytes(&vault), segments(&vault));
+        let (with, two_with) = (timings(&vault), two_letter_starts(&vault));
+        drop(vault);
+
+        let started = Instant::now();
+        // The `-wal` file as each progress report sees it: what the upgrade needs in free
+        // disk space, less what the last batch and the commit still add.
+        let (mut steps, mut wal_peak) = (0, 0);
+        let mut vault = Vault::open_with_progress(&path, PASS, &mut |_| {
+            steps += 1;
+            wal_peak = wal_peak.max(size("-wal"));
+        })
+        .unwrap();
+        let upgrade = started.elapsed();
+        let (file_after, wal_after, index_without, segments_without) = (size(""), size("-wal"), index_bytes(&vault), segments(&vault));
+        let (without, two_without) = (timings(&vault), two_letter_starts(&vault));
+        let space = vault.space().unwrap();
+
+        println!("upgrade: {upgrade:.1?} ({steps} progress reports), -wal file up to {} meanwhile", mb(wal_peak));
+        println!("search index: {} with prefix indexes ({segments_with} segments), {} without ({segments_without} segments)", mb(index_with), mb(index_without));
+        println!("vault file: {} before, {} after the upgrade (-wal {}), {} free inside, worth compacting: {}", mb(file_with), mb(file_after), mb(wal_after), mb(space.reclaimable_bytes), space.worth_compacting);
+        let compacted = vault.compact(&available_space).unwrap();
+        println!("after Compact vault: {} ({} ms)", mb(compacted.after_bytes), compacted.millis);
+        println!("search as typed (most common, median and rarest start of 3 and of 4 letters), median of 5 (ms):");
+        println!("  text, matching notes, with prefix indexes, without");
+        for (i, typed) in typed.iter().enumerate() {
+            println!("  {typed:<5} {:>7} {:>9.2} {:>9.2}", with[i].1, with[i].0, without[i].0);
+        }
+        println!("counting a 2-letter word start up to the rank limit, which no search does any more (ms): with, without");
+        for (i, typed) in two.iter().enumerate() {
+            println!("  {typed:<5} {:>9.2} {:>9.2}", two_with[i], two_without[i]);
+        }
+    }
+
+    /// A new vault gets the same full-text index as an upgraded one: no prefix indexes.
+    #[test]
+    fn a_new_vault_has_no_prefix_indexes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn, &mut |_| {}).unwrap();
+        let sql = fts_definition(&conn);
+        assert!(!sql.contains("prefix"), "{sql}");
+        assert!(sql.contains("content = 'notes', content_rowid = 'id'") && sql.contains("unicode61 remove_diacritics 2"), "{sql}");
     }
 
     /// A vault from before folder trash (version 9) keeps its notes, trashed ones too,
@@ -979,6 +1310,8 @@ mod tests {
 
         let mut reports = Vec::new();
         migrate(&mut conn, &mut |u| reports.push(u)).unwrap();
+        // The later search index migration reports its own step.
+        reports.retain(|u| u.step == UpgradeStep::ListIndexes);
         let at = |done| Upgrade { step: UpgradeStep::ListIndexes, done, total: 2 };
         assert_eq!(reports, [at(0), at(1), at(2)]);
         for (index, order, expected) in [("notes_list_folder", "title", [1, 2]), ("notes_list_updated", "updated_at DESC, id DESC", [1, 2])] {

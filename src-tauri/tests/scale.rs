@@ -473,7 +473,8 @@ fn scale_benchmark() {
             lookups.push(start.elapsed());
         }
 
-        // 7. Search as the user types: 1-, 2- and 3-character prefixes and two words.
+        // 7. Search as the user types: 1 and 2 characters (whole words), a 3-character
+        // word start and two words.
         let words = vocabulary();
         let two = format!("{} {}", words[30], words[1_200]);
         for text in ["t", "th", "the", two.as_str()] {

@@ -104,6 +104,8 @@ pub enum Error {
     InvalidThreshold,
     #[error("not enough free disk space to compact the vault: it needs {} free on the vault's drive, and {} is free", compact::byte_text(*.needed), compact::byte_text(*.available))]
     NotEnoughDiskSpace { needed: u64, available: u64 },
+    #[error("not enough free disk space to upgrade the vault. Nothing was changed: free up space on the vault's drive and unlock again")]
+    UpgradeDiskFull,
     #[error("could not check the free disk space: {0}")]
     DiskSpace(std::io::Error),
     #[error(transparent)]
@@ -149,7 +151,12 @@ impl Vault {
     }
 
     fn init(mut conn: Connection, lock: lock::VaultLock, progress: &mut dyn FnMut(Upgrade)) -> Result<Self> {
-        schema::migrate(&mut conn, progress)?;
+        if schema::migrate(&mut conn, progress)? {
+            // An upgrade that rebuilds an index leaves a `-wal` file as large as what it
+            // wrote, which would stay on the disk until the vault closes. The upgrade is
+            // committed either way, so a checkpoint that fails doesn't fail the unlock.
+            let _ = run_pragma(&conn, "PRAGMA wal_checkpoint(TRUNCATE)");
+        }
         notes::reset_bulk_writes(&conn)?;
         Ok(Self { conn, lock, setting_changes: Cell::new(0) })
     }
