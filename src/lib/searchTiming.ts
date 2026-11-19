@@ -1,5 +1,5 @@
 // When the sidebar's search-as-you-type runs. Typing waits for a pause so a word starts
-// one query, not one per letter; every query on a large vault is a prefix search plus a
+// one query, not one per letter; every query on a large vault is a word-start search (from 3 letters) plus a
 // count probe. Anything else (a filter, the folder, clearing the box, Enter) is a single
 // deliberate action and searches at once.
 

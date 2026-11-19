@@ -156,18 +156,21 @@ fn a_mailto_link_is_found_by_its_scheme() {
 }
 
 #[test]
-fn short_prefixes_use_the_prefix_index_and_one_letter_is_a_whole_word() {
+fn word_starts_match_from_three_letters_and_shorter_is_a_whole_word() {
     let (_dir, mut vault) = seeded();
-    vault.create_note("", "Letters", "a b c").unwrap();
-    // Two and three characters are prefixes, as before.
-    assert_eq!(titles(&vault, &text("li")), vec!["Lighthouse", "Dream of the sea"]);
+    vault.create_note("", "Letters", "a b c li").unwrap();
+    // Three characters are a word start.
     assert_eq!(titles(&vault, &text("lig")), vec!["Lighthouse", "Dream of the sea"]);
-    assert_eq!(titles(&vault, &text("bu")), vec!["Meeting"]);
+    assert_eq!(titles(&vault, &text("bud")), vec!["Meeting"]);
+    // Two letters match only the word itself, not every word starting with them.
+    assert_eq!(titles(&vault, &text("li")), vec!["Letters"]);
+    assert_eq!(titles(&vault, &text("bu")), Vec::<String>::new());
     // One letter matches only the word itself, not every word starting with it.
     assert_eq!(titles(&vault, &text("l")), Vec::<String>::new());
     assert_eq!(titles(&vault, &text("b")), vec!["Letters"]);
     assert_eq!(titles(&vault, &text("walked t")), Vec::<String>::new());
-    assert_eq!(titles(&vault, &text("walked th")), vec!["Lighthouse"]);
+    assert_eq!(titles(&vault, &text("walked th")), Vec::<String>::new());
+    assert_eq!(titles(&vault, &text("walked the")), vec!["Lighthouse"]);
 }
 
 /// Notes with "9" and "years": as a phrase, apart, and reversed. "Many years" would win
@@ -297,7 +300,7 @@ fn a_newer_search_interrupts_a_running_one() {
     let mut interrupted = false;
     for _ in 0..5 {
         let (older, newer) = std::thread::scope(|s| {
-            let older = s.spawn(|| session.search(|v, stop| v.search_page_until(&text("wo"), stop)));
+            let older = s.spawn(|| session.search(|v, stop| v.search_page_until(&text("wor"), stop)));
             while !session.search_running() && !older.is_finished() {
                 std::thread::yield_now();
             }

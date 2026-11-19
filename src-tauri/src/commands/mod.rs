@@ -103,6 +103,7 @@ impl CommandError {
                 D::InvalidRating => "invalidRating",
                 D::NotEnoughDiskSpace { .. } => "notEnoughDiskSpace",
                 D::DiskSpace(_) => "diskSpace",
+                D::UpgradeDiskFull => "upgradeDiskFull",
                 D::Sql(_) => "database",
             },
             Self::Config(_) => "config",
