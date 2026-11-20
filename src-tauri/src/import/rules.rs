@@ -226,52 +226,7 @@ pub fn apply(rules: &[CompiledRule], input: &RuleInput) -> RuleOutput {
         };
         let multi = matches!(rule.target, Target::Tag | Target::Attribute(_));
         for caps in regex.captures_iter(text) {
-            let whole = caps.get(0).unwrap();
-            let raw = caps.get(1).unwrap_or(whole).as_str().trim();
-            let value = map_value(&rule.map, raw);
-            if value.is_empty() {
-                continue;
-            }
-            let used = match &rule.target {
-                Target::Tag => {
-                    let tags = tags_of(&value);
-                    if tags.is_empty() {
-                        out.warnings.push(format!("rule '{}': '{value}' is not a valid tag", rule.name));
-                    }
-                    for tag in tags {
-                        if !out.tags.contains(&tag) {
-                            out.tags.push(tag);
-                        }
-                    }
-                    true
-                }
-                Target::Author => set_once(&mut out.author, value),
-                Target::AuthorEmail => set_once(&mut out.author_email, value),
-                Target::Topic => set_once(&mut out.topic, value),
-                Target::CreatedAt => match parse_loose_date(&value) {
-                    Some(ms) => set_once(&mut out.created_at, ms),
-                    None => {
-                        out.warnings.push(format!("rule '{}': '{value}' is not a date", rule.name));
-                        false
-                    }
-                },
-                Target::Attribute(key) => {
-                    let key = key.to_lowercase();
-                    match out.attributes.iter_mut().find(|(k, _)| *k == key) {
-                        Some((_, values)) => push_unique(values, value),
-                        None => out.attributes.push((key, vec![value])),
-                    }
-                    true
-                }
-            };
-            if used && rule.strip {
-                match rule.source {
-                    Source::FileName => strip_name.push(whole.range()),
-                    Source::FirstLines | Source::Body => strip_content.push(whole.range()),
-                    Source::Frontmatter => {}
-                }
-            }
-            if !multi {
+            if apply_capture(rule, &caps, &mut out, &mut strip_name, &mut strip_content) && !multi {
                 break;
             }
         }
@@ -280,6 +235,77 @@ pub fn apply(rules: &[CompiledRule], input: &RuleInput) -> RuleOutput {
     out.file_name = squeeze(&remove_ranges(input.file_name, strip_name, false));
     out.content = remove_ranges(input.content, strip_content, true);
     out
+}
+
+/// Stores what one match of `rule` captured in `out`, and with `strip` queues the match
+/// for removal from the file name or the content. False when the match captured nothing,
+/// so a single-valued rule goes on to its next match.
+fn apply_capture(
+    rule: &Rule,
+    caps: &regex::Captures,
+    out: &mut RuleOutput,
+    strip_name: &mut Vec<Range<usize>>,
+    strip_content: &mut Vec<Range<usize>>,
+) -> bool {
+    let whole = caps.get(0).unwrap();
+    let raw = caps.get(1).unwrap_or(whole).as_str().trim();
+    let value = map_value(&rule.map, raw);
+    if value.is_empty() {
+        return false;
+    }
+    if store_value(rule, value, out) && rule.strip {
+        match rule.source {
+            Source::FileName => strip_name.push(whole.range()),
+            Source::FirstLines | Source::Body => strip_content.push(whole.range()),
+            Source::Frontmatter => {}
+        }
+    }
+    true
+}
+
+/// Puts `value` where the rule's target says. False when it was not used: the target was
+/// already set, or the value was not a date.
+fn store_value(rule: &Rule, value: String, out: &mut RuleOutput) -> bool {
+    match &rule.target {
+        Target::Tag => {
+            add_tags(rule, &value, out);
+            true
+        }
+        Target::Author => set_once(&mut out.author, value),
+        Target::AuthorEmail => set_once(&mut out.author_email, value),
+        Target::Topic => set_once(&mut out.topic, value),
+        Target::CreatedAt => match parse_loose_date(&value) {
+            Some(ms) => set_once(&mut out.created_at, ms),
+            None => {
+                out.warnings.push(format!("rule '{}': '{value}' is not a date", rule.name));
+                false
+            }
+        },
+        Target::Attribute(key) => {
+            add_attribute(key, value, out);
+            true
+        }
+    }
+}
+
+fn add_tags(rule: &Rule, value: &str, out: &mut RuleOutput) {
+    let tags = tags_of(value);
+    if tags.is_empty() {
+        out.warnings.push(format!("rule '{}': '{value}' is not a valid tag", rule.name));
+    }
+    for tag in tags {
+        if !out.tags.contains(&tag) {
+            out.tags.push(tag);
+        }
+    }
+}
+
+fn add_attribute(key: &str, value: String, out: &mut RuleOutput) {
+    let key = key.to_lowercase();
+    match out.attributes.iter_mut().find(|(k, _)| *k == key) {
+        Some((_, values)) => push_unique(values, value),
+        None => out.attributes.push((key, vec![value])),
+    }
 }
 
 /// The first `n` lines of `text`, including their line breaks.
@@ -453,6 +479,19 @@ mod tests {
         let out = run(&[tag], "", "", "tags: a, 1st, 1e1e1e, 12, ok");
         assert_eq!(out.tags, ["ok"]);
         assert!(out.warnings.is_empty(), "one valid tag is enough");
+    }
+
+    #[test]
+    fn empty_values_are_skipped_and_frontmatter_matches_are_not_stripped() {
+        // An empty capture sets nothing and doesn't use up a single-valued target.
+        let empty = Rule { strip: true, ..rule(Source::Body, r"A:(\w*)", Target::Topic) };
+        let out = run(&[empty], "", "", "A: x\nA:\nA:two");
+        assert_eq!(out.topic.as_deref(), Some("two"));
+        assert_eq!(out.content, "A: x\nA:\n", "only the used match is stripped");
+        // Frontmatter is never rewritten, strip or not.
+        let r = Rule { strip: true, ..rule(Source::Frontmatter, r"(?m)^from: (.+)$", Target::Author) };
+        let out = run(&[r], "", "from: Ada", "body");
+        assert_eq!((out.author.as_deref(), out.content.as_str()), (Some("Ada"), "body"));
     }
 
     #[test]
