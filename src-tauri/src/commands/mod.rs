@@ -13,6 +13,7 @@ pub mod embeddings;
 pub mod import;
 pub mod layout;
 pub mod links;
+pub mod locale;
 pub mod models;
 pub mod notes;
 pub mod review;

@@ -49,9 +49,10 @@ ureq = { version = "3.5", default-features = false, features = ["rustls", "platf
 # GPU embedding on Windows through DirectML (#105). `download-binaries` then fetches ONNX
 # Runtime's DirectML build, and `copy-dylibs` puts DirectML.dll next to the executable;
 # the installer ships it from there (tauri.windows.conf.json). DXGI names the GPU.
+# Globalization reads the regional-format locale for dates (#202).
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["directml"] }
-windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = ["Win32_Globalization", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Storage_FileSystem"] }
 
 # Free disk space on the vault's drive before compacting (#149); Windows uses the
 # `windows` crate above.

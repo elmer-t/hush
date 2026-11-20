@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { api, errorMessage, RELATED_CHANGED_EVENT, type NoteInternals } from "$lib/api";
+  import { dateTime } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
 
   type Props = {
@@ -46,7 +47,6 @@
     return () => void unlisten.then((stop) => stop());
   });
 
-  const date = (ms: number) => new Date(ms).toLocaleString();
   const short = (hash: string) => `${hash.slice(0, 12)}…`;
 </script>
 
@@ -66,9 +66,9 @@
         <dt>Folder</dt>
         <dd>{internals.folder || "(root)"}</dd>
         <dt>Created</dt>
-        <dd>{date(internals.createdAt)}</dd>
+        <dd>{dateTime(internals.createdAt)}</dd>
         <dt>Updated</dt>
-        <dd>{date(internals.updatedAt)}</dd>
+        <dd>{dateTime(internals.updatedAt)}</dd>
         <dt>Size</dt>
         <dd>{internals.words.toLocaleString()} words, {internals.chars.toLocaleString()} chars</dd>
         <dt>Hash</dt>

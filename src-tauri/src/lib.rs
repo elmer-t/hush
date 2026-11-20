@@ -7,6 +7,7 @@ pub mod discover;
 pub mod embed;
 pub mod graph;
 pub mod import;
+pub mod locale;
 pub mod markdown;
 pub mod meaning;
 pub mod retag;
@@ -104,6 +105,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::about::third_party_notices,
+            commands::locale::os_locale,
             commands::vault::recent_vaults,
             commands::vault::forget_recent_vault,
             commands::vault::create_vault,
