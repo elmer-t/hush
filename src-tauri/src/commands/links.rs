@@ -55,15 +55,21 @@ pub fn collapsed_sections(session: State<'_, Session>) -> Result<Vec<String>> {
 
 #[tauri::command(async)]
 pub fn set_section_collapsed(session: State<'_, Session>, section: String, collapsed: bool) -> Result<()> {
-    let section: String = section.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     Ok(session.with_vault(|v| {
         let value = v.setting(DETAILS_COLLAPSED_SETTING)?.unwrap_or_default();
-        let mut sections: Vec<&str> = value.split(',').filter(|s| !s.is_empty() && *s != section).collect();
-        if collapsed && !section.is_empty() {
-            sections.push(&section);
-        }
-        v.set_setting(DETAILS_COLLAPSED_SETTING, &sections.join(","))
+        v.set_setting(DETAILS_COLLAPSED_SETTING, &with_section(&value, &section, collapsed))
     })?)
+}
+
+/// The collapsed sections list `value` with `section` (its letters and digits only)
+/// added when `collapsed`, else removed.
+fn with_section(value: &str, section: &str, collapsed: bool) -> String {
+    let section: String = section.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let mut sections: Vec<&str> = value.split(',').filter(|s| !s.is_empty() && *s != section).collect();
+    if collapsed && !section.is_empty() {
+        sections.push(&section);
+    }
+    sections.join(",")
 }
 
 /// The subgraph of `scope` for the graph view, built off the main thread.
@@ -73,4 +79,29 @@ pub async fn graph(app: AppHandle, scope: GraphScope, options: GraphOptions) -> 
         .await
         .expect("graph build panicked")?;
     Ok(graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_section;
+
+    #[test]
+    fn collapsing_adds_the_section_once_at_the_end() {
+        assert_eq!(with_section("", "related", true), "related");
+        assert_eq!(with_section("backlinks", "related", true), "backlinks,related");
+        assert_eq!(with_section("related,backlinks", "related", true), "backlinks,related");
+    }
+
+    #[test]
+    fn expanding_removes_the_section() {
+        assert_eq!(with_section("related,backlinks", "related", false), "backlinks");
+        assert_eq!(with_section("backlinks", "related", false), "backlinks");
+        assert_eq!(with_section("", "related", false), "");
+    }
+
+    #[test]
+    fn names_keep_only_letters_and_digits_and_empty_entries_go() {
+        assert_eq!(with_section(",outgoing,,", "rel,ated!", true), "outgoing,related");
+        assert_eq!(with_section("outgoing", ",!", true), "outgoing");
+    }
 }

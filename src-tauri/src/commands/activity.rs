@@ -27,6 +27,14 @@ pub struct ActivityPanel {
     open: AtomicBool,
 }
 
+impl ActivityPanel {
+    /// Records the panel as open or closed; whether it was closed and now opened.
+    fn set_open(&self, open: bool) -> bool {
+        let was = self.open.swap(open, Ordering::SeqCst);
+        open && !was
+    }
+}
+
 /// Starts the thread that sends snapshots to the frontend; runs for the app's lifetime.
 pub fn start_emitter(app: &AppHandle) {
     let app = app.clone();
@@ -78,10 +86,8 @@ fn refresh_stats(app: &AppHandle, session: &Session, generation: u64) {
         return;
     };
     let (loaded, cores_used, cores_total) = app.state::<Indexer>().model_state(&model);
-    let (related_notes, related_bytes) = match session.related_index().as_ref() {
-        Some(index) => (Some(index.len() as u64), Some(index.memory_bytes() as u64)),
-        None => (None, None),
-    };
+    let (related_notes, related_bytes) =
+        session.related_index().as_ref().map(|index| (index.len() as u64, index.memory_bytes() as u64)).unzip();
     session.activity().reporter(generation).stats(|s| {
         s.counted_at = Some(crate::db::now_ms());
         s.notes = Some(notes as u64);
@@ -109,8 +115,7 @@ pub fn activity_status(session: State<'_, Session>) -> Snapshot {
 /// while it is open.
 #[tauri::command]
 pub fn set_activity_panel_open(app: AppHandle, panel: State<'_, ActivityPanel>, open: bool) {
-    let was = panel.open.swap(open, Ordering::SeqCst);
-    if open && !was {
+    if panel.set_open(open) {
         let session = app.state::<Session>();
         let generation = session.generation();
         if generation != 0 {
@@ -123,4 +128,19 @@ pub fn set_activity_panel_open(app: AppHandle, panel: State<'_, ActivityPanel>, 
 #[tauri::command(async)]
 pub fn note_internals(session: State<'_, Session>, id: i64) -> Result<NoteInternals> {
     Ok(session.with_vault(|v| v.note_internals(id))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActivityPanel;
+
+    #[test]
+    fn only_opening_a_closed_panel_counts_as_just_opened() {
+        let panel = ActivityPanel::default();
+        assert!(!panel.set_open(false));
+        assert!(panel.set_open(true));
+        assert!(!panel.set_open(true));
+        assert!(!panel.set_open(false));
+        assert!(panel.set_open(true));
+    }
 }

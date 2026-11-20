@@ -123,25 +123,94 @@ pub struct GpuStatus {
     pub gpu_model: Option<&'static str>,
 }
 
-impl LocalModels {
-    /// Where `descriptor` should load, and why not on the GPU when it is a GPU model.
-    fn device_for(&self, descriptor: &'static embed::ModelDescriptor) -> (Device, Option<String>) {
+impl GpuState {
+    /// Where `descriptor` should load, and why not on the GPU when it is a GPU model;
+    /// `gpu_off` is the Settings choice.
+    fn placement(&self, descriptor: &embed::ModelDescriptor, on_windows: bool, gpu_off: bool) -> (Device, Option<String>) {
         if !descriptor.gpu {
             return (Device::Cpu, None);
         }
-        if !cfg!(windows) {
+        if !on_windows {
             return (Device::Cpu, Some("the GPU is only used on Windows".into()));
         }
-        if self.gpu_off.load(Ordering::SeqCst) {
+        if gpu_off {
             return (
                 Device::Cpu,
                 Some("turned off in Settings → Indexing".into()),
             );
         }
-        let gpu = self.gpu.lock().unwrap_or_else(|e| e.into_inner());
-        match &gpu.failed {
+        match &self.failed {
             Some((id, error)) if *id == descriptor.id => (Device::Cpu, Some(error.clone())),
             _ => (Device::Gpu, None),
+        }
+    }
+}
+
+/// Loads with `load` on `device`. A GPU load that fails tells `gpu_failed` why and
+/// loads on the CPU instead; returns the result and the device it was loaded on.
+fn load_falling_back<T>(
+    device: Device,
+    mut load: impl FnMut(Device) -> Result<T, EmbedError>,
+    gpu_failed: impl FnOnce(&str),
+) -> (Result<T, EmbedError>, Device) {
+    let result = load(device);
+    if device == Device::Gpu
+        && let Err(EmbedError::Load(error)) = &result
+    {
+        gpu_failed(error);
+        return (load(Device::Cpu), Device::Cpu);
+    }
+    (result, device)
+}
+
+/// The job's run state: the unlock whose job is running (0: none) and the unlock it
+/// last started for. Claims it for unlock `generation`: `None` when the job already
+/// runs for it, else whether it last started for another unlock.
+fn claim_run(running: &mut (u64, u64), generation: u64) -> Option<bool> {
+    if running.0 == generation {
+        return None;
+    }
+    let other_unlock = running.1 != generation;
+    *running = (generation, generation);
+    Some(other_unlock)
+}
+
+/// The job of unlock `generation` stopped (see [`claim_run`]).
+fn release_run(running: &mut (u64, u64), generation: u64) {
+    if running.0 == generation {
+        running.0 = 0;
+    }
+}
+
+impl LocalModels {
+    /// Where `descriptor` should load, and why not on the GPU when it is a GPU model.
+    fn device_for(&self, descriptor: &'static embed::ModelDescriptor) -> (Device, Option<String>) {
+        let gpu_off = self.gpu_off.load(Ordering::SeqCst);
+        self.gpu.lock().unwrap_or_else(|e| e.into_inner()).placement(descriptor, cfg!(windows), gpu_off)
+    }
+
+    /// Keeps the model that loaded as the one loaded under `key`, and reports how
+    /// loading `model` went.
+    fn finish_load(
+        &self,
+        model: &str,
+        loaded: &mut HashMap<(&'static str, usize, Device), Arc<dyn Embedder>>,
+        key: (&'static str, usize, Device),
+        result: Result<OnnxEmbedder, EmbedError>,
+    ) -> Result<Arc<dyn Embedder>, EmbedError> {
+        match result {
+            Ok(e) => {
+                let embedder: Arc<dyn Embedder> = Arc::new(e);
+                loaded.insert(key, embedder.clone());
+                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).loaded = Some((key.0, key.2));
+                self.emit_gpu();
+                self.emit_if(self.tracker.load(model, LoadState::Ready));
+                Ok(embedder)
+            }
+            Err(e) => {
+                self.emit_if(self.tracker.load(model, LoadState::from_error(&e)));
+                Err(e)
+            }
         }
     }
 
@@ -271,33 +340,16 @@ impl EmbedderSource for LocalModels {
             .locate(&self.dirs, descriptor)
             .1
             .unwrap_or_else(|| self.dirs.search(descriptor)[0].to_path_buf());
-        let mut result = OnnxEmbedder::load_on(&dir, descriptor, threads, device);
-        let mut device = device;
-        if device == Device::Gpu {
-            if let Err(EmbedError::Load(error)) = &result {
+        let (result, device) = load_falling_back(
+            device,
+            |device| OnnxEmbedder::load_on(&dir, descriptor, threads, device),
+            |error| {
                 // No usable GPU: the CPU, and not the GPU again until something changes.
                 eprintln!("hush: {} runs on the CPU: {error}", descriptor.id);
-                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).failed =
-                    Some((descriptor.id, error.clone()));
-                device = Device::Cpu;
-                result = OnnxEmbedder::load_on(&dir, descriptor, threads, device);
-            }
-        }
-        match result {
-            Ok(e) => {
-                let embedder: Arc<dyn Embedder> = Arc::new(e);
-                loaded.insert((descriptor.id, threads, device), embedder.clone());
-                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).loaded =
-                    Some((descriptor.id, device));
-                self.emit_gpu();
-                self.emit_if(self.tracker.load(model, LoadState::Ready));
-                Ok(embedder)
-            }
-            Err(e) => {
-                self.emit_if(self.tracker.load(model, LoadState::from_error(&e)));
-                Err(e)
-            }
-        }
+                self.gpu.lock().unwrap_or_else(|e| e.into_inner()).failed = Some((descriptor.id, error.to_string()));
+            },
+        );
+        self.finish_load(model, &mut loaded, (descriptor.id, threads, device), result)
     }
 
     fn vault_models(&self, model: &str, ready: Option<&str>) {
@@ -317,14 +369,13 @@ pub fn start(app: &AppHandle, generation: u64) {
     let indexer = app.state::<Indexer>();
     {
         let mut running = indexer.running.lock().unwrap_or_else(|e| e.into_inner());
-        if running.0 == generation {
+        let Some(other_unlock) = claim_run(&mut running, generation) else {
             return;
-        }
-        if running.1 != generation {
+        };
+        if other_unlock {
             // The last vault's model settings don't apply to this one.
             indexer.models.emit_if(indexer.models.tracker.forget_vault());
         }
-        *running = (generation, generation);
     }
     let app = app.clone();
     std::thread::spawn(move || {
@@ -337,17 +388,17 @@ pub fn start(app: &AppHandle, generation: u64) {
             &indexer.models,
             POLL,
             |status| set_status(&app, &session, generation, status),
-            || {
-                if session.is_open(generation) {
-                    let _ = app.emit(RELATED_CHANGED_EVENT, ());
-                }
-            },
+            || related_changed(&app, &session, generation),
         );
-        let mut running = indexer.running.lock().unwrap_or_else(|e| e.into_inner());
-        if running.0 == generation {
-            running.0 = 0;
-        }
+        release_run(&mut indexer.running.lock().unwrap_or_else(|e| e.into_inner()), generation);
     });
+}
+
+fn related_changed(app: &AppHandle, session: &Session, generation: u64) {
+    // A job outliving its vault must not report over the next one's.
+    if session.is_open(generation) {
+        let _ = app.emit(RELATED_CHANGED_EVENT, ());
+    }
 }
 
 fn set_status(app: &AppHandle, session: &Session, generation: u64, status: &IndexStatus) {
@@ -525,4 +576,117 @@ pub(super) fn models_changed(app: &AppHandle) {
 
 fn host(url: &str) -> String {
     url.split("://").nth(1).and_then(|rest| rest.split('/').next()).unwrap_or_default().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn gpu_model() -> &'static embed::ModelDescriptor {
+        embed::MODELS.iter().find(|m| m.gpu).expect("a GPU model")
+    }
+
+    fn cpu_model() -> &'static embed::ModelDescriptor {
+        embed::MODELS.iter().find(|m| !m.gpu).expect("a CPU model")
+    }
+
+    #[test]
+    fn a_cpu_model_always_loads_on_the_cpu() {
+        assert_eq!(GpuState::default().placement(cpu_model(), true, false), (Device::Cpu, None));
+    }
+
+    #[test]
+    fn a_gpu_model_loads_on_the_gpu_unless_something_says_otherwise() {
+        let gpu = GpuState::default();
+        assert_eq!(gpu.placement(gpu_model(), true, false), (Device::Gpu, None));
+        assert_eq!(
+            gpu.placement(gpu_model(), false, false),
+            (Device::Cpu, Some("the GPU is only used on Windows".into()))
+        );
+        assert_eq!(
+            gpu.placement(gpu_model(), true, true),
+            (Device::Cpu, Some("turned off in Settings → Indexing".into()))
+        );
+    }
+
+    #[test]
+    fn a_gpu_model_that_failed_on_the_gpu_stays_on_the_cpu() {
+        let failed = GpuState { loaded: None, failed: Some((gpu_model().id, "no adapter".into())) };
+        assert_eq!(failed.placement(gpu_model(), true, false), (Device::Cpu, Some("no adapter".into())));
+        let other = GpuState { loaded: None, failed: Some(("another model", "no adapter".into())) };
+        assert_eq!(other.placement(gpu_model(), true, false), (Device::Gpu, None));
+    }
+
+    #[test]
+    fn a_failed_gpu_load_falls_back_to_the_cpu() {
+        let tried = RefCell::new(Vec::new());
+        let mut failure = None;
+        let (result, device) = load_falling_back(
+            Device::Gpu,
+            |d| {
+                tried.borrow_mut().push(d);
+                match d {
+                    Device::Gpu => Err(EmbedError::Load("no adapter".into())),
+                    Device::Cpu => Ok("on the cpu"),
+                }
+            },
+            |error| failure = Some(error.to_string()),
+        );
+        assert_eq!(result.unwrap(), "on the cpu");
+        assert_eq!(device, Device::Cpu);
+        assert_eq!(*tried.borrow(), vec![Device::Gpu, Device::Cpu]);
+        assert_eq!(failure.as_deref(), Some("no adapter"));
+    }
+
+    #[test]
+    fn a_gpu_load_that_works_stays_on_the_gpu() {
+        let (result, device) = load_falling_back(Device::Gpu, |_| Ok("on the gpu"), |_| panic!("no failure"));
+        assert_eq!(result.unwrap(), "on the gpu");
+        assert_eq!(device, Device::Gpu);
+    }
+
+    #[test]
+    fn only_a_gpu_load_error_falls_back() {
+        let missing = || EmbedError::Missing(PathBuf::from("model.onnx"));
+        let (result, device) = load_falling_back::<()>(Device::Gpu, |_| Err(missing()), |_| panic!("no fallback"));
+        assert!(matches!(result, Err(EmbedError::Missing(_))));
+        assert_eq!(device, Device::Gpu);
+
+        let mut calls = 0;
+        let (result, device) = load_falling_back::<()>(
+            Device::Cpu,
+            |_| {
+                calls += 1;
+                Err(EmbedError::Load("broken".into()))
+            },
+            |_| panic!("no fallback"),
+        );
+        assert!(matches!(result, Err(EmbedError::Load(_))));
+        assert_eq!((device, calls), (Device::Cpu, 1));
+    }
+
+    #[test]
+    fn the_job_runs_once_per_unlock() {
+        let mut running = (0, 0);
+        assert_eq!(claim_run(&mut running, 1), Some(true));
+        assert_eq!(claim_run(&mut running, 1), None);
+        release_run(&mut running, 1);
+        assert_eq!(running, (0, 1));
+        // Started again for the same vault (a switch, or a re-check).
+        assert_eq!(claim_run(&mut running, 1), Some(false));
+        // Another unlock.
+        assert_eq!(claim_run(&mut running, 2), Some(true));
+    }
+
+    #[test]
+    fn an_old_job_stopping_leaves_the_new_one_running() {
+        let mut running = (0, 0);
+        claim_run(&mut running, 1);
+        claim_run(&mut running, 2);
+        release_run(&mut running, 1);
+        assert_eq!(running, (2, 2));
+    }
 }
