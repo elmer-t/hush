@@ -269,18 +269,7 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
         .map_or_else(db::now_ms, |d| d.as_millis() as i64);
     let (original, encoding_warning) = formats::decode(bytes);
     let mut warnings: Vec<String> = encoding_warning.into_iter().collect();
-    let text = match format {
-        Format::Markdown | Format::Text | Format::Code(_) => original.clone(),
-        Format::Html => {
-            let (md, w) = clean::html_document(&original);
-            warnings.extend(w);
-            md
-        }
-        Format::Rtf => rtf::to_text(&original).unwrap_or_else(|| {
-            warnings.push("not a valid RTF document; imported as text".into());
-            original.clone()
-        }),
-    };
+    let text = to_text(format, &original, &mut warnings);
     let has_frontmatter = matches!(format, Format::Markdown | Format::Text);
 
     let path = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
@@ -309,7 +298,43 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
         }
     };
 
-    let mut body = format!("{}{content}", &text[..content_start]);
+    let (body, parsed) = with_found_fields(&text[..content_start], &content, &found, &folder);
+    let (created_at, created_from) = created_date(&found, &parsed, &stem, modified);
+
+    Ok(Prepared {
+        path,
+        folder,
+        title,
+        body,
+        created_at,
+        created_from,
+        updated_at: modified,
+        warnings,
+        original,
+        extension: formats::extension(rel),
+    })
+}
+
+/// The text of a decoded file: Markdown, text and code as they are; HTML and RTF converted.
+fn to_text(format: Format, original: &str, warnings: &mut Vec<String>) -> String {
+    match format {
+        Format::Markdown | Format::Text | Format::Code(_) => original.to_string(),
+        Format::Html => {
+            let (md, w) = clean::html_document(original);
+            warnings.extend(w);
+            md
+        }
+        Format::Rtf => rtf::to_text(original).unwrap_or_else(|| {
+            warnings.push("not a valid RTF document; imported as text".into());
+            original.to_string()
+        }),
+    }
+}
+
+/// The note body: `frontmatter` (the file's own, or empty) and `content`, with what the
+/// rules found written into the frontmatter. Also what the body parsed to before that.
+fn with_found_fields(frontmatter: &str, content: &str, found: &rules::RuleOutput, folder: &str) -> (String, markdown::Parsed) {
+    let mut body = format!("{frontmatter}{content}");
     let parsed = markdown::parse(&body);
     let mut set = |key: &str, values: &[String]| body = markdown::set_frontmatter_field(&body, key, values);
     if let Some(author) = &found.author {
@@ -337,29 +362,24 @@ pub fn prepare(root: &Path, rel: &Path, rules: &[CompiledRule]) -> Result<Prepar
     for (key, values) in &found.attributes {
         set(key, values);
     }
-    let (created_at, created_from) = if let Some(ms) = found.created_at {
+    if let Some(ms) = found.created_at {
         set("created", &[dates::format_date(ms)]);
+    }
+    (body, parsed)
+}
+
+/// When the note was created: the rules, else the frontmatter, else a date in the file
+/// name, else the file's modified time.
+fn created_date(found: &rules::RuleOutput, parsed: &markdown::Parsed, stem: &str, modified: i64) -> (i64, CreatedFrom) {
+    if let Some(ms) = found.created_at {
         (ms, CreatedFrom::Rule)
     } else if let Some(ms) = parsed.created_at {
         (ms, CreatedFrom::Frontmatter)
-    } else if let Some(ms) = dates::date_in_name(&stem) {
+    } else if let Some(ms) = dates::date_in_name(stem) {
         (ms, CreatedFrom::FileName)
     } else {
         (modified, CreatedFrom::Modified)
-    };
-
-    Ok(Prepared {
-        path,
-        folder,
-        title,
-        body,
-        created_at,
-        created_from,
-        updated_at: modified,
-        warnings,
-        original,
-        extension: formats::extension(rel),
-    })
+    }
 }
 
 /// Replaces characters titles can't hold (they would break links or paths).
@@ -908,6 +928,55 @@ mod tests {
         assert!(w.report.cancelled);
     }
 
+    #[test]
+    fn text_is_converted_per_format() {
+        let mut warnings = Vec::new();
+        assert_eq!(to_text(Format::Markdown, "# a", &mut warnings), "# a");
+        assert_eq!(to_text(Format::Rtf, r"{\rtf1 Hello}", &mut warnings).trim(), "Hello");
+        assert!(warnings.is_empty());
+        assert!(to_text(Format::Html, "<p>Hi <b>there</b></p>", &mut warnings).contains("**there**"));
+        assert_eq!(to_text(Format::Rtf, "plain, not rtf", &mut warnings), "plain, not rtf");
+        assert_eq!(warnings, ["not a valid RTF document; imported as text"]);
+    }
+
+    #[test]
+    fn found_fields_go_into_the_frontmatter() {
+        let found = rules::RuleOutput {
+            author: Some("Ann".into()),
+            author_email: Some("ann@example.com".into()),
+            tags: vec!["b".into(), "c".into()],
+            attributes: vec![("status".into(), vec!["done".into()])],
+            created_at: Some(0),
+            ..Default::default()
+        };
+        let (body, parsed) = with_found_fields("---\ntags: [a, b]\n---\n", "text", &found, "Work/Sub");
+        assert_eq!(parsed.frontmatter_tags, ["a", "b"]);
+        assert!(body.ends_with("text"));
+        for expected in ["author: Ann", "topic: Work", "status: done", "created: 1970-01-01"] {
+            assert!(body.contains(expected), "{expected} missing from {body}");
+        }
+        assert_eq!(markdown::parse(&body).frontmatter_tags, ["a", "b", "c"]);
+        // The topic comes from the rules, or from the note itself, before the folder.
+        let (body, _) = with_found_fields("", "text", &rules::RuleOutput { topic: Some("T".into()), ..Default::default() }, "Work");
+        assert!(body.contains("topic: T"));
+        let (body, _) = with_found_fields("---\ntopic: Own\n---\n", "text", &Default::default(), "Work");
+        assert!(body.contains("topic: Own") && !body.contains("Work"));
+    }
+
+    #[test]
+    fn the_created_date_falls_back_in_order() {
+        let found = |ms| rules::RuleOutput { created_at: ms, ..Default::default() };
+        let parsed = |body: &str| markdown::parse(body);
+        let dated = parsed("---\ncreated: 2020-05-06\n---\nx");
+        let plain = parsed("x");
+        let (ms, from) = created_date(&found(Some(7)), &dated, "2019-01-02 note", 9);
+        assert_eq!((ms, from), (7, CreatedFrom::Rule));
+        let (ms, from) = created_date(&found(None), &dated, "2019-01-02 note", 9);
+        assert_eq!((Some(ms), from), (dated.created_at, CreatedFrom::Frontmatter));
+        let (ms, from) = created_date(&found(None), &plain, "2019-01-02 note", 9);
+        assert_eq!((Some(ms), from), (dates::date_in_name("2019-01-02 note"), CreatedFrom::FileName));
+        assert_eq!(created_date(&found(None), &plain, "note", 9), (9, CreatedFrom::Modified));
+    }
     #[test]
     fn skipped_files_are_capped_with_unreadable_ones_kept_first() {
         let mut skipped = Skipped::default();
