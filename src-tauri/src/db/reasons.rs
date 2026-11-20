@@ -44,62 +44,10 @@ impl Vault {
         all.extend(others.iter().copied().filter(|&o| o != id));
         let notes: HashMap<i64, super::NoteSummary> = self.note_summaries(&all)?.into_iter().map(|n| (n.id, n)).collect();
         let Some(open) = notes.get(&id) else { return Ok(vec![Reasons::default(); others.len()]) };
-        let marks = placeholders(all.len());
-        let mut resolved: HashMap<(String, String), Option<i64>> = HashMap::new();
-        let mut unique = |path: String, title: String| -> Result<Option<i64>> {
-            if let Some(&known) = resolved.get(&(path.clone(), title.clone())) {
-                return Ok(known);
-            }
-            let target = match resolve(&self.conn, &path, &title)? {
-                Resolution::Unique(t) => Some(t),
-                _ => None,
-            };
-            resolved.insert((path, title), target);
-            Ok(target)
-        };
-
-        // Where each note links to.
-        let mut out: HashMap<i64, HashSet<i64>> = HashMap::new();
-        let mut stmt = self
-            .conn
-            .prepare(&format!("SELECT DISTINCT from_note_id, target_path, target_title FROM links WHERE from_note_id IN ({marks})"))?;
-        let rows: Vec<(i64, String, String)> = stmt
-            .query_map(params_from_iter(&all), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        for (from, path, title) in rows {
-            if let Some(to) = unique(path, title)? {
-                if to != from {
-                    out.entry(from).or_default().insert(to);
-                }
-            }
-        }
-
-        // What links to each note. Links can only mean a note with the same title.
-        let titles: Vec<&str> = all.iter().filter_map(|n| notes.get(n)).map(|n| n.title.as_str()).collect();
-        let mut back: HashMap<i64, HashSet<i64>> = HashMap::new();
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT DISTINCT from_note_id, target_path, target_title FROM links WHERE target_title IN ({})",
-            placeholders(titles.len())
-        ))?;
-        let rows: Vec<(i64, String, String)> = stmt
-            .query_map(params_from_iter(&titles), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        for (from, path, title) in rows {
-            if let Some(to) = unique(path, title)? {
-                if to != from && notes.contains_key(&to) {
-                    back.entry(to).or_default().insert(from);
-                }
-            }
-        }
-
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT nt.note_id, t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id IN ({marks})"
-        ))?;
-        let mut tags: HashMap<i64, BTreeSet<String>> = HashMap::new();
-        for row in stmt.query_map(params_from_iter(&all), |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
-            let (note, tag) = row?;
-            tags.entry(note).or_default().insert(tag);
-        }
+        let mut targets = Targets { conn: &self.conn, known: HashMap::new() };
+        let out = self.links_out(&all, &mut targets)?;
+        let back = self.links_in(&all, &notes, &mut targets)?;
+        let tags = self.note_tags(&all)?;
 
         let empty = HashSet::new();
         let none = BTreeSet::new();
@@ -138,6 +86,68 @@ impl Vault {
             .collect()
     }
 
+    /// Where each of `all` links to, by note id.
+    fn links_out(&self, all: &[i64], targets: &mut Targets) -> Result<HashMap<i64, HashSet<i64>>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT DISTINCT from_note_id, target_path, target_title FROM links WHERE from_note_id IN ({})",
+            placeholders(all.len())
+        ))?;
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map(params_from_iter(all), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut out: HashMap<i64, HashSet<i64>> = HashMap::new();
+        for (from, path, title) in rows {
+            if let Some(to) = targets.unique(path, title)?
+                && to != from
+            {
+                out.entry(from).or_default().insert(to);
+            }
+        }
+        Ok(out)
+    }
+
+    /// What links to each of `all` (the keys of `notes`), by note id. Links can only mean
+    /// a note with the same title.
+    fn links_in(
+        &self,
+        all: &[i64],
+        notes: &HashMap<i64, super::NoteSummary>,
+        targets: &mut Targets,
+    ) -> Result<HashMap<i64, HashSet<i64>>> {
+        let titles: Vec<&str> = all.iter().filter_map(|n| notes.get(n)).map(|n| n.title.as_str()).collect();
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT DISTINCT from_note_id, target_path, target_title FROM links WHERE target_title IN ({})",
+            placeholders(titles.len())
+        ))?;
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map(params_from_iter(&titles), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut back: HashMap<i64, HashSet<i64>> = HashMap::new();
+        for (from, path, title) in rows {
+            if let Some(to) = targets.unique(path, title)?
+                && to != from
+                && notes.contains_key(&to)
+            {
+                back.entry(to).or_default().insert(from);
+            }
+        }
+        Ok(back)
+    }
+
+    /// The tags of each of `all`, by note id.
+    fn note_tags(&self, all: &[i64]) -> Result<HashMap<i64, BTreeSet<String>>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT nt.note_id, t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id IN ({})",
+            placeholders(all.len())
+        ))?;
+        let mut tags: HashMap<i64, BTreeSet<String>> = HashMap::new();
+        for row in stmt.query_map(params_from_iter(all), |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (note, tag) = row?;
+            tags.entry(note).or_default().insert(tag);
+        }
+        Ok(tags)
+    }
+
     /// Up to [`MAX_VIA`] of the live notes among `ids`, sorted by title, without repeats.
     fn titled(&self, ids: &[i64]) -> Result<Vec<TitledNote>> {
         let mut ids = ids.to_vec();
@@ -156,4 +166,25 @@ impl Vault {
 
 fn placeholders(n: usize) -> String {
     vec!["?"; n].join(", ")
+}
+
+/// Link targets resolved to the one note they mean, each distinct target only once.
+struct Targets<'a> {
+    conn: &'a rusqlite::Connection,
+    known: HashMap<(String, String), Option<i64>>,
+}
+
+impl Targets<'_> {
+    /// The note `path` and `title` point to; none when it is missing or ambiguous.
+    fn unique(&mut self, path: String, title: String) -> Result<Option<i64>> {
+        if let Some(&known) = self.known.get(&(path.clone(), title.clone())) {
+            return Ok(known);
+        }
+        let target = match resolve(self.conn, &path, &title)? {
+            Resolution::Unique(t) => Some(t),
+            _ => None,
+        };
+        self.known.insert((path, title), target);
+        Ok(target)
+    }
 }
