@@ -34,14 +34,13 @@ cargo crap4rs --manifest-path src-tauri/Cargo.toml --threshold 16 > crap-report.
 - Exit status 2 means something scored above 16. That's the expected case here, not a failure. Status 1 is a real error (build or coverage failed).
 - To look at one area again without re-running the tests: `cargo crap4rs --manifest-path src-tauri/Cargo.toml --use-existing-coverage db import`.
 
-**Until the Windows test issues are fixed** (#204 `import_scale` doesn't link, #205 `no_plaintext_on_disk` fails), a plain run fails. Use this instead, which drops the `import_scale` test target and writes the report even when a test fails:
+**Until #205 is fixed** (`no_plaintext_on_disk` fails on Windows), a plain run fails. Use this instead, which writes the report even when a test fails:
 
 ```powershell
-$tests = Get-ChildItem src-tauri/tests/*.rs | Where-Object BaseName -ne 'import_scale' | ForEach-Object { '--test', $_.BaseName }
-cargo crap4rs --manifest-path src-tauri/Cargo.toml --threshold 16 -- --ignore-run-fail --lib --bins @tests > crap-report.txt
+cargo crap4rs --manifest-path src-tauri/Cargo.toml --threshold 16 -- --ignore-run-fail > crap-report.txt
 ```
 
-Once #204 and #205 are closed, check whether the plain command works and remove this section.
+Once #205 is closed, check whether the plain command works and remove this section.
 
 ## Reading the report
 
