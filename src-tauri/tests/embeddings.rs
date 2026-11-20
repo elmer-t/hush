@@ -1070,8 +1070,7 @@ impl EmbedderSource for NoVectorsSource {
     }
 }
 
-/// A model that returns fewer vectors than it can account for fails the pass and
-/// writes nothing.
+/// A model that returns no vectors for a batch fails the pass, which writes nothing.
 #[test]
 fn a_model_that_returns_no_vectors_fails_the_pass() {
     let (_dir, _path, session, g) = session("fake-4");

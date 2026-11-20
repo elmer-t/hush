@@ -336,7 +336,6 @@ pub fn pass(
     end_pass(&setup, source, &state, end, report)
 }
 
-/// What a pass settles at its start and only reads after that.
 struct PassSetup<'a> {
     session: &'a Session,
     generation: u64,
@@ -351,7 +350,6 @@ struct PassSetup<'a> {
     started: Instant,
     /// After the model loaded.
     embedding_started: Instant,
-    /// Whether the pass shows a progress line, and of how many notes.
     show: bool,
     total: usize,
 }
@@ -367,7 +365,6 @@ enum PassEnd {
     Preempted,
 }
 
-/// Reads the queue counts, picks the phase and loads the model.
 fn start_pass<'a>(session: &'a Session, generation: u64, source: &dyn EmbedderSource) -> Result<PassSetup<'a>, JobError> {
     let activity = session.activity().reporter(generation);
     let started = Instant::now();
@@ -429,7 +426,6 @@ fn start_text(phase: QueuePhase, work: usize, model: &str) -> String {
     }
 }
 
-/// Where a pass is in the queue, and what it did so far.
 struct PassState {
     /// Notes with a vector of their text, from the first chunk or all of it; and those
     /// with the full vector.
@@ -638,7 +634,6 @@ fn embed_candidates(s: &PassSetup, candidates: &[db::QueuedText]) -> Result<Opti
     Ok(Some(embedded))
 }
 
-/// Reports how the pass ended and brings the related-notes index up to date.
 fn end_pass(
     s: &PassSetup,
     source: &dyn EmbedderSource,
