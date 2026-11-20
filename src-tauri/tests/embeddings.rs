@@ -1044,3 +1044,82 @@ fn a_save_while_its_group_runs_is_not_lost() {
     let text = "L1\n\nnew words one two three four five six seven eight nine";
     assert_eq!(vector(&session, long[1]).unwrap(), Chunked::full(text));
 }
+
+/// A model that hands back no vectors for a batch.
+struct NoVectors(Arc<Fake>);
+
+impl Embedder for NoVectors {
+    fn model_id(&self) -> &str {
+        self.0.model_id()
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+        self.0.embed(text)
+    }
+
+    fn embed_first_batch(&self, _texts: &[&str], _stop: &dyn Fn() -> bool) -> Result<Vec<FirstChunk>, EmbedError> {
+        Ok(Vec::new())
+    }
+}
+
+struct NoVectorsSource(Arc<NoVectors>);
+
+impl EmbedderSource for NoVectorsSource {
+    fn embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// A model that returns fewer vectors than it can account for fails the pass and
+/// writes nothing.
+#[test]
+fn a_model_that_returns_no_vectors_fails_the_pass() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let source = NoVectorsSource(Arc::new(NoVectors(Fake::new(4))));
+    session.with_vault(|v| v.create_note("", "T", "Some text")).unwrap();
+    let err = job::pass(&session, g, &source, &mut |_| {}).unwrap_err();
+    assert!(matches!(err, job::JobError::Embed(EmbedError::Inference(_))), "{err:?}");
+    assert_eq!(count(&session, "fake-4"), 0);
+    assert_eq!(session.with_vault_quiet(g, |v| v.embedding_queue_len()).unwrap(), 1);
+}
+
+/// An import that starts during a pass stops it before the next batch; the notes stay
+/// queued.
+#[test]
+fn a_pass_stops_before_the_next_batch_when_an_import_starts() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::new(4);
+    let source = Fakes(vec![fake.clone()]);
+    session.with_vault(|v| (0..20).try_for_each(|i| v.create_note("", &format!("N{i}"), "Some text").map(|_| ()))).unwrap();
+    let mut import = None;
+    let p = job::pass(&session, g, &source, &mut |s| {
+        if matches!(s, IndexStatus::Indexing { .. }) && import.is_none() {
+            import = Some(session.begin_import());
+        }
+    })
+    .unwrap();
+    assert!(p.paused);
+    assert_eq!(p.stale, 0);
+    assert_eq!(fake.calls(), 0);
+    assert_eq!(session.with_vault_quiet(g, |v| v.embedding_queue_len()).unwrap(), 20);
+    drop(import);
+    index(&session, g, &source);
+    assert_eq!(count(&session, "fake-4"), 20);
+}
+
+/// A lock during a pass stops it before the next batch, quietly.
+#[test]
+fn a_pass_stops_before_the_next_batch_when_the_vault_locks() {
+    let (_dir, _path, session, g) = session("fake-4");
+    let fake = Fake::new(4);
+    let source = Fakes(vec![fake.clone()]);
+    session.with_vault(|v| (0..20).try_for_each(|i| v.create_note("", &format!("N{i}"), "Some text").map(|_| ()))).unwrap();
+    let err = job::pass(&session, g, &source, &mut |s| {
+        if matches!(s, IndexStatus::Indexing { .. }) {
+            session.lock();
+        }
+    })
+    .unwrap_err();
+    assert!(matches!(err, job::JobError::Locked), "{err:?}");
+    assert_eq!(fake.calls(), 0);
+}

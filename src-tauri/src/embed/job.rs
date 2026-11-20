@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::{EmbedError, Embedder, FirstChunk, related};
-use crate::activity::{Job, count, duration_text};
-use crate::db::{self, QueuePhase};
+use crate::activity::{Job, Reporter, count, duration_text};
+use crate::db::{self, QueueCounts, QueuePhase};
 use crate::session::{Session, SessionError};
 
 /// Notes read, embedded and written together.
@@ -326,6 +326,49 @@ pub fn pass(
     source: &dyn EmbedderSource,
     report: &mut dyn FnMut(IndexStatus),
 ) -> Result<Pass, JobError> {
+    let setup = start_pass(session, generation, source)?;
+    let mut state = PassState::new(&setup)?;
+    let end = loop {
+        if let Some(end) = state.page(&setup, report)? {
+            break end;
+        }
+    };
+    end_pass(&setup, source, &state, end, report)
+}
+
+/// What a pass settles at its start and only reads after that.
+struct PassSetup<'a> {
+    session: &'a Session,
+    generation: u64,
+    activity: Reporter<'a>,
+    model: String,
+    ready: Option<String>,
+    counts: QueueCounts,
+    phase: QueuePhase,
+    /// Notes queued for `phase` when the pass started.
+    work: usize,
+    embedder: Arc<dyn Embedder>,
+    started: Instant,
+    /// After the model loaded.
+    embedding_started: Instant,
+    /// Whether the pass shows a progress line, and of how many notes.
+    show: bool,
+    total: usize,
+}
+
+/// How a pass ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PassEnd {
+    /// It went through the whole queue for its phase.
+    Finished,
+    /// An import started or the vault is being compacted (see [`Pass::paused`]).
+    Paused,
+    /// In the second phase, a save queued a note for its first chunk.
+    Preempted,
+}
+
+/// Reads the queue counts, picks the phase and loads the model.
+fn start_pass<'a>(session: &'a Session, generation: u64, source: &dyn EmbedderSource) -> Result<PassSetup<'a>, JobError> {
     let activity = session.activity().reporter(generation);
     let started = Instant::now();
     let (model, ready, counts) = session.with_vault_quiet(generation, |v| {
@@ -333,246 +376,380 @@ pub fn pass(
     })?;
     let phase = if counts.first > 0 || counts.rest == 0 { QueuePhase::First } else { QueuePhase::Rest };
     source.vault_models(&model, ready.as_deref());
-    let loading = !source.is_loaded(&model);
-    if loading {
-        activity.start(Job::Embedding, format!("loading model {model}"));
-    }
-    let embedder = source.embedder(&model)?;
-    if loading {
-        activity.log(Job::Embedding, format!("model {model} loaded ({})", duration_text(started.elapsed())));
-    }
+    let embedder = load_embedder(&activity, source, &model, started)?;
     let work = match phase {
         QueuePhase::First => counts.first,
         QueuePhase::Rest => counts.rest,
     };
     if work > 0 {
-        activity.start(
-            Job::Embedding,
-            match phase {
-                QueuePhase::First => format!("embedding the first chunk of {} queued notes with {model}", count(work as u64)),
-                QueuePhase::Rest => format!("completing the vectors of {} notes with {model}", count(work as u64)),
-            },
-        );
+        activity.start(Job::Embedding, start_text(phase, work, &model));
     }
     let embedding_started = Instant::now();
-
     let show = counts.total() >= PROGRESS_MIN;
     // Counting every note costs a scan of `notes`: only done for the progress line.
     let total = if show { session.with_vault_quiet(generation, |v| v.count_in_folder(""))? } else { 0 };
-    // Notes with a vector of their text, from the first chunk or all of it; and those
-    // with the full vector.
-    let mut done = total.saturating_sub(counts.first);
-    let mut complete = total.saturating_sub(counts.total());
-    let mut stale = 0;
-    let mut partial = 0;
-    // Notes whose vector changed or went away, for the related-notes index.
-    let mut changed = session.with_vault_quiet(generation, |v| v.take_deleted_notes())?;
-    let mut eta = Eta::default();
-    let mut after = db::QueueCursor::default();
-    let mut paused = false;
-    let mut preempted = false;
-    // The vault's change counter after the job's own last write: in the second phase,
-    // only a change by someone else is worth looking for a note queued for its first
-    // chunk. A change found just before the job's own write is remembered by leaving
-    // `seen_changes` behind, so the next check still looks.
-    let mut seen_changes = 0;
-    // The queue as this pass works through it, for the Activity panel.
-    let mut handled = 0;
-    let mut page_number = 0;
-    'pages: loop {
-        let page = session.with_vault_quiet(generation, |v| {
-            let foreign = v.change_count() != seen_changes;
-            let page = v.queued_embeddings(&model, &after, SCAN_PAGE, phase)?;
-            seen_changes = if foreign { u64::MAX } else { v.change_count() };
-            Ok(page)
-        })?;
-        page_number += 1;
-        match phase {
-            QueuePhase::First => {
-                done += page.settled + page.partial;
-                complete += page.settled;
-            }
-            QueuePhase::Rest => complete += page.settled,
-        }
-        handled += page.settled + page.partial + page.dropped.len();
-        changed.extend(&page.dropped);
+    Ok(PassSetup {
+        session,
+        generation,
+        activity,
+        model,
+        ready,
+        counts,
+        phase,
+        work,
+        embedder,
+        started,
+        embedding_started,
+        show,
+        total,
+    })
+}
+
+fn load_embedder(
+    activity: &Reporter<'_>,
+    source: &dyn EmbedderSource,
+    model: &str,
+    started: Instant,
+) -> Result<Arc<dyn Embedder>, JobError> {
+    let loading = !source.is_loaded(model);
+    if loading {
+        activity.start(Job::Embedding, format!("loading model {model}"));
+    }
+    let embedder = source.embedder(model)?;
+    if loading {
+        activity.log(Job::Embedding, format!("model {model} loaded ({})", duration_text(started.elapsed())));
+    }
+    Ok(embedder)
+}
+
+fn start_text(phase: QueuePhase, work: usize, model: &str) -> String {
+    match phase {
+        QueuePhase::First => format!("embedding the first chunk of {} queued notes with {model}", count(work as u64)),
+        QueuePhase::Rest => format!("completing the vectors of {} notes with {model}", count(work as u64)),
+    }
+}
+
+/// Where a pass is in the queue, and what it did so far.
+struct PassState {
+    /// Notes with a vector of their text, from the first chunk or all of it; and those
+    /// with the full vector.
+    done: usize,
+    complete: usize,
+    stale: usize,
+    partial: usize,
+    /// Notes whose vector changed or went away, for the related-notes index.
+    changed: Vec<i64>,
+    eta: Eta,
+    after: db::QueueCursor,
+    /// The vault's change counter after the job's own last write: in the second phase,
+    /// only a change by someone else is worth looking for a note queued for its first
+    /// chunk. A change found just before the job's own write is remembered by leaving
+    /// `seen_changes` behind, so the next check still looks.
+    seen_changes: u64,
+    /// The queue as this pass works through it, for the Activity panel.
+    handled: usize,
+    page_number: usize,
+}
+
+impl PassState {
+    fn new(s: &PassSetup) -> Result<Self, JobError> {
+        let changed = s.session.with_vault_quiet(s.generation, |v| v.take_deleted_notes())?;
+        Ok(Self {
+            done: s.total.saturating_sub(s.counts.first),
+            complete: s.total.saturating_sub(s.counts.total()),
+            stale: 0,
+            partial: 0,
+            changed,
+            eta: Eta::default(),
+            after: db::QueueCursor::default(),
+            seen_changes: 0,
+            handled: 0,
+            page_number: 0,
+        })
+    }
+
+    /// Embeds one page of the queue. `None`: go on with the next page.
+    fn page(&mut self, s: &PassSetup, report: &mut dyn FnMut(IndexStatus)) -> Result<Option<PassEnd>, JobError> {
+        let page = self.read_page(s)?;
         let batches = page.stale.len().div_ceil(BATCH);
         // The first page note not embedded yet. The first phase takes `BATCH` notes at a
         // time; the second as many as the model takes per call (`Embedder::embed_group`).
         let mut start = 0;
         while start < page.stale.len() {
-            if show {
-                let (done, complete) = (done.min(total), complete.min(total));
-                let progress = if phase == QueuePhase::First { done } else { complete };
-                report(IndexStatus::Indexing { done, complete, total, eta_secs: eta.update(Instant::now(), progress, total) });
+            self.report_progress(s, page.stale.len(), start, batches, report);
+            if let Some(end) = self.interruption(s)? {
+                return Ok(Some(end));
             }
-            activity.progress(
-                Job::Embedding,
-                match phase {
-                    QueuePhase::First => {
-                        format!("first chunks: batch {} of {batches} on queue page {page_number}", start / BATCH + 1)
-                    }
-                    QueuePhase::Rest => format!(
-                        "remaining chunks: note {} of {} on queue page {page_number}",
-                        start + 1,
-                        page.stale.len()
-                    ),
-                },
-                handled as u64,
-                Some(work.max(handled) as u64),
-            );
-            if !session.is_open(generation) {
-                return Err(JobError::Locked);
+            match self.embed_batch(s, &page.stale, start)? {
+                Some(embedded) => start += embedded,
+                None => return Ok(Some(PassEnd::Paused)),
             }
-            if session.pause_reason().is_some() {
-                paused = true;
-                break 'pages;
-            }
-            if phase == QueuePhase::Rest {
-                // Once per call, so once per group of notes when the model groups them.
-                let first_waiting = session.with_vault_quiet(generation, |v| {
-                    let changes = v.change_count();
-                    if changes == seen_changes {
-                        return Ok(false);
-                    }
-                    seen_changes = changes;
-                    v.embedding_first_pending()
-                })?;
-                if first_waiting {
-                    preempted = true;
-                    break 'pages;
-                }
-            }
-            let candidates = match phase {
-                QueuePhase::First => &page.stale[start..page.stale.len().min(start + BATCH)],
-                QueuePhase::Rest => &page.stale[start..],
-            };
-            let texts: Vec<&str> = candidates.iter().map(|q| q.note.text.as_str()).collect();
-            let stop = || !session.is_open(generation) || session.pause_reason().is_some();
-            // One call: the model may run several notes' chunks together.
-            let embedded = match phase {
-                QueuePhase::First => embedder.embed_first_batch(&texts, &stop),
-                QueuePhase::Rest => embedder
-                    .embed_group(&texts, &stop)
-                    .map(|vectors| vectors.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect()),
-            };
-            let embedded = match embedded {
-                Err(EmbedError::Stopped) if session.is_open(generation) => {
-                    paused = true;
-                    break 'pages;
-                }
-                Err(EmbedError::Stopped) => return Err(JobError::Locked),
-                result => result?,
-            };
-            if embedded.is_empty() || embedded.len() > candidates.len() {
-                return Err(EmbedError::Inference(format!(
-                    "the model returned {} vectors for {} notes",
-                    embedded.len(),
-                    candidates.len()
-                ))
-                .into());
-            }
-            let batch = &candidates[..embedded.len()];
-            let vectors: Vec<db::QueuedVector> = batch
-                .iter()
-                .zip(embedded)
-                .map(|(queued, chunk)| db::QueuedVector {
-                    id: queued.note.id,
-                    version: queued.version,
-                    hash: queued.note.hash,
-                    vector: chunk.vector,
-                    partial: !chunk.complete,
-                })
-                .collect();
-            seen_changes = session.with_vault_quiet(generation, |v| {
-                let foreign = v.change_count() != seen_changes;
-                v.write_queued_embeddings(&model, &vectors)?;
-                Ok(if foreign { u64::MAX } else { v.change_count() })
-            })?;
-            changed.extend(vectors.iter().map(|v| v.id));
-            let partial_now = vectors.iter().filter(|v| v.partial).count();
-            partial += partial_now;
-            if phase == QueuePhase::First {
-                done += batch.len();
-            }
-            complete += batch.len() - partial_now;
-            stale += batch.len();
-            handled += batch.len();
-            start += batch.len();
         }
         drop(page.stale);
         match page.next {
-            Some(next) => after = next,
-            None => break,
+            Some(next) => {
+                self.after = next;
+                Ok(None)
+            }
+            None => Ok(Some(PassEnd::Finished)),
         }
-    }
-    if paused {
-        report(IndexStatus::Paused);
-        let reason = session.pause_reason().unwrap_or("import running");
-        activity.pause(Job::Embedding, reason);
-        activity.log(Job::Embedding, format!("paused ({reason}) after embedding {} notes", count(stale as u64)));
-        // The notes embedded so far still go into the related-notes index.
-        let related_changed = related::update(session, generation, &changed)?;
-        return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
-    }
-    if preempted {
-        activity.log(
-            Job::Embedding,
-            format!("completed {} vectors; a saved note goes first", count(stale as u64)),
-        );
-        let related_changed = related::update(session, generation, &changed)?;
-        return Ok(Pass { stale, total, descriptions: 0, related_changed, paused });
     }
 
-    let left = session.with_vault_quiet(generation, |v| v.embedding_queue_counts())?;
-    let empty = left.total() == 0;
-    if show {
-        let complete = if empty { total } else { complete.min(total) };
-        let done = if left.first == 0 { total } else { done.min(total) };
+    fn read_page(&mut self, s: &PassSetup) -> Result<db::QueuePage, JobError> {
+        let (after, seen_changes) = (&self.after, &mut self.seen_changes);
+        let page = s.session.with_vault_quiet(s.generation, |v| {
+            let foreign = v.change_count() != *seen_changes;
+            let page = v.queued_embeddings(&s.model, after, SCAN_PAGE, s.phase)?;
+            *seen_changes = if foreign { u64::MAX } else { v.change_count() };
+            Ok(page)
+        })?;
+        self.page_number += 1;
+        match s.phase {
+            QueuePhase::First => {
+                self.done += page.settled + page.partial;
+                self.complete += page.settled;
+            }
+            QueuePhase::Rest => self.complete += page.settled,
+        }
+        self.handled += page.settled + page.partial + page.dropped.len();
+        self.changed.extend(&page.dropped);
+        Ok(page)
+    }
+
+    fn report_progress(
+        &mut self,
+        s: &PassSetup,
+        page_len: usize,
+        start: usize,
+        batches: usize,
+        report: &mut dyn FnMut(IndexStatus),
+    ) {
+        if s.show {
+            let (done, complete, total) = (self.done.min(s.total), self.complete.min(s.total), s.total);
+            let progress = if s.phase == QueuePhase::First { done } else { complete };
+            report(IndexStatus::Indexing { done, complete, total, eta_secs: self.eta.update(Instant::now(), progress, total) });
+        }
+        let page_number = self.page_number;
+        let doing = match s.phase {
+            QueuePhase::First => format!("first chunks: batch {} of {batches} on queue page {page_number}", start / BATCH + 1),
+            QueuePhase::Rest => format!("remaining chunks: note {} of {page_len} on queue page {page_number}", start + 1),
+        };
+        s.activity.progress(Job::Embedding, doing, self.handled as u64, Some(s.work.max(self.handled) as u64));
+    }
+
+    /// Whether the pass stops before the next batch; an error once the vault locked.
+    fn interruption(&mut self, s: &PassSetup) -> Result<Option<PassEnd>, JobError> {
+        if !s.session.is_open(s.generation) {
+            return Err(JobError::Locked);
+        }
+        if s.session.pause_reason().is_some() {
+            return Ok(Some(PassEnd::Paused));
+        }
+        if s.phase == QueuePhase::Rest {
+            // Once per call, so once per group of notes when the model groups them.
+            let seen_changes = &mut self.seen_changes;
+            let first_waiting = s.session.with_vault_quiet(s.generation, |v| {
+                let changes = v.change_count();
+                if changes == *seen_changes {
+                    return Ok(false);
+                }
+                *seen_changes = changes;
+                v.embedding_first_pending()
+            })?;
+            if first_waiting {
+                return Ok(Some(PassEnd::Preempted));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Embeds and writes the next batch from `stale[start..]`: how many notes it took,
+    /// or `None` when the model stopped for a pause.
+    fn embed_batch(&mut self, s: &PassSetup, stale: &[db::QueuedText], start: usize) -> Result<Option<usize>, JobError> {
+        let candidates = match s.phase {
+            QueuePhase::First => &stale[start..stale.len().min(start + BATCH)],
+            QueuePhase::Rest => &stale[start..],
+        };
+        let Some(embedded) = embed_candidates(s, candidates)? else {
+            return Ok(None);
+        };
+        let batch = &candidates[..embedded.len()];
+        self.write_batch(s, batch, embedded)?;
+        Ok(Some(batch.len()))
+    }
+
+    fn write_batch(&mut self, s: &PassSetup, batch: &[db::QueuedText], embedded: Vec<FirstChunk>) -> Result<(), JobError> {
+        let vectors: Vec<db::QueuedVector> = batch
+            .iter()
+            .zip(embedded)
+            .map(|(queued, chunk)| db::QueuedVector {
+                id: queued.note.id,
+                version: queued.version,
+                hash: queued.note.hash,
+                vector: chunk.vector,
+                partial: !chunk.complete,
+            })
+            .collect();
+        let seen_changes = self.seen_changes;
+        self.seen_changes = s.session.with_vault_quiet(s.generation, |v| {
+            let foreign = v.change_count() != seen_changes;
+            v.write_queued_embeddings(&s.model, &vectors)?;
+            Ok(if foreign { u64::MAX } else { v.change_count() })
+        })?;
+        self.changed.extend(vectors.iter().map(|v| v.id));
+        let partial_now = vectors.iter().filter(|v| v.partial).count();
+        self.partial += partial_now;
+        if s.phase == QueuePhase::First {
+            self.done += batch.len();
+        }
+        self.complete += batch.len() - partial_now;
+        self.stale += batch.len();
+        self.handled += batch.len();
+        Ok(())
+    }
+}
+
+/// Runs the model on `candidates` in one call (it may run several notes' chunks
+/// together): a vector for at least the first of them, or `None` when it stopped for a
+/// pause.
+fn embed_candidates(s: &PassSetup, candidates: &[db::QueuedText]) -> Result<Option<Vec<FirstChunk>>, JobError> {
+    let texts: Vec<&str> = candidates.iter().map(|q| q.note.text.as_str()).collect();
+    let stop = || !s.session.is_open(s.generation) || s.session.pause_reason().is_some();
+    let embedded = match s.phase {
+        QueuePhase::First => s.embedder.embed_first_batch(&texts, &stop),
+        QueuePhase::Rest => s
+            .embedder
+            .embed_group(&texts, &stop)
+            .map(|vectors| vectors.into_iter().map(|vector| FirstChunk { vector, complete: true }).collect()),
+    };
+    let embedded = match embedded {
+        Err(EmbedError::Stopped) if s.session.is_open(s.generation) => return Ok(None),
+        Err(EmbedError::Stopped) => return Err(JobError::Locked),
+        result => result?,
+    };
+    if embedded.is_empty() || embedded.len() > candidates.len() {
+        return Err(EmbedError::Inference(format!(
+            "the model returned {} vectors for {} notes",
+            embedded.len(),
+            candidates.len()
+        ))
+        .into());
+    }
+    Ok(Some(embedded))
+}
+
+/// Reports how the pass ended and brings the related-notes index up to date.
+fn end_pass(
+    s: &PassSetup,
+    source: &dyn EmbedderSource,
+    state: &PassState,
+    end: PassEnd,
+    report: &mut dyn FnMut(IndexStatus),
+) -> Result<Pass, JobError> {
+    let descriptions = match end {
+        PassEnd::Paused => {
+            report(IndexStatus::Paused);
+            let reason = s.session.pause_reason().unwrap_or("import running");
+            s.activity.pause(Job::Embedding, reason);
+            s.activity.log(Job::Embedding, format!("paused ({reason}) after embedding {} notes", count(state.stale as u64)));
+            0
+        }
+        PassEnd::Preempted => {
+            s.activity.log(
+                Job::Embedding,
+                format!("completed {} vectors; a saved note goes first", count(state.stale as u64)),
+            );
+            0
+        }
+        PassEnd::Finished => finish_queue(s, source, state, report)?,
+    };
+    // Only the notes this pass touched (also when it stopped early); a full rebuild when
+    // the ready model changed or the index isn't built yet.
+    let related_changed = related::update(s.session, s.generation, &state.changed)?;
+    Ok(Pass { stale: state.stale, total: s.total, descriptions, related_changed, paused: end == PassEnd::Paused })
+}
+
+/// The end of a pass that went through the whole queue for its phase: readiness, the
+/// tag descriptions, the measured rate and the summary. Returns how many descriptions
+/// it embedded.
+fn finish_queue(
+    s: &PassSetup,
+    source: &dyn EmbedderSource,
+    state: &PassState,
+    report: &mut dyn FnMut(IndexStatus),
+) -> Result<usize, JobError> {
+    let left = s.session.with_vault_quiet(s.generation, |v| v.embedding_queue_counts())?;
+    report_final_progress(s, state, left, report);
+    let ready_now = settle_ready_model(s, source, left)?;
+    // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
+    let descriptions =
+        if ready_now { embed_descriptions(s.session, s.generation, &s.model, s.embedder.as_ref())? } else { 0 };
+    if descriptions > 0 {
+        s.activity.log(Job::Embedding, format!("embedded {} tag descriptions", count(descriptions as u64)));
+    }
+    record_rate(s, source, state.stale);
+    log_summary(s, state);
+    if left.total() == 0 {
+        report(IndexStatus::Idle);
+        s.activity.idle(Job::Embedding, Some("nothing queued"));
+    }
+    Ok(descriptions)
+}
+
+fn report_final_progress(s: &PassSetup, state: &PassState, left: QueueCounts, report: &mut dyn FnMut(IndexStatus)) {
+    if s.show {
+        let (total, empty) = (s.total, left.total() == 0);
+        let complete = if empty { total } else { state.complete.min(total) };
+        let done = if left.first == 0 { total } else { state.done.min(total) };
         report(IndexStatus::Indexing { done, complete, total, eta_secs: empty.then_some(0) });
     }
-    let mut ready_now = ready.as_deref() == Some(model.as_str());
+}
+
+/// Makes the active model the ready model once no note waits for a first vector.
+/// Returns whether it is the ready model.
+fn settle_ready_model(s: &PassSetup, source: &dyn EmbedderSource, left: QueueCounts) -> Result<bool, JobError> {
+    let ready_now = s.ready.as_deref() == Some(s.model.as_str());
     if left.first == 0 && !ready_now {
-        session.with_vault_quiet(generation, |v| v.finish_embedding_model(&model))?;
-        ready_now = true;
-        source.vault_models(&model, Some(&model));
-        activity.log(Job::Embedding, format!("every note has a {model} vector: it is now the ready model"));
+        s.session.with_vault_quiet(s.generation, |v| v.finish_embedding_model(&s.model))?;
+        source.vault_models(&s.model, Some(&s.model));
+        s.activity.log(Job::Embedding, format!("every note has a {} vector: it is now the ready model", s.model));
+        return Ok(true);
     }
-    // Mid-switch the descriptions keep the ready model's vectors until the switch is done.
-    let descriptions = if ready_now { embed_descriptions(session, generation, &model, embedder.as_ref())? } else { 0 };
-    if descriptions > 0 {
-        activity.log(Job::Embedding, format!("embedded {} tag descriptions", count(descriptions as u64)));
+    Ok(ready_now)
+}
+
+/// The rate of the first phase is what a switch waits for (until the model is ready).
+fn record_rate(s: &PassSetup, source: &dyn EmbedderSource, stale: usize) {
+    if s.phase == QueuePhase::First && stale >= RATE_MIN {
+        source.measured_rate(&s.model, stale as f64 / s.embedding_started.elapsed().as_secs_f64().max(1e-3));
     }
-    // The rate of the first phase is what a switch waits for (until the model is ready).
-    if phase == QueuePhase::First && stale >= RATE_MIN {
-        source.measured_rate(&model, stale as f64 / embedding_started.elapsed().as_secs_f64().max(1e-3));
+}
+
+fn log_summary(s: &PassSetup, state: &PassState) {
+    let stale = state.stale;
+    if stale == 0 && s.work == 0 {
+        return;
     }
-    if stale > 0 || work > 0 {
-        let secs = started.elapsed().as_secs_f64();
-        let rate = if stale > 0 && secs > 0.0 { format!(" ({:.1} notes/s)", stale as f64 / secs) } else { String::new() };
-        let summary = match phase {
-            QueuePhase::First if partial > 0 => format!(
-                "embedded {} notes{rate}; {} of them from their first chunk, completed next",
-                count(stale as u64),
-                count(partial as u64)
-            ),
-            QueuePhase::First => format!("embedded {} notes{rate}", count(stale as u64)),
-            QueuePhase::Rest => format!("completed the vectors of {} notes{rate}", count(stale as u64)),
-        };
-        if stale >= PROGRESS_MIN {
-            activity.finish(Job::Embedding, summary);
-        } else {
-            activity.finish_quietly(Job::Embedding, summary);
-        }
+    let secs = s.started.elapsed().as_secs_f64();
+    let rate = if stale > 0 && secs > 0.0 { format!(" ({:.1} notes/s)", stale as f64 / secs) } else { String::new() };
+    let summary = summary_text(s.phase, stale, state.partial, &rate);
+    if stale >= PROGRESS_MIN {
+        s.activity.finish(Job::Embedding, summary);
+    } else {
+        s.activity.finish_quietly(Job::Embedding, summary);
     }
-    if empty {
-        report(IndexStatus::Idle);
-        activity.idle(Job::Embedding, Some("nothing queued"));
+}
+
+fn summary_text(phase: QueuePhase, stale: usize, partial: usize, rate: &str) -> String {
+    match phase {
+        QueuePhase::First if partial > 0 => format!(
+            "embedded {} notes{rate}; {} of them from their first chunk, completed next",
+            count(stale as u64),
+            count(partial as u64)
+        ),
+        QueuePhase::First => format!("embedded {} notes{rate}", count(stale as u64)),
+        QueuePhase::Rest => format!("completed the vectors of {} notes{rate}", count(stale as u64)),
     }
-    // Only the notes this pass touched; a full rebuild when the ready model changed or
-    // the index isn't built yet.
-    let related_changed = related::update(session, generation, &changed)?;
-    Ok(Pass { stale, total, descriptions, related_changed, paused })
 }
 
 /// Embeds the tag descriptions that have no `model` vector yet. Only called while
