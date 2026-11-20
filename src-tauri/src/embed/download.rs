@@ -1,4 +1,4 @@
-//! Getting an optional model onto this computer: downloading it from the URL pinned in
+﻿//! Getting an optional model onto this computer: downloading it from the URL pinned in
 //! its descriptor, or importing files the user already has. This is Hush's only network
 //! code (see `docs/decisions.md`, Optional models): it runs only when the user clicks
 //! Download, requests only the descriptor's URLs over HTTPS, and sends nothing but a
@@ -363,4 +363,37 @@ mod tests {
         assert!(matches!(r, Err(DownloadError::NotHttps(_))), "{r:?}");
         assert!(!part_path(dir.path(), &file).exists());
     }
-}
+
+    fn mapped(e: ureq::Error) -> DownloadError {
+        request_error(e, "huggingface.co")
+    }
+
+    #[test]
+    fn request_errors_become_what_the_user_sees() {
+        use ureq::Error as E;
+        assert!(matches!(mapped(E::StatusCode(404)), DownloadError::Status(404)));
+        assert!(matches!(mapped(E::HostNotFound), DownloadError::HostNotFound(h) if h == "huggingface.co"));
+        assert!(matches!(mapped(E::ConnectionFailed), DownloadError::Connect(h) if h == "huggingface.co"));
+        assert!(matches!(mapped(E::Timeout(ureq::Timeout::Global)), DownloadError::Timeout));
+        assert!(matches!(mapped(E::RequireHttpsOnly("http://x/f".into())), DownloadError::NotHttps(u) if u == "http://x/f"));
+        assert!(matches!(mapped(E::Tls("no certificate")), DownloadError::Tls(m) if m == "no certificate"));
+        assert!(matches!(mapped(E::ConnectProxyFailed("denied".into())), DownloadError::Proxy(m) if m == "denied"));
+        assert!(matches!(mapped(E::InvalidProxyUrl), DownloadError::Proxy(m) if m.contains("valid URL")));
+        assert!(matches!(mapped(E::TooManyRedirects), DownloadError::Other(_)));
+    }
+
+    #[test]
+    fn io_errors_are_told_apart_by_kind() {
+        use ureq::Error as E;
+        let io = |kind| E::Io(io::Error::from(kind));
+        assert!(matches!(mapped(io(io::ErrorKind::ConnectionRefused)), DownloadError::Connect(h) if h == "huggingface.co"));
+        assert!(matches!(mapped(io(io::ErrorKind::TimedOut)), DownloadError::Timeout));
+        assert!(matches!(mapped(io(io::ErrorKind::ConnectionReset)), DownloadError::Dropped(_)));
+    }
+
+    #[test]
+    fn a_timeout_wrapped_in_an_io_error_is_still_a_timeout() {
+        let wrapped = io::Error::other(ureq::Error::Timeout(ureq::Timeout::Global));
+        assert!(matches!(read_error(wrapped), DownloadError::Timeout));
+        assert!(matches!(read_error(io::Error::from(io::ErrorKind::TimedOut)), DownloadError::Timeout));
+    }}

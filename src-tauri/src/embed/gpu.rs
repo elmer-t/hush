@@ -1,4 +1,4 @@
-//! The GPUs Windows reports, so Settings can say which one a GPU model would use. The
+﻿//! The GPUs Windows reports, so Settings can say which one a GPU model would use. The
 //! model itself runs through DirectML ([`super::onnx::Device::Gpu`]); this only reads
 //! adapter names and memory sizes through DXGI, and never touches note data.
 
@@ -42,6 +42,13 @@ fn adapter(name: String, dedicated_bytes: u64) -> Adapter {
     }
 }
 
+/// A NUL-terminated UTF-16 buffer (DXGI's adapter description) as a trimmed string.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn utf16_name(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end]).trim().to_string()
+}
+
 #[cfg(windows)]
 mod imp {
     use windows::Win32::Graphics::Dxgi::{
@@ -65,14 +72,7 @@ mod imp {
             if desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 {
                 continue;
             }
-            let end = desc
-                .Description
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(desc.Description.len());
-            let name = String::from_utf16_lossy(&desc.Description[..end])
-                .trim()
-                .to_string();
+            let name = super::utf16_name(&desc.Description);
             found.push(super::adapter(name, desc.DedicatedVideoMemory as u64));
         }
         found
@@ -104,5 +104,29 @@ mod tests {
             None,
             "an integrated GPU alone isn't offered"
         );
+    }
+
+    fn utf16(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn the_name_ends_at_the_first_nul_and_is_trimmed() {
+        let mut buf = utf16("  NVIDIA GeForce  ");
+        buf.extend([0, 0x41, 0x42]);
+        assert_eq!(utf16_name(&buf), "NVIDIA GeForce");
+    }
+
+    #[test]
+    fn a_name_without_nul_uses_the_whole_buffer() {
+        assert_eq!(utf16_name(&utf16("Intel Arc")), "Intel Arc");
+        assert_eq!(utf16_name(&[]), "");
+        assert_eq!(utf16_name(&[0, 0x41]), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listing_the_adapters_works_and_names_them() {
+        assert!(adapters().iter().all(|a| !a.name.is_empty()));
     }
 }
