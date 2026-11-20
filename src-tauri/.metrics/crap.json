@@ -1,0 +1,6511 @@
+{
+  "entries": [
+    {
+      "complexity": 35,
+      "coverage": 0.0,
+      "crap": 1260.0,
+      "file": "src/commands/mod.rs",
+      "line": 78,
+      "module": "crate::commands",
+      "name": "CommandError::kind"
+    },
+    {
+      "complexity": 12,
+      "coverage": 0.0,
+      "crap": 156.0,
+      "file": "src/commands/discover.rs",
+      "line": 55,
+      "module": "crate::commands::discover",
+      "name": "discover_tags"
+    },
+    {
+      "complexity": 9,
+      "coverage": 0.0,
+      "crap": 90.0,
+      "file": "src/commands/import.rs",
+      "line": 38,
+      "module": "crate::commands::import",
+      "name": "start_import"
+    },
+    {
+      "complexity": 8,
+      "coverage": 0.0,
+      "crap": 72.0,
+      "file": "src/commands/review.rs",
+      "line": 40,
+      "module": "crate::commands::review",
+      "name": "retrain_tags"
+    },
+    {
+      "complexity": 13,
+      "coverage": 35.294117647058826,
+      "crap": 58.78444941990636,
+      "file": "src/embed/download.rs",
+      "line": 240,
+      "module": "crate::embed::download",
+      "name": "request_error"
+    },
+    {
+      "complexity": 7,
+      "coverage": 0.0,
+      "crap": 56.0,
+      "file": "src/commands/models.rs",
+      "line": 81,
+      "module": "crate::commands::models",
+      "name": "download_model"
+    },
+    {
+      "complexity": 7,
+      "coverage": 0.0,
+      "crap": 56.0,
+      "file": "src/commands/training.rs",
+      "line": 35,
+      "module": "crate::commands::training",
+      "name": "start_retag"
+    },
+    {
+      "complexity": 51,
+      "coverage": 94.81132075471699,
+      "crap": 51.36333800301591,
+      "file": "src/embed/job.rs",
+      "line": 323,
+      "module": "crate::embed::job",
+      "name": "pass"
+    },
+    {
+      "complexity": 6,
+      "coverage": 0.0,
+      "crap": 42.0,
+      "file": "src/lib.rs",
+      "line": 36,
+      "module": "crate",
+      "name": "run"
+    },
+    {
+      "complexity": 6,
+      "coverage": 0.0,
+      "crap": 42.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 254,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as EmbedderSource>::embedder"
+    },
+    {
+      "complexity": 6,
+      "coverage": 0.0,
+      "crap": 42.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 128,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::device_for"
+    },
+    {
+      "complexity": 6,
+      "coverage": 0.0,
+      "crap": 42.0,
+      "file": "src/embed/gpu.rs",
+      "line": 53,
+      "module": "crate::embed::gpu::imp",
+      "name": "adapters"
+    },
+    {
+      "complexity": 40,
+      "coverage": 92.47311827956989,
+      "crap": 40.682284110165014,
+      "file": "src/import/rtf.rs",
+      "line": 32,
+      "module": "crate::import::rtf",
+      "name": "to_text"
+    },
+    {
+      "complexity": 35,
+      "coverage": 93.90243902439025,
+      "crap": 35.27771832968181,
+      "file": "src/import/mod.rs",
+      "line": 405,
+      "module": "crate::import",
+      "name": "run"
+    },
+    {
+      "complexity": 32,
+      "coverage": 98.44961240310077,
+      "crap": 32.00381610936656,
+      "file": "src/graph.rs",
+      "line": 127,
+      "module": "crate::graph",
+      "name": "build"
+    },
+    {
+      "complexity": 5,
+      "coverage": 0.0,
+      "crap": 30.0,
+      "file": "src/commands/discover.rs",
+      "line": 118,
+      "module": "crate::commands::discover",
+      "name": "create_tag_from_group"
+    },
+    {
+      "complexity": 5,
+      "coverage": 0.0,
+      "crap": 30.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 316,
+      "module": "crate::commands::embeddings",
+      "name": "start"
+    },
+    {
+      "complexity": 26,
+      "coverage": 94.82758620689656,
+      "crap": 26.093546270859814,
+      "file": "src/discover/mod.rs",
+      "line": 169,
+      "module": "crate::discover",
+      "name": "run_sampled"
+    },
+    {
+      "complexity": 22,
+      "coverage": 96.29629629629629,
+      "crap": 22.024589747497842,
+      "file": "src/import/rules.rs",
+      "line": 215,
+      "module": "crate::import::rules",
+      "name": "apply"
+    },
+    {
+      "complexity": 20,
+      "coverage": 86.53846153846153,
+      "crap": 20.975762403277198,
+      "file": "src/embed/job.rs",
+      "line": 165,
+      "module": "crate::embed::job",
+      "name": "run_with"
+    },
+    {
+      "complexity": 20,
+      "coverage": 96.96969696969697,
+      "crap": 20.011130589642985,
+      "file": "src/import/mod.rs",
+      "line": 247,
+      "module": "crate::import",
+      "name": "prepare"
+    },
+    {
+      "complexity": 4,
+      "coverage": 0.0,
+      "crap": 20.0,
+      "file": "src/commands/activity.rs",
+      "line": 60,
+      "module": "crate::commands::activity",
+      "name": "refresh_stats"
+    },
+    {
+      "complexity": 4,
+      "coverage": 0.0,
+      "crap": 20.0,
+      "file": "src/commands/activity.rs",
+      "line": 111,
+      "module": "crate::commands::activity",
+      "name": "set_activity_panel_open"
+    },
+    {
+      "complexity": 4,
+      "coverage": 0.0,
+      "crap": 20.0,
+      "file": "src/commands/links.rs",
+      "line": 57,
+      "module": "crate::commands::links",
+      "name": "set_section_collapsed"
+    },
+    {
+      "complexity": 17,
+      "coverage": 96.55172413793103,
+      "crap": 17.01184960432982,
+      "file": "src/db/reasons.rs",
+      "line": 41,
+      "module": "crate::db::reasons",
+      "name": "Vault::relation_reasons"
+    },
+    {
+      "complexity": 16,
+      "coverage": 87.09677419354838,
+      "crap": 16.549964754456045,
+      "file": "src/markdown.rs",
+      "line": 299,
+      "module": "crate::markdown",
+      "name": "apply_frontmatter"
+    },
+    {
+      "complexity": 16,
+      "coverage": 92.23300970873787,
+      "crap": 16.119949447574736,
+      "file": "src/classify/job.rs",
+      "line": 192,
+      "module": "crate::classify::job",
+      "name": "pass"
+    },
+    {
+      "complexity": 15,
+      "coverage": 82.97872340425532,
+      "crap": 16.10958072874026,
+      "file": "src/classify/job.rs",
+      "line": 82,
+      "module": "crate::classify::job",
+      "name": "run"
+    },
+    {
+      "complexity": 13,
+      "coverage": 75.43859649122807,
+      "crap": 15.504068728299664,
+      "file": "src/embed/onnx.rs",
+      "line": 170,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::run"
+    },
+    {
+      "complexity": 15,
+      "coverage": 98.0,
+      "crap": 15.0018,
+      "file": "src/embed/download.rs",
+      "line": 162,
+      "module": "crate::embed::download",
+      "name": "Downloader::fetch"
+    },
+    {
+      "complexity": 15,
+      "coverage": 100.0,
+      "crap": 15.0,
+      "file": "src/db/search.rs",
+      "line": 539,
+      "module": "crate::db::search",
+      "name": "filters"
+    },
+    {
+      "complexity": 14,
+      "coverage": 98.18181818181819,
+      "crap": 14.001178061607813,
+      "file": "src/discover/kmeans.rs",
+      "line": 20,
+      "module": "crate::discover::kmeans",
+      "name": "kmeans"
+    },
+    {
+      "complexity": 14,
+      "coverage": 98.46153846153847,
+      "crap": 14.000713700500683,
+      "file": "src/db/embeddings.rs",
+      "line": 223,
+      "module": "crate::db::embeddings",
+      "name": "Vault::queued_embeddings"
+    },
+    {
+      "complexity": 14,
+      "coverage": 100.0,
+      "crap": 14.0,
+      "file": "src/markdown.rs",
+      "line": 76,
+      "module": "crate::markdown",
+      "name": "parse"
+    },
+    {
+      "complexity": 8,
+      "coverage": 55.172413793103445,
+      "crap": 13.765222026323343,
+      "file": "src/embed/onnx.rs",
+      "line": 333,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::run_chunks"
+    },
+    {
+      "complexity": 13,
+      "coverage": 93.10344827586206,
+      "crap": 13.055434827176185,
+      "file": "src/meaning.rs",
+      "line": 96,
+      "module": "crate::meaning",
+      "name": "search"
+    },
+    {
+      "complexity": 13,
+      "coverage": 97.14285714285714,
+      "crap": 13.0039416909621,
+      "file": "src/markdown.rs",
+      "line": 203,
+      "module": "crate::markdown",
+      "name": "set_frontmatter_field"
+    },
+    {
+      "complexity": 13,
+      "coverage": 97.43589743589743,
+      "crap": 13.002849002849002,
+      "file": "src/classify/mod.rs",
+      "line": 128,
+      "module": "crate::classify",
+      "name": "cross_validate"
+    },
+    {
+      "complexity": 13,
+      "coverage": 100.0,
+      "crap": 13.0,
+      "file": "src/db/notes.rs",
+      "line": 324,
+      "module": "crate::db::notes",
+      "name": "Vault::move_folder"
+    },
+    {
+      "complexity": 13,
+      "coverage": 100.0,
+      "crap": 13.0,
+      "file": "src/import/clean.rs",
+      "line": 193,
+      "module": "crate::import::clean",
+      "name": "clean_block"
+    },
+    {
+      "complexity": 12,
+      "coverage": 89.47368421052632,
+      "crap": 12.16795451231958,
+      "file": "src/classify/mod.rs",
+      "line": 225,
+      "module": "crate::classify",
+      "name": "lbfgs"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/activity.rs",
+      "line": 43,
+      "module": "crate::commands::activity",
+      "name": "start"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 222,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as QueryModels>::query_embedder"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 488,
+      "module": "crate::commands::embeddings",
+      "name": "set_embedding_model"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/models.rs",
+      "line": 144,
+      "module": "crate::commands::models",
+      "name": "import_model_files"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/models.rs",
+      "line": 170,
+      "module": "crate::commands::models",
+      "name": "remove_model"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/notes.rs",
+      "line": 145,
+      "module": "crate::commands::notes",
+      "name": "new_note_body"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/notes.rs",
+      "line": 88,
+      "module": "crate::commands::notes",
+      "name": "set_sidebar_view"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/search.rs",
+      "line": 27,
+      "module": "crate::commands::search",
+      "name": "search_notes"
+    },
+    {
+      "complexity": 3,
+      "coverage": 0.0,
+      "crap": 12.0,
+      "file": "src/commands/vault.rs",
+      "line": 75,
+      "module": "crate::commands::vault",
+      "name": "open_vault"
+    },
+    {
+      "complexity": 12,
+      "coverage": 100.0,
+      "crap": 12.0,
+      "file": "src/graph.rs",
+      "line": 357,
+      "module": "crate::graph",
+      "name": "meaning_edges"
+    },
+    {
+      "complexity": 11,
+      "coverage": 94.44444444444444,
+      "crap": 11.020747599451303,
+      "file": "src/import/formats.rs",
+      "line": 111,
+      "module": "crate::import::formats",
+      "name": "sniff"
+    },
+    {
+      "complexity": 11,
+      "coverage": 97.43589743589743,
+      "crap": 11.002039818607866,
+      "file": "src/graph.rs",
+      "line": 283,
+      "module": "crate::graph",
+      "name": "local"
+    },
+    {
+      "complexity": 11,
+      "coverage": 100.0,
+      "crap": 11.0,
+      "file": "src/db/metadata.rs",
+      "line": 132,
+      "module": "crate::db::metadata",
+      "name": "apply"
+    },
+    {
+      "complexity": 11,
+      "coverage": 100.0,
+      "crap": 11.0,
+      "file": "src/db/notes.rs",
+      "line": 265,
+      "module": "crate::db::notes",
+      "name": "Vault::move_notes"
+    },
+    {
+      "complexity": 11,
+      "coverage": 100.0,
+      "crap": 11.0,
+      "file": "src/db/trash.rs",
+      "line": 180,
+      "module": "crate::db::trash",
+      "name": "Vault::restore_folder"
+    },
+    {
+      "complexity": 11,
+      "coverage": 100.0,
+      "crap": 11.0,
+      "file": "src/markdown.rs",
+      "line": 435,
+      "module": "crate::markdown",
+      "name": "indented_code"
+    },
+    {
+      "complexity": 10,
+      "coverage": 95.0,
+      "crap": 10.0125,
+      "file": "src/embed/related.rs",
+      "line": 383,
+      "module": "crate::embed::related",
+      "name": "sync"
+    },
+    {
+      "complexity": 10,
+      "coverage": 100.0,
+      "crap": 10.0,
+      "file": "src/db/search.rs",
+      "line": 187,
+      "module": "crate::db::search",
+      "name": "Vault::search_filter_ids"
+    },
+    {
+      "complexity": 8,
+      "coverage": 71.42857142857143,
+      "crap": 9.492711370262391,
+      "file": "src/embed/models.rs",
+      "line": 107,
+      "module": "crate::embed::models",
+      "name": "FileChecks::availability"
+    },
+    {
+      "complexity": 9,
+      "coverage": 91.42857142857143,
+      "crap": 9.051008746355684,
+      "file": "src/embed/download.rs",
+      "line": 120,
+      "module": "crate::embed::download",
+      "name": "Downloader::file"
+    },
+    {
+      "complexity": 9,
+      "coverage": 93.65079365079364,
+      "crap": 9.020732102364756,
+      "file": "src/db/heads.rs",
+      "line": 353,
+      "module": "crate::db::heads",
+      "name": "Vault::tag_training"
+    },
+    {
+      "complexity": 9,
+      "coverage": 94.73684210526316,
+      "crap": 9.011809301647471,
+      "file": "src/import/mod.rs",
+      "line": 366,
+      "module": "crate::import",
+      "name": "sanitize_title"
+    },
+    {
+      "complexity": 9,
+      "coverage": 97.14285714285714,
+      "crap": 9.001889212827988,
+      "file": "src/import/clean.rs",
+      "line": 130,
+      "module": "crate::import::clean",
+      "name": "segments"
+    },
+    {
+      "complexity": 9,
+      "coverage": 97.61904761904762,
+      "crap": 9.001093294460642,
+      "file": "src/embed/related.rs",
+      "line": 196,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::best"
+    },
+    {
+      "complexity": 9,
+      "coverage": 100.0,
+      "crap": 9.0,
+      "file": "src/embed/related.rs",
+      "line": 478,
+      "module": "crate::embed::related",
+      "name": "update"
+    },
+    {
+      "complexity": 9,
+      "coverage": 100.0,
+      "crap": 9.0,
+      "file": "src/markdown.rs",
+      "line": 369,
+      "module": "crate::markdown",
+      "name": "code_ranges"
+    },
+    {
+      "complexity": 7,
+      "coverage": 71.7948717948718,
+      "crap": 8.099462229639744,
+      "file": "src/retag.rs",
+      "line": 56,
+      "module": "crate::retag",
+      "name": "run"
+    },
+    {
+      "complexity": 8,
+      "coverage": 90.0,
+      "crap": 8.064,
+      "file": "src/classify/review.rs",
+      "line": 13,
+      "module": "crate::classify::review",
+      "name": "review"
+    },
+    {
+      "complexity": 8,
+      "coverage": 91.17647058823529,
+      "crap": 8.043964990840626,
+      "file": "src/db/embeddings.rs",
+      "line": 176,
+      "module": "crate::db::embeddings",
+      "name": "Vault::scan_embeddings"
+    },
+    {
+      "complexity": 8,
+      "coverage": 91.66666666666667,
+      "crap": 8.037037037037036,
+      "file": "src/embed/models.rs",
+      "line": 287,
+      "module": "crate::embed::models",
+      "name": "reduced"
+    },
+    {
+      "complexity": 8,
+      "coverage": 91.66666666666667,
+      "crap": 8.037037037037036,
+      "file": "src/embed/related.rs",
+      "line": 540,
+      "module": "crate::embed::related",
+      "name": "related_notes"
+    },
+    {
+      "complexity": 8,
+      "coverage": 96.66666666666667,
+      "crap": 8.00237037037037,
+      "file": "src/import/mod.rs",
+      "line": 200,
+      "module": "crate::import",
+      "name": "scan::walk"
+    },
+    {
+      "complexity": 8,
+      "coverage": 100.0,
+      "crap": 8.0,
+      "file": "src/classify/job.rs",
+      "line": 161,
+      "module": "crate::classify::job",
+      "name": "plan_heads"
+    },
+    {
+      "complexity": 8,
+      "coverage": 100.0,
+      "crap": 8.0,
+      "file": "src/db/search.rs",
+      "line": 642,
+      "module": "crate::db::search",
+      "name": "terms"
+    },
+    {
+      "complexity": 8,
+      "coverage": 100.0,
+      "crap": 8.0,
+      "file": "src/import/clean.rs",
+      "line": 256,
+      "module": "crate::import::clean",
+      "name": "unwrap"
+    },
+    {
+      "complexity": 8,
+      "coverage": 100.0,
+      "crap": 8.0,
+      "file": "src/import/rules.rs",
+      "line": 166,
+      "module": "crate::import::rules",
+      "name": "Rule::compile"
+    },
+    {
+      "complexity": 8,
+      "coverage": 100.0,
+      "crap": 8.0,
+      "file": "src/meaning.rs",
+      "line": 44,
+      "module": "crate::meaning",
+      "name": "fuse"
+    },
+    {
+      "complexity": 6,
+      "coverage": 64.70588235294117,
+      "crap": 7.58273967026257,
+      "file": "src/embed/download.rs",
+      "line": 287,
+      "module": "crate::embed::download",
+      "name": "import_file"
+    },
+    {
+      "complexity": 7,
+      "coverage": 96.0,
+      "crap": 7.003136,
+      "file": "src/db/graph.rs",
+      "line": 112,
+      "module": "crate::db::graph",
+      "name": "Vault::graph_links_from"
+    },
+    {
+      "complexity": 7,
+      "coverage": 96.29629629629629,
+      "crap": 7.002489457907839,
+      "file": "src/db/links.rs",
+      "line": 232,
+      "module": "crate::db::links",
+      "name": "preserving_links"
+    },
+    {
+      "complexity": 7,
+      "coverage": 97.29729729729729,
+      "crap": 7.000967366197461,
+      "file": "src/db/metadata.rs",
+      "line": 61,
+      "module": "crate::db::metadata",
+      "name": "Vault::edit_notes_metadata_in"
+    },
+    {
+      "complexity": 7,
+      "coverage": 100.0,
+      "crap": 7.0,
+      "file": "src/db/metadata.rs",
+      "line": 104,
+      "module": "crate::db::metadata",
+      "name": "normalize"
+    },
+    {
+      "complexity": 7,
+      "coverage": 100.0,
+      "crap": 7.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 141,
+      "module": "crate::discover::kmeans",
+      "name": "recentre"
+    },
+    {
+      "complexity": 7,
+      "coverage": 100.0,
+      "crap": 7.0,
+      "file": "src/import/rules.rs",
+      "line": 79,
+      "module": "crate::import::rules",
+      "name": "<Target as TryFrom>::try_from"
+    },
+    {
+      "complexity": 7,
+      "coverage": 100.0,
+      "crap": 7.0,
+      "file": "src/import/rules.rs",
+      "line": 334,
+      "module": "crate::import::rules",
+      "name": "remove_ranges"
+    },
+    {
+      "complexity": 7,
+      "coverage": 100.0,
+      "crap": 7.0,
+      "file": "src/markdown.rs",
+      "line": 265,
+      "module": "crate::markdown",
+      "name": "yaml_scalar"
+    },
+    {
+      "complexity": 6,
+      "coverage": 78.57142857142857,
+      "crap": 6.354227405247814,
+      "file": "src/db/links.rs",
+      "line": 115,
+      "module": "crate::db::links",
+      "name": "Vault::link_snippet"
+    },
+    {
+      "complexity": 6,
+      "coverage": 88.88888888888889,
+      "crap": 6.049382716049383,
+      "file": "src/import/rules.rs",
+      "line": 95,
+      "module": "crate::import::rules",
+      "name": "<String as From>::from"
+    },
+    {
+      "complexity": 6,
+      "coverage": 91.66666666666667,
+      "crap": 6.020833333333333,
+      "file": "src/embed/download.rs",
+      "line": 331,
+      "module": "crate::embed::download",
+      "name": "remove_files"
+    },
+    {
+      "complexity": 6,
+      "coverage": 93.10344827586206,
+      "crap": 6.011808602238714,
+      "file": "src/db/search.rs",
+      "line": 230,
+      "module": "crate::db::search",
+      "name": "Vault::meaning_hits"
+    },
+    {
+      "complexity": 6,
+      "coverage": 95.83333333333333,
+      "crap": 6.002604166666667,
+      "file": "src/activity.rs",
+      "line": 388,
+      "module": "crate::activity",
+      "name": "Reporter::progress"
+    },
+    {
+      "complexity": 6,
+      "coverage": 96.42857142857143,
+      "crap": 6.0016399416909625,
+      "file": "src/db/links.rs",
+      "line": 71,
+      "module": "crate::db::links",
+      "name": "Vault::backlinks"
+    },
+    {
+      "complexity": 6,
+      "coverage": 96.96969696969697,
+      "crap": 6.001001753067869,
+      "file": "src/db/discover.rs",
+      "line": 38,
+      "module": "crate::db::discover",
+      "name": "Vault::discover_scope"
+    },
+    {
+      "complexity": 6,
+      "coverage": 97.05882352941177,
+      "crap": 6.00091593730918,
+      "file": "src/db/review.rs",
+      "line": 100,
+      "module": "crate::db::review",
+      "name": "Vault::suggestion_review_of"
+    },
+    {
+      "complexity": 6,
+      "coverage": 97.22222222222223,
+      "crap": 6.000771604938271,
+      "file": "src/db/heads.rs",
+      "line": 274,
+      "module": "crate::db::heads",
+      "name": "Vault::tag_scorers"
+    },
+    {
+      "complexity": 6,
+      "coverage": 98.07692307692308,
+      "crap": 6.000256030951297,
+      "file": "src/db/search.rs",
+      "line": 267,
+      "module": "crate::db::search",
+      "name": "Vault::word_ranking"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/mod.rs",
+      "line": 62,
+      "module": "crate::commands",
+      "name": "<CommandError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 244,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as EmbedderSource>::is_loaded"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 197,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::emit_if"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 148,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::gpu_status"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 175,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::threads"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 188,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::unload"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 513,
+      "module": "crate::commands::embeddings",
+      "name": "models_changed"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 353,
+      "module": "crate::commands::embeddings",
+      "name": "set_status"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/import.rs",
+      "line": 112,
+      "module": "crate::commands::import",
+      "name": "import_target_notes"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/layout.rs",
+      "line": 51,
+      "module": "crate::commands::layout",
+      "name": "set_graph_scope"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/layout.rs",
+      "line": 66,
+      "module": "crate::commands::layout",
+      "name": "set_sidebar_folder"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/models.rs",
+      "line": 134,
+      "module": "crate::commands::models",
+      "name": "cancel_model_download"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/models.rs",
+      "line": 63,
+      "module": "crate::commands::models",
+      "name": "optional"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 167,
+      "module": "crate::commands::notes",
+      "name": "open_note"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 140,
+      "module": "crate::commands::notes",
+      "name": "set_confirm_trash"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 208,
+      "module": "crate::commands::notes",
+      "name": "set_recent_opened_collapsed"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 124,
+      "module": "crate::commands::notes",
+      "name": "set_sidebar_search_mode"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 108,
+      "module": "crate::commands::notes",
+      "name": "set_sidebar_search_scope"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 118,
+      "module": "crate::commands::notes",
+      "name": "sidebar_search_mode"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 102,
+      "module": "crate::commands::notes",
+      "name": "sidebar_search_scope"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/notes.rs",
+      "line": 79,
+      "module": "crate::commands::notes",
+      "name": "sidebar_view"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/tags.rs",
+      "line": 56,
+      "module": "crate::commands::tags",
+      "name": "threshold_model"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/commands/training.rs",
+      "line": 20,
+      "module": "crate::commands::training",
+      "name": "start"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/db/compact.rs",
+      "line": 75,
+      "module": "crate::db::compact",
+      "name": "byte_text"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/db/review.rs",
+      "line": 218,
+      "module": "crate::db::review",
+      "name": "excerpt"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/db/schema.rs",
+      "line": 503,
+      "module": "crate::db::schema",
+      "name": "apply_migrations"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/db/search.rs",
+      "line": 372,
+      "module": "crate::db::search",
+      "name": "Vault::snippets"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/embed/onnx.rs",
+      "line": 294,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::group"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/embed/related.rs",
+      "line": 95,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::upsert"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/embed/related.rs",
+      "line": 430,
+      "module": "crate::embed::related",
+      "name": "rebuild"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/import/clean.rs",
+      "line": 72,
+      "module": "crate::import::clean",
+      "name": "clean"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/import/clean.rs",
+      "line": 289,
+      "module": "crate::import::clean",
+      "name": "is_paragraph_line"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/import/formats.rs",
+      "line": 95,
+      "module": "crate::import::formats",
+      "name": "detect"
+    },
+    {
+      "complexity": 6,
+      "coverage": 100.0,
+      "crap": 6.0,
+      "file": "src/import/formats.rs",
+      "line": 144,
+      "module": "crate::import::formats",
+      "name": "looks_like_text"
+    },
+    {
+      "complexity": 2,
+      "coverage": 0.0,
+      "crap": 6.0,
+      "file": "src/session.rs",
+      "line": 346,
+      "module": "crate::session",
+      "name": "Session::cancel_compaction"
+    },
+    {
+      "complexity": 5,
+      "coverage": 81.81818181818181,
+      "crap": 5.150262960180315,
+      "file": "src/db/mod.rs",
+      "line": 268,
+      "module": "crate::db",
+      "name": "apply_key"
+    },
+    {
+      "complexity": 5,
+      "coverage": 87.5,
+      "crap": 5.048828125,
+      "file": "src/activity.rs",
+      "line": 256,
+      "module": "crate::activity",
+      "name": "Inner::wipe"
+    },
+    {
+      "complexity": 5,
+      "coverage": 88.46153846153847,
+      "crap": 5.038404642694584,
+      "file": "src/db/search.rs",
+      "line": 334,
+      "module": "crate::db::search",
+      "name": "Vault::word_hits"
+    },
+    {
+      "complexity": 5,
+      "coverage": 90.9090909090909,
+      "crap": 5.018782870022539,
+      "file": "src/classify/mod.rs",
+      "line": 92,
+      "module": "crate::classify",
+      "name": "balance"
+    },
+    {
+      "complexity": 5,
+      "coverage": 92.85714285714286,
+      "crap": 5.009110787172012,
+      "file": "src/db/graph.rs",
+      "line": 61,
+      "module": "crate::db::graph",
+      "name": "Vault::graph_scope_page"
+    },
+    {
+      "complexity": 5,
+      "coverage": 94.44444444444444,
+      "crap": 5.004286694101509,
+      "file": "src/import/dates.rs",
+      "line": 16,
+      "module": "crate::import::dates",
+      "name": "parse_loose_date"
+    },
+    {
+      "complexity": 5,
+      "coverage": 95.65217391304348,
+      "crap": 5.00205473822635,
+      "file": "src/db/notes.rs",
+      "line": 415,
+      "module": "crate::db::notes",
+      "name": "Vault::import_notes_until"
+    },
+    {
+      "complexity": 5,
+      "coverage": 96.29629629629629,
+      "crap": 5.001270131585632,
+      "file": "src/db/trash.rs",
+      "line": 111,
+      "module": "crate::db::trash",
+      "name": "Vault::folder_contents"
+    },
+    {
+      "complexity": 5,
+      "coverage": 96.55172413793103,
+      "crap": 5.001025052277666,
+      "file": "src/db/trash.rs",
+      "line": 306,
+      "module": "crate::db::trash",
+      "name": "Vault::restore_note"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/activity.rs",
+      "line": 318,
+      "module": "crate::activity",
+      "name": "Activity::run_emitter"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/links.rs",
+      "line": 162,
+      "module": "crate::db::links",
+      "name": "resolve"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/metadata.rs",
+      "line": 118,
+      "module": "crate::db::metadata",
+      "name": "normalize_tag"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/recent.rs",
+      "line": 101,
+      "module": "crate::db::recent",
+      "name": "Vault::last_opened"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/recent.rs",
+      "line": 81,
+      "module": "crate::db::recent",
+      "name": "Vault::recent_opened_notes"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/recent.rs",
+      "line": 55,
+      "module": "crate::db::recent",
+      "name": "Vault::record_opened"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/retag.rs",
+      "line": 61,
+      "module": "crate::db::retag",
+      "name": "Vault::retag_page"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/search.rs",
+      "line": 513,
+      "module": "crate::db::search",
+      "name": "browse_sql"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/tags.rs",
+      "line": 148,
+      "module": "crate::db::tags",
+      "name": "Vault::set_suggestion_threshold"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/db/tags.rs",
+      "line": 165,
+      "module": "crate::db::tags",
+      "name": "Vault::tag_suggestions"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/embed/job.rs",
+      "line": 129,
+      "module": "crate::embed::job",
+      "name": "Eta::update"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/embed/models.rs",
+      "line": 207,
+      "module": "crate::embed::models",
+      "name": "removal_blocked"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/import/clean.rs",
+      "line": 234,
+      "module": "crate::import::clean",
+      "name": "convert"
+    },
+    {
+      "complexity": 5,
+      "coverage": 100.0,
+      "crap": 5.0,
+      "file": "src/markdown.rs",
+      "line": 41,
+      "module": "crate::markdown",
+      "name": "is_tag"
+    },
+    {
+      "complexity": 3,
+      "coverage": 40.0,
+      "crap": 4.944,
+      "file": "src/import/mod.rs",
+      "line": 707,
+      "module": "crate::import",
+      "name": "truncate"
+    },
+    {
+      "complexity": 4,
+      "coverage": 77.77777777777777,
+      "crap": 4.175582990397805,
+      "file": "src/markdown.rs",
+      "line": 350,
+      "module": "crate::markdown",
+      "name": "scalar"
+    },
+    {
+      "complexity": 4,
+      "coverage": 80.0,
+      "crap": 4.128,
+      "file": "src/import/mod.rs",
+      "line": 678,
+      "module": "crate::import",
+      "name": "give_unique_title"
+    },
+    {
+      "complexity": 3,
+      "coverage": 50.0,
+      "crap": 4.125,
+      "file": "src/session.rs",
+      "line": 204,
+      "module": "crate::session",
+      "name": "Session::touch"
+    },
+    {
+      "complexity": 4,
+      "coverage": 83.33333333333333,
+      "crap": 4.074074074074074,
+      "file": "src/activity.rs",
+      "line": 194,
+      "module": "crate::activity",
+      "name": "Rate::update"
+    },
+    {
+      "complexity": 4,
+      "coverage": 85.0,
+      "crap": 4.054,
+      "file": "src/session.rs",
+      "line": 257,
+      "module": "crate::session",
+      "name": "Session::run_search"
+    },
+    {
+      "complexity": 4,
+      "coverage": 85.71428571428571,
+      "crap": 4.0466472303206995,
+      "file": "src/db/notes.rs",
+      "line": 94,
+      "module": "crate::db::notes",
+      "name": "<ReadStatus as FromSql>::column_result"
+    },
+    {
+      "complexity": 4,
+      "coverage": 85.71428571428571,
+      "crap": 4.0466472303206995,
+      "file": "src/embed/models.rs",
+      "line": 69,
+      "module": "crate::embed::models",
+      "name": "Availability::problem"
+    },
+    {
+      "complexity": 4,
+      "coverage": 87.5,
+      "crap": 4.03125,
+      "file": "src/embed/models.rs",
+      "line": 236,
+      "module": "crate::embed::models",
+      "name": "LoadState::from_error"
+    },
+    {
+      "complexity": 4,
+      "coverage": 88.88888888888889,
+      "crap": 4.021947873799726,
+      "file": "src/embed/mod.rs",
+      "line": 412,
+      "module": "crate::embed",
+      "name": "cosine"
+    },
+    {
+      "complexity": 4,
+      "coverage": 90.0,
+      "crap": 4.016,
+      "file": "src/classify/mod.rs",
+      "line": 183,
+      "module": "crate::classify",
+      "name": "Problem::new"
+    },
+    {
+      "complexity": 4,
+      "coverage": 90.0,
+      "crap": 4.016,
+      "file": "src/import/clean.rs",
+      "line": 167,
+      "module": "crate::import::clean",
+      "name": "is_fence"
+    },
+    {
+      "complexity": 4,
+      "coverage": 91.30434782608695,
+      "crap": 4.010520259718912,
+      "file": "src/db/heads.rs",
+      "line": 320,
+      "module": "crate::db::heads",
+      "name": "Vault::positive_centroid"
+    },
+    {
+      "complexity": 4,
+      "coverage": 91.66666666666667,
+      "crap": 4.0092592592592595,
+      "file": "src/db/schema.rs",
+      "line": 485,
+      "module": "crate::db::schema",
+      "name": "migrate"
+    },
+    {
+      "complexity": 4,
+      "coverage": 91.66666666666667,
+      "crap": 4.0092592592592595,
+      "file": "src/markdown.rs",
+      "line": 159,
+      "module": "crate::markdown",
+      "name": "split_frontmatter"
+    },
+    {
+      "complexity": 4,
+      "coverage": 92.85714285714286,
+      "crap": 4.005830903790088,
+      "file": "src/db/embeddings.rs",
+      "line": 388,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_pending"
+    },
+    {
+      "complexity": 4,
+      "coverage": 92.85714285714286,
+      "crap": 4.005830903790088,
+      "file": "src/db/embeddings.rs",
+      "line": 405,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_texts"
+    },
+    {
+      "complexity": 4,
+      "coverage": 93.33333333333333,
+      "crap": 4.004740740740741,
+      "file": "src/db/embeddings.rs",
+      "line": 484,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_vectors"
+    },
+    {
+      "complexity": 4,
+      "coverage": 93.33333333333333,
+      "crap": 4.004740740740741,
+      "file": "src/discover/words.rs",
+      "line": 24,
+      "module": "crate::discover::words",
+      "name": "GroupWords::add_note"
+    },
+    {
+      "complexity": 4,
+      "coverage": 94.44444444444444,
+      "crap": 4.002743484224966,
+      "file": "src/db/links.rs",
+      "line": 135,
+      "module": "crate::db::links",
+      "name": "Vault::ambiguous_links"
+    },
+    {
+      "complexity": 4,
+      "coverage": 94.44444444444444,
+      "crap": 4.002743484224966,
+      "file": "src/db/tags.rs",
+      "line": 258,
+      "module": "crate::db::tags",
+      "name": "record_hand_edits"
+    },
+    {
+      "complexity": 4,
+      "coverage": 94.73684210526316,
+      "crap": 4.002332701559994,
+      "file": "src/embed/job.rs",
+      "line": 581,
+      "module": "crate::embed::job",
+      "name": "embed_descriptions"
+    },
+    {
+      "complexity": 4,
+      "coverage": 95.0,
+      "crap": 4.002,
+      "file": "src/graph.rs",
+      "line": 329,
+      "module": "crate::graph",
+      "name": "global"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/activity.rs",
+      "line": 546,
+      "module": "crate::activity",
+      "name": "count"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/activity.rs",
+      "line": 559,
+      "module": "crate::activity",
+      "name": "duration_text"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/classify/mod.rs",
+      "line": 196,
+      "module": "crate::classify",
+      "name": "Problem::loss_and_gradient"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/discover.rs",
+      "line": 141,
+      "module": "crate::db::discover",
+      "name": "Vault::create_tag_from_group"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/embeddings.rs",
+      "line": 316,
+      "module": "crate::db::embeddings",
+      "name": "Vault::write_queued_embeddings"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/graph.rs",
+      "line": 174,
+      "module": "crate::db::graph",
+      "name": "Vault::graph_tags"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/heads.rs",
+      "line": 183,
+      "module": "crate::db::heads",
+      "name": "Vault::retain_tag_heads"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/links.rs",
+      "line": 269,
+      "module": "crate::db::links",
+      "name": "rewrite_links"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/links.rs",
+      "line": 199,
+      "module": "crate::db::links",
+      "name": "snippet_around"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/notes.rs",
+      "line": 596,
+      "module": "crate::db::notes",
+      "name": "validate_title"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/recent.rs",
+      "line": 36,
+      "module": "crate::db::recent",
+      "name": "Vault::set_recent_opened_count"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/search.rs",
+      "line": 151,
+      "module": "crate::db::search",
+      "name": "Vault::search_page_until"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/search.rs",
+      "line": 631,
+      "module": "crate::db::search",
+      "name": "phrase_query"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/trash.rs",
+      "line": 146,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_folder"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/db/trash.rs",
+      "line": 90,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_notes"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/embed/related.rs",
+      "line": 178,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::search"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/embed/related.rs",
+      "line": 299,
+      "module": "crate::embed::related",
+      "name": "quantize"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/mod.rs",
+      "line": 642,
+      "module": "crate::import",
+      "name": "prepare_batch"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/clean.rs",
+      "line": 105,
+      "module": "crate::import::clean",
+      "name": "note_dropped"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/formats.rs",
+      "line": 158,
+      "module": "crate::import::formats",
+      "name": "decode"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/formats.rs",
+      "line": 133,
+      "module": "crate::import::formats",
+      "name": "sniff_content"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/rules.rs",
+      "line": 48,
+      "module": "crate::import::rules",
+      "name": "Source::as_str"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/import/rules.rs",
+      "line": 187,
+      "module": "crate::import::rules",
+      "name": "valid_key"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/markdown.rs",
+      "line": 185,
+      "module": "crate::markdown",
+      "name": "load_frontmatter"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/markdown.rs",
+      "line": 415,
+      "module": "crate::markdown",
+      "name": "merge_ranges"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/markdown.rs",
+      "line": 284,
+      "module": "crate::markdown",
+      "name": "parse_date"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/markdown.rs",
+      "line": 341,
+      "module": "crate::markdown",
+      "name": "rating"
+    },
+    {
+      "complexity": 4,
+      "coverage": 100.0,
+      "crap": 4.0,
+      "file": "src/session.rs",
+      "line": 140,
+      "module": "crate::session",
+      "name": "Session::lock_if_idle_at"
+    },
+    {
+      "complexity": 3,
+      "coverage": 71.42857142857143,
+      "crap": 3.2099125364431487,
+      "file": "src/embed/download.rs",
+      "line": 261,
+      "module": "crate::embed::download",
+      "name": "read_error"
+    },
+    {
+      "complexity": 3,
+      "coverage": 74.0,
+      "crap": 3.158184,
+      "file": "src/embed/onnx.rs",
+      "line": 75,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::load_on"
+    },
+    {
+      "complexity": 3,
+      "coverage": 77.77777777777777,
+      "crap": 3.0987654320987654,
+      "file": "src/db/mod.rs",
+      "line": 219,
+      "module": "crate::db",
+      "name": "check_new_passphrase"
+    },
+    {
+      "complexity": 3,
+      "coverage": 83.33333333333333,
+      "crap": 3.0416666666666665,
+      "file": "src/db/notes.rs",
+      "line": 78,
+      "module": "crate::db::notes",
+      "name": "ReadStatus::code"
+    },
+    {
+      "complexity": 3,
+      "coverage": 84.61538461538461,
+      "crap": 3.0327719617660445,
+      "file": "src/db/lock.rs",
+      "line": 20,
+      "module": "crate::db::lock",
+      "name": "VaultLock::acquire"
+    },
+    {
+      "complexity": 3,
+      "coverage": 85.71428571428571,
+      "crap": 3.0262390670553936,
+      "file": "src/db/compact.rs",
+      "line": 92,
+      "module": "crate::db::compact",
+      "name": "Vault::pragma_u64"
+    },
+    {
+      "complexity": 3,
+      "coverage": 85.71428571428571,
+      "crap": 3.0262390670553936,
+      "file": "src/db/embeddings.rs",
+      "line": 466,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_hashes"
+    },
+    {
+      "complexity": 3,
+      "coverage": 88.88888888888889,
+      "crap": 3.0123456790123457,
+      "file": "src/db/mod.rs",
+      "line": 245,
+      "module": "crate::db",
+      "name": "connect"
+    },
+    {
+      "complexity": 3,
+      "coverage": 90.0,
+      "crap": 3.009,
+      "file": "src/db/review.rs",
+      "line": 72,
+      "module": "crate::db::review",
+      "name": "Vault::score_notes"
+    },
+    {
+      "complexity": 3,
+      "coverage": 90.9090909090909,
+      "crap": 3.006761833208114,
+      "file": "src/db/graph.rs",
+      "line": 197,
+      "module": "crate::db::graph",
+      "name": "Vault::rare_tags"
+    },
+    {
+      "complexity": 3,
+      "coverage": 90.9090909090909,
+      "crap": 3.006761833208114,
+      "file": "src/db/links.rs",
+      "line": 183,
+      "module": "crate::db::links",
+      "name": "shortest_link"
+    },
+    {
+      "complexity": 3,
+      "coverage": 90.9090909090909,
+      "crap": 3.006761833208114,
+      "file": "src/embed/job.rs",
+      "line": 603,
+      "module": "crate::embed::job",
+      "name": "sleep_while_open"
+    },
+    {
+      "complexity": 3,
+      "coverage": 91.66666666666667,
+      "crap": 3.0052083333333335,
+      "file": "src/embed/models.rs",
+      "line": 93,
+      "module": "crate::embed::models",
+      "name": "FileChecks::locate"
+    },
+    {
+      "complexity": 3,
+      "coverage": 92.3076923076923,
+      "crap": 3.0040964952207556,
+      "file": "src/embed/mod.rs",
+      "line": 424,
+      "module": "crate::embed",
+      "name": "read_verified"
+    },
+    {
+      "complexity": 3,
+      "coverage": 92.85714285714286,
+      "crap": 3.003279883381924,
+      "file": "src/db/discover.rs",
+      "line": 95,
+      "module": "crate::db::discover",
+      "name": "Vault::discover_vector_page"
+    },
+    {
+      "complexity": 3,
+      "coverage": 94.44444444444444,
+      "crap": 3.001543209876543,
+      "file": "src/db/embeddings.rs",
+      "line": 507,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_vector_page"
+    },
+    {
+      "complexity": 3,
+      "coverage": 94.44444444444444,
+      "crap": 3.001543209876543,
+      "file": "src/db/notes.rs",
+      "line": 559,
+      "module": "crate::db::notes",
+      "name": "derive"
+    },
+    {
+      "complexity": 3,
+      "coverage": 95.45454545454545,
+      "crap": 3.000845229151014,
+      "file": "src/db/search.rs",
+      "line": 407,
+      "module": "crate::db::search",
+      "name": "Vault::search_ids"
+    },
+    {
+      "complexity": 3,
+      "coverage": 96.0,
+      "crap": 3.000576,
+      "file": "src/db/heads.rs",
+      "line": 243,
+      "module": "crate::db::heads",
+      "name": "Vault::training_labels"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/activity.rs",
+      "line": 246,
+      "module": "crate::activity",
+      "name": "Inner::push_log"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/activity.rs",
+      "line": 356,
+      "module": "crate::activity",
+      "name": "Reporter::change"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/activity.rs",
+      "line": 505,
+      "module": "crate::activity",
+      "name": "Reporter::idle"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/classify/mod.rs",
+      "line": 107,
+      "module": "crate::classify",
+      "name": "train"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/compact.rs",
+      "line": 145,
+      "module": "crate::db::compact",
+      "name": "Vault::compact"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/compact.rs",
+      "line": 175,
+      "module": "crate::db::compact",
+      "name": "Vault::give_back_free_pages"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/discover.rs",
+      "line": 112,
+      "module": "crate::db::discover",
+      "name": "Vault::discover_titles"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/discover.rs",
+      "line": 80,
+      "module": "crate::db::discover",
+      "name": "Vault::discover_vectors"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/discover.rs",
+      "line": 125,
+      "module": "crate::db::discover",
+      "name": "Vault::live_notes"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/graph.rs",
+      "line": 144,
+      "module": "crate::db::graph",
+      "name": "Vault::graph_links_to"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/links.rs",
+      "line": 61,
+      "module": "crate::db::links",
+      "name": "Vault::outgoing"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/metadata.rs",
+      "line": 171,
+      "module": "crate::db::metadata",
+      "name": "set_scalar"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/notes.rs",
+      "line": 175,
+      "module": "crate::db::notes",
+      "name": "Vault::create_untitled"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/notes.rs",
+      "line": 492,
+      "module": "crate::db::notes",
+      "name": "Vault::note_summaries"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/notes.rs",
+      "line": 507,
+      "module": "crate::db::notes",
+      "name": "Vault::set_read_status"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/review.rs",
+      "line": 145,
+      "module": "crate::db::review",
+      "name": "Vault::accept_tag_suggestions"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/review.rs",
+      "line": 161,
+      "module": "crate::db::review",
+      "name": "Vault::reject_tag_suggestions"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/search.rs",
+      "line": 616,
+      "module": "crate::db::search",
+      "name": "fts_query"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/db/tags.rs",
+      "line": 194,
+      "module": "crate::db::tags",
+      "name": "Vault::accept_tag_suggestion"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/discover/mod.rs",
+      "line": 116,
+      "module": "crate::discover",
+      "name": "sample"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 112,
+      "module": "crate::discover::kmeans",
+      "name": "assign"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 97,
+      "module": "crate::discover::kmeans",
+      "name": "dot"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/discover/words.rs",
+      "line": 57,
+      "module": "crate::discover::words",
+      "name": "distinctive"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/embed/mod.rs",
+      "line": 351,
+      "module": "crate::embed",
+      "name": "note_text"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/embed/onnx.rs",
+      "line": 372,
+      "module": "crate::embed::onnx",
+      "name": "take_group"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/embed/related.rs",
+      "line": 125,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::remove"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/embed/related.rs",
+      "line": 325,
+      "module": "crate::embed::related",
+      "name": "dot"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/embed/related.rs",
+      "line": 313,
+      "module": "crate::embed::related",
+      "name": "idot"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/import/mod.rs",
+      "line": 612,
+      "module": "crate::import",
+      "name": "Skipped::push"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/import/clean.rs",
+      "line": 303,
+      "module": "crate::import::clean",
+      "name": "trim_end_keep_break"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/import/dates.rs",
+      "line": 45,
+      "module": "crate::import::dates",
+      "name": "format_date"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/import/rtf.rs",
+      "line": 23,
+      "module": "crate::import::rtf",
+      "name": "emit"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/import/rules.rs",
+      "line": 302,
+      "module": "crate::import::rules",
+      "name": "tags_of"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/markdown.rs",
+      "line": 464,
+      "module": "crate::markdown",
+      "name": "is_list_item"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/markdown.rs",
+      "line": 255,
+      "module": "crate::markdown",
+      "name": "render_field"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/session.rs",
+      "line": 412,
+      "module": "crate::session",
+      "name": "Session::background_guard"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/session.rs",
+      "line": 299,
+      "module": "crate::session",
+      "name": "Session::pause_reason"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/session.rs",
+      "line": 102,
+      "module": "crate::session",
+      "name": "Session::unlock"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/session.rs",
+      "line": 181,
+      "module": "crate::session",
+      "name": "Session::update_related_index"
+    },
+    {
+      "complexity": 3,
+      "coverage": 100.0,
+      "crap": 3.0,
+      "file": "src/session.rs",
+      "line": 360,
+      "module": "crate::session",
+      "name": "Session::with_vault_quiet"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/classify/job.rs",
+      "line": 51,
+      "module": "crate::classify::job",
+      "name": "<TrainError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/config.rs",
+      "line": 67,
+      "module": "crate::config",
+      "name": "same_path"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/db/notes.rs",
+      "line": 607,
+      "module": "crate::db::notes",
+      "name": "title_taken"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/discover/mod.rs",
+      "line": 101,
+      "module": "crate::discover",
+      "name": "<DiscoverError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/embed/job.rs",
+      "line": 95,
+      "module": "crate::embed::job",
+      "name": "<JobError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/embed/models.rs",
+      "line": 61,
+      "module": "crate::embed::models",
+      "name": "Availability::downloaded"
+    },
+    {
+      "complexity": 2,
+      "coverage": 80.0,
+      "crap": 2.032,
+      "file": "src/retag.rs",
+      "line": 35,
+      "module": "crate::retag",
+      "name": "<RetagError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 85.71428571428571,
+      "crap": 2.011661807580175,
+      "file": "src/db/review.rs",
+      "line": 87,
+      "module": "crate::db::review",
+      "name": "Vault::suggestion_review"
+    },
+    {
+      "complexity": 2,
+      "coverage": 85.71428571428571,
+      "crap": 2.011661807580175,
+      "file": "src/discover/mod.rs",
+      "line": 141,
+      "module": "crate::discover",
+      "name": "Filling::add"
+    },
+    {
+      "complexity": 2,
+      "coverage": 86.66666666666667,
+      "crap": 2.0094814814814814,
+      "file": "src/db/rules.rs",
+      "line": 55,
+      "module": "crate::db::rules",
+      "name": "write_rules"
+    },
+    {
+      "complexity": 2,
+      "coverage": 87.5,
+      "crap": 2.0078125,
+      "file": "src/config.rs",
+      "line": 45,
+      "module": "crate::config",
+      "name": "AppConfig::save"
+    },
+    {
+      "complexity": 2,
+      "coverage": 87.5,
+      "crap": 2.0078125,
+      "file": "src/db/mod.rs",
+      "line": 143,
+      "module": "crate::db",
+      "name": "Vault::open_with_progress"
+    },
+    {
+      "complexity": 2,
+      "coverage": 88.88888888888889,
+      "crap": 2.0054869684499312,
+      "file": "src/db/mod.rs",
+      "line": 127,
+      "module": "crate::db",
+      "name": "Vault::create"
+    },
+    {
+      "complexity": 2,
+      "coverage": 90.0,
+      "crap": 2.004,
+      "file": "src/db/trash.rs",
+      "line": 245,
+      "module": "crate::db::trash",
+      "name": "Vault::delete_trash_folder"
+    },
+    {
+      "complexity": 2,
+      "coverage": 90.9090909090909,
+      "crap": 2.0030052592036065,
+      "file": "src/db/search.rs",
+      "line": 438,
+      "module": "crate::db::search",
+      "name": "Vault::browse_by_folder"
+    },
+    {
+      "complexity": 2,
+      "coverage": 90.9090909090909,
+      "crap": 2.0030052592036065,
+      "file": "src/db/search.rs",
+      "line": 452,
+      "module": "crate::db::search",
+      "name": "Vault::count_in_folder"
+    },
+    {
+      "complexity": 2,
+      "coverage": 90.9090909090909,
+      "crap": 2.0030052592036065,
+      "file": "src/embed/job.rs",
+      "line": 299,
+      "module": "crate::embed::job",
+      "name": "safety_net_page"
+    },
+    {
+      "complexity": 2,
+      "coverage": 91.66666666666667,
+      "crap": 2.002314814814815,
+      "file": "src/db/embeddings.rs",
+      "line": 451,
+      "module": "crate::db::embeddings",
+      "name": "Vault::note_embedding"
+    },
+    {
+      "complexity": 2,
+      "coverage": 92.3076923076923,
+      "crap": 2.0018206645425582,
+      "file": "src/config.rs",
+      "line": 105,
+      "module": "crate::config",
+      "name": "Config::lock"
+    },
+    {
+      "complexity": 2,
+      "coverage": 93.33333333333333,
+      "crap": 2.0011851851851854,
+      "file": "src/embed/related.rs",
+      "line": 149,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::score_all"
+    },
+    {
+      "complexity": 2,
+      "coverage": 93.75,
+      "crap": 2.0009765625,
+      "file": "src/db/schema.rs",
+      "line": 413,
+      "module": "crate::db::schema",
+      "name": "fill_fts"
+    },
+    {
+      "complexity": 2,
+      "coverage": 94.11764705882354,
+      "crap": 2.0008141664970487,
+      "file": "src/db/tags.rs",
+      "line": 81,
+      "module": "crate::db::tags",
+      "name": "Vault::set_tag_description_in"
+    },
+    {
+      "complexity": 2,
+      "coverage": 94.44444444444444,
+      "crap": 2.0006858710562416,
+      "file": "src/db/heads.rs",
+      "line": 158,
+      "module": "crate::db::heads",
+      "name": "Vault::write_tag_head"
+    },
+    {
+      "complexity": 2,
+      "coverage": 94.73684210526316,
+      "crap": 2.0005831753899987,
+      "file": "src/embed/related.rs",
+      "line": 341,
+      "module": "crate::embed::related",
+      "name": "rerank"
+    },
+    {
+      "complexity": 2,
+      "coverage": 95.0,
+      "crap": 2.0005,
+      "file": "src/db/schema.rs",
+      "line": 435,
+      "module": "crate::db::schema",
+      "name": "fill_folder_sizes"
+    },
+    {
+      "complexity": 2,
+      "coverage": 95.65217391304348,
+      "crap": 2.000328758116216,
+      "file": "src/db/trash.rs",
+      "line": 259,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_entries"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/main.rs",
+      "line": 4,
+      "module": "crate",
+      "name": "main"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/activity.rs",
+      "line": 437,
+      "module": "crate::activity",
+      "name": "Reporter::end"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/activity.rs",
+      "line": 486,
+      "module": "crate::activity",
+      "name": "Reporter::hold"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/activity.rs",
+      "line": 534,
+      "module": "crate::activity",
+      "name": "Reporter::log_error"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/activity.rs",
+      "line": 461,
+      "module": "crate::activity",
+      "name": "Reporter::record"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/activity.rs",
+      "line": 426,
+      "module": "crate::activity",
+      "name": "Reporter::stop"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/classify/mod.rs",
+      "line": 38,
+      "module": "crate::classify",
+      "name": "Head::probability"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/classify/mod.rs",
+      "line": 315,
+      "module": "crate::classify",
+      "name": "Rng::shuffle"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/classify/mod.rs",
+      "line": 294,
+      "module": "crate::classify",
+      "name": "sigmoid"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/classify/mod.rs",
+      "line": 299,
+      "module": "crate::classify",
+      "name": "softplus"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/mod.rs",
+      "line": 72,
+      "module": "crate::commands",
+      "name": "<CommandError as From>::from"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/mod.rs",
+      "line": 124,
+      "module": "crate::commands",
+      "name": "<CommandError as Serialize>::serialize"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/about.rs",
+      "line": 23,
+      "module": "crate::commands::about",
+      "name": "third_party_notices"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/activity.rs",
+      "line": 104,
+      "module": "crate::commands::activity",
+      "name": "activity_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/activity.rs",
+      "line": 124,
+      "module": "crate::commands::activity",
+      "name": "note_internals"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/activity.rs",
+      "line": 31,
+      "module": "crate::commands::activity",
+      "name": "start_emitter"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/discover.rs",
+      "line": 109,
+      "module": "crate::commands::discover",
+      "name": "cancel_discover_tags"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 307,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as EmbedderSource>::measured_rate"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 303,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as EmbedderSource>::vault_models"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 218,
+      "module": "crate::commands::embeddings",
+      "name": "<LocalModels as QueryModels>::query_loaded"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 207,
+      "module": "crate::commands::embeddings",
+      "name": "Indexer::model_state"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 54,
+      "module": "crate::commands::embeddings",
+      "name": "Indexer::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 170,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::emit_gpu"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 183,
+      "module": "crate::commands::embeddings",
+      "name": "LocalModels::retry_gpu"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 371,
+      "module": "crate::commands::embeddings",
+      "name": "gpu_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 526,
+      "module": "crate::commands::embeddings",
+      "name": "host"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 364,
+      "module": "crate::commands::embeddings",
+      "name": "index_all_cores"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 402,
+      "module": "crate::commands::embeddings",
+      "name": "index_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 458,
+      "module": "crate::commands::embeddings",
+      "name": "model_overview"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 415,
+      "module": "crate::commands::embeddings",
+      "name": "model_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 507,
+      "module": "crate::commands::embeddings",
+      "name": "recheck_models"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 409,
+      "module": "crate::commands::embeddings",
+      "name": "related_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 395,
+      "module": "crate::commands::embeddings",
+      "name": "set_index_all_cores"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/embeddings.rs",
+      "line": 378,
+      "module": "crate::commands::embeddings",
+      "name": "set_index_gpu"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 122,
+      "module": "crate::commands::import",
+      "name": "cancel_import"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 137,
+      "module": "crate::commands::import",
+      "name": "default_import_rules"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 127,
+      "module": "crate::commands::import",
+      "name": "import_rules"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 132,
+      "module": "crate::commands::import",
+      "name": "set_import_rules"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 105,
+      "module": "crate::commands::import",
+      "name": "suggest_import_target"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/import.rs",
+      "line": 143,
+      "module": "crate::commands::import",
+      "name": "test_import_rules"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/layout.rs",
+      "line": 38,
+      "module": "crate::commands::layout",
+      "name": "GraphScope::valid"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/layout.rs",
+      "line": 45,
+      "module": "crate::commands::layout",
+      "name": "graph_scope"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/layout.rs",
+      "line": 23,
+      "module": "crate::commands::layout",
+      "name": "last_opened_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/layout.rs",
+      "line": 60,
+      "module": "crate::commands::layout",
+      "name": "sidebar_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 15,
+      "module": "crate::commands::links",
+      "name": "backlinks"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 51,
+      "module": "crate::commands::links",
+      "name": "collapsed_sections"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 35,
+      "module": "crate::commands::links",
+      "name": "create_linked_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 71,
+      "module": "crate::commands::links",
+      "name": "graph"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 21,
+      "module": "crate::commands::links",
+      "name": "outgoing_links"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/links.rs",
+      "line": 28,
+      "module": "crate::commands::links",
+      "name": "resolve_link"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/locale.rs",
+      "line": 6,
+      "module": "crate::commands::locale",
+      "name": "os_locale"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/models.rs",
+      "line": 58,
+      "module": "crate::commands::models",
+      "name": "Downloads::running"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/models.rs",
+      "line": 53,
+      "module": "crate::commands::models",
+      "name": "Downloads::set"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/models.rs",
+      "line": 73,
+      "module": "crate::commands::models",
+      "name": "model_downloads"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 26,
+      "module": "crate::commands::notes",
+      "name": "NoteMeta::of"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 195,
+      "module": "crate::commands::notes",
+      "name": "clear_recent_opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 134,
+      "module": "crate::commands::notes",
+      "name": "confirm_trash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 154,
+      "module": "crate::commands::notes",
+      "name": "create_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 341,
+      "module": "crate::commands::notes",
+      "name": "default_author"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 270,
+      "module": "crate::commands::notes",
+      "name": "delete_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 307,
+      "module": "crate::commands::notes",
+      "name": "delete_trash_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 336,
+      "module": "crate::commands::notes",
+      "name": "edit_frontmatter"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 257,
+      "module": "crate::commands::notes",
+      "name": "edit_notes_metadata"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 321,
+      "module": "crate::commands::notes",
+      "name": "empty_trash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 288,
+      "module": "crate::commands::notes",
+      "name": "folder_contents"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 74,
+      "module": "crate::commands::notes",
+      "name": "folder_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 65,
+      "module": "crate::commands::notes",
+      "name": "folder_sizes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 58,
+      "module": "crate::commands::notes",
+      "name": "folders"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 245,
+      "module": "crate::commands::notes",
+      "name": "move_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 238,
+      "module": "crate::commands::notes",
+      "name": "move_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 51,
+      "module": "crate::commands::notes",
+      "name": "opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 203,
+      "module": "crate::commands::notes",
+      "name": "recent_opened_collapsed"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 184,
+      "module": "crate::commands::notes",
+      "name": "recent_opened_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 179,
+      "module": "crate::commands::notes",
+      "name": "recent_opened_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 223,
+      "module": "crate::commands::notes",
+      "name": "rename_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 301,
+      "module": "crate::commands::notes",
+      "name": "restore_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 313,
+      "module": "crate::commands::notes",
+      "name": "restore_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 213,
+      "module": "crate::commands::notes",
+      "name": "save_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 346,
+      "module": "crate::commands::notes",
+      "name": "set_default_author"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 264,
+      "module": "crate::commands::notes",
+      "name": "set_read_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 190,
+      "module": "crate::commands::notes",
+      "name": "set_recent_opened_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 331,
+      "module": "crate::commands::notes",
+      "name": "set_trash_days"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 282,
+      "module": "crate::commands::notes",
+      "name": "trash_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 326,
+      "module": "crate::commands::notes",
+      "name": "trash_days"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 276,
+      "module": "crate::commands::notes",
+      "name": "trash_entries"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 295,
+      "module": "crate::commands::notes",
+      "name": "trash_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 232,
+      "module": "crate::commands::notes",
+      "name": "trash_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/notes.rs",
+      "line": 251,
+      "module": "crate::commands::notes",
+      "name": "trash_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/review.rs",
+      "line": 26,
+      "module": "crate::commands::review",
+      "name": "accept_tag_suggestions"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/review.rs",
+      "line": 32,
+      "module": "crate::commands::review",
+      "name": "reject_tag_suggestions"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/review.rs",
+      "line": 14,
+      "module": "crate::commands::review",
+      "name": "review_tag_suggestions"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/search.rs",
+      "line": 52,
+      "module": "crate::commands::search",
+      "name": "attribute_values"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/search.rs",
+      "line": 41,
+      "module": "crate::commands::search",
+      "name": "meaning_model_loaded"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/search.rs",
+      "line": 47,
+      "module": "crate::commands::search",
+      "name": "search_facets"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 32,
+      "module": "crate::commands::tags",
+      "name": "accept_tag_suggestion"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 40,
+      "module": "crate::commands::tags",
+      "name": "reject_tag_suggestion"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 77,
+      "module": "crate::commands::tags",
+      "name": "set_suggestion_threshold"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 20,
+      "module": "crate::commands::tags",
+      "name": "set_tag_description"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 64,
+      "module": "crate::commands::tags",
+      "name": "suggestion_threshold"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 14,
+      "module": "crate::commands::tags",
+      "name": "tag_list"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/tags.rs",
+      "line": 25,
+      "module": "crate::commands::tags",
+      "name": "tag_suggestions"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/training.rs",
+      "line": 57,
+      "module": "crate::commands::training",
+      "name": "tag_training"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 28,
+      "module": "crate::commands::vault",
+      "name": "VaultInfo::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 136,
+      "module": "crate::commands::vault",
+      "name": "auto_lock_minutes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 166,
+      "module": "crate::commands::vault",
+      "name": "change_passphrase"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 184,
+      "module": "crate::commands::vault",
+      "name": "compact_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 59,
+      "module": "crate::commands::vault",
+      "name": "create_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 194,
+      "module": "crate::commands::vault",
+      "name": "exit_app"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 52,
+      "module": "crate::commands::vault",
+      "name": "forget_recent_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 119,
+      "module": "crate::commands::vault",
+      "name": "lock_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 154,
+      "module": "crate::commands::vault",
+      "name": "memory_security"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 42,
+      "module": "crate::commands::vault",
+      "name": "recent_vaults"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 141,
+      "module": "crate::commands::vault",
+      "name": "set_auto_lock_minutes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 160,
+      "module": "crate::commands::vault",
+      "name": "set_memory_security"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 131,
+      "module": "crate::commands::vault",
+      "name": "touch"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 107,
+      "module": "crate::commands::vault",
+      "name": "unlock"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 177,
+      "module": "crate::commands::vault",
+      "name": "vault_space"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/commands/vault.rs",
+      "line": 125,
+      "module": "crate::commands::vault",
+      "name": "vault_status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/db/mod.rs",
+      "line": 179,
+      "module": "crate::db",
+      "name": "Vault::change_passphrase"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/mod.rs",
+      "line": 153,
+      "module": "crate::db",
+      "name": "Vault::init"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/db/mod.rs",
+      "line": 170,
+      "module": "crate::db",
+      "name": "Vault::verify_passphrase"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/mod.rs",
+      "line": 284,
+      "module": "crate::db",
+      "name": "run_pragma"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/compact.rs",
+      "line": 102,
+      "module": "crate::db::compact",
+      "name": "Vault::file_bytes"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/compact.rs",
+      "line": 70,
+      "module": "crate::db::compact",
+      "name": "worth_compacting"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/embeddings.rs",
+      "line": 73,
+      "module": "crate::db::embeddings",
+      "name": "QueuePhase::condition"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/embeddings.rs",
+      "line": 337,
+      "module": "crate::db::embeddings",
+      "name": "Vault::queue_embeddings"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/embeddings.rs",
+      "line": 150,
+      "module": "crate::db::embeddings",
+      "name": "Vault::set_embedding_model"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/embeddings.rs",
+      "line": 425,
+      "module": "crate::db::embeddings",
+      "name": "Vault::write_embeddings"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/graph.rs",
+      "line": 47,
+      "module": "crate::db::graph",
+      "name": "Resolver::resolve"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/heads.rs",
+      "line": 79,
+      "module": "crate::db::heads",
+      "name": "TagScorer::score"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/heads.rs",
+      "line": 347,
+      "module": "crate::db::heads",
+      "name": "Vault::tag_score"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/internals.rs",
+      "line": 104,
+      "module": "crate::db::internals",
+      "name": "Vault::note_internals"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/db/internals.rs",
+      "line": 98,
+      "module": "crate::db::internals",
+      "name": "Vault::schema_version"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/db/internals.rs",
+      "line": 89,
+      "module": "crate::db::internals",
+      "name": "Vault::tag_head_times"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/links.rs",
+      "line": 225,
+      "module": "crate::db::links",
+      "name": "join"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/notes.rs",
+      "line": 459,
+      "module": "crate::db::notes",
+      "name": "Vault::delete_note"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/notes.rs",
+      "line": 446,
+      "module": "crate::db::notes",
+      "name": "Vault::set_bulk_writes"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/notes.rs",
+      "line": 219,
+      "module": "crate::db::notes",
+      "name": "Vault::update_body"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/notes.rs",
+      "line": 622,
+      "module": "crate::db::notes",
+      "name": "reset_bulk_writes"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/notes.rs",
+      "line": 583,
+      "module": "crate::db::notes",
+      "name": "set_note_tags"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/retag.rs",
+      "line": 46,
+      "module": "crate::db::retag",
+      "name": "Vault::retag_start"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/review.rs",
+      "line": 192,
+      "module": "crate::db::review",
+      "name": "review_min_score"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/review.rs",
+      "line": 207,
+      "module": "crate::db::review",
+      "name": "sort_review"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/rules.rs",
+      "line": 43,
+      "module": "crate::db::rules",
+      "name": "Vault::set_import_rules"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/search.rs",
+      "line": 175,
+      "module": "crate::db::search",
+      "name": "Vault::search_word_ids"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/tags.rs",
+      "line": 220,
+      "module": "crate::db::tags",
+      "name": "Vault::reject_tag_suggestion"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/tags.rs",
+      "line": 100,
+      "module": "crate::db::tags",
+      "name": "Vault::tag_description_vector"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/tags.rs",
+      "line": 122,
+      "module": "crate::db::tags",
+      "name": "Vault::write_tag_description_vectors"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/trash.rs",
+      "line": 369,
+      "module": "crate::db::trash",
+      "name": "Vault::purge_trash_at"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/db/trash.rs",
+      "line": 360,
+      "module": "crate::db::trash",
+      "name": "Vault::set_trash_days"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/mod.rs",
+      "line": 317,
+      "module": "crate::embed",
+      "name": "Embedder::embed_batch"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/mod.rs",
+      "line": 335,
+      "module": "crate::embed",
+      "name": "Embedder::embed_group"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/mod.rs",
+      "line": 388,
+      "module": "crate::embed",
+      "name": "normalize"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/mod.rs",
+      "line": 396,
+      "module": "crate::embed",
+      "name": "pool_chunks"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/download.rs",
+      "line": 69,
+      "module": "crate::embed::download",
+      "name": "<Downloader as Default>::default"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/download.rs",
+      "line": 101,
+      "module": "crate::embed::download",
+      "name": "Downloader::model"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/gpu.rs",
+      "line": 24,
+      "module": "crate::embed::gpu",
+      "name": "adapters"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/job.rs",
+      "line": 286,
+      "module": "crate::embed::job",
+      "name": "safety_net"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/models.rs",
+      "line": 39,
+      "module": "crate::embed::models",
+      "name": "ModelDirs::search"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/models.rs",
+      "line": 162,
+      "module": "crate::embed::models",
+      "name": "sha256_hex"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/models.rs",
+      "line": 190,
+      "module": "crate::embed::models",
+      "name": "switch"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 266,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::embed_first_batch"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 260,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::embed_group"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 244,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::model_id"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 141,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::chunk_lengths"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 147,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::chunks"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 134,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::device"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 88,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::load_on::load"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/embed/onnx.rs",
+      "line": 390,
+      "module": "crate::embed::onnx",
+      "name": "directml"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/related.rs",
+      "line": 263,
+      "module": "crate::embed::related",
+      "name": "Allowed::contains"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/related.rs",
+      "line": 269,
+      "module": "crate::embed::related",
+      "name": "bitset"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/embed/related.rs",
+      "line": 364,
+      "module": "crate::embed::related",
+      "name": "reserve"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/import/mod.rs",
+      "line": 69,
+      "module": "crate::import",
+      "name": "<ImportError as From>::from"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/mod.rs",
+      "line": 240,
+      "module": "crate::import",
+      "name": "is_page_assets"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/mod.rs",
+      "line": 630,
+      "module": "crate::import",
+      "name": "largest_folders"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/mod.rs",
+      "line": 696,
+      "module": "crate::import",
+      "name": "on_vault"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/mod.rs",
+      "line": 389,
+      "module": "crate::import",
+      "name": "suggest_target"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/clean.rs",
+      "line": 113,
+      "module": "crate::import::clean",
+      "name": "dropped_warning"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/clean.rs",
+      "line": 181,
+      "module": "crate::import::clean",
+      "name": "tags_in"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/formats.rs",
+      "line": 182,
+      "module": "crate::import::formats",
+      "name": "cp1252"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/rules.rs",
+      "line": 326,
+      "module": "crate::import::rules",
+      "name": "push_unique"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/import/rules.rs",
+      "line": 318,
+      "module": "crate::import::rules",
+      "name": "set_once"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/locale.rs",
+      "line": 14,
+      "module": "crate::locale",
+      "name": "os_locale"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/locale.rs",
+      "line": 26,
+      "module": "crate::locale",
+      "name": "windows_locale"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 174,
+      "module": "crate::markdown",
+      "name": "frontmatter_is_valid"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 471,
+      "module": "crate::markdown",
+      "name": "is_css_value"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 403,
+      "module": "crate::markdown",
+      "name": "not_tag_ranges"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 476,
+      "module": "crate::markdown",
+      "name": "push_unique"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 139,
+      "module": "crate::markdown",
+      "name": "split_target"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 247,
+      "module": "crate::markdown",
+      "name": "top_level_key"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/markdown.rs",
+      "line": 361,
+      "module": "crate::markdown",
+      "name": "values"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/meaning.rs",
+      "line": 167,
+      "module": "crate::meaning",
+      "name": "index_serves"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/session.rs",
+      "line": 242,
+      "module": "crate::session",
+      "name": "Session::begin_search"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/session.rs",
+      "line": 323,
+      "module": "crate::session",
+      "name": "Session::compact"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/session.rs",
+      "line": 128,
+      "module": "crate::session",
+      "name": "Session::lock"
+    },
+    {
+      "complexity": 2,
+      "coverage": 100.0,
+      "crap": 2.0,
+      "file": "src/session.rs",
+      "line": 388,
+      "module": "crate::session",
+      "name": "Session::set_auto_lock_minutes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 0.0,
+      "crap": 2.0,
+      "file": "src/session.rs",
+      "line": 421,
+      "module": "crate::session",
+      "name": "vault_name"
+    },
+    {
+      "complexity": 1,
+      "coverage": 85.71428571428571,
+      "crap": 1.0029154518950438,
+      "file": "src/db/recent.rs",
+      "line": 138,
+      "module": "crate::db::recent",
+      "name": "forget_last_opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 85.71428571428571,
+      "crap": 1.0029154518950438,
+      "file": "src/db/tags.rs",
+      "line": 112,
+      "module": "crate::db::tags",
+      "name": "Vault::stale_tag_descriptions"
+    },
+    {
+      "complexity": 1,
+      "coverage": 85.71428571428571,
+      "crap": 1.0029154518950438,
+      "file": "src/db/trash.rs",
+      "line": 73,
+      "module": "crate::db::trash",
+      "name": "forget_empty_groups"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/embeddings.rs",
+      "line": 371,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_queue_counts"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/graph.rs",
+      "line": 164,
+      "module": "crate::db::graph",
+      "name": "Vault::graph_link_counts"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/internals.rs",
+      "line": 79,
+      "module": "crate::db::internals",
+      "name": "Vault::live_note_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/links.rs",
+      "line": 105,
+      "module": "crate::db::links",
+      "name": "Vault::outgoing_links"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/recent.rs",
+      "line": 147,
+      "module": "crate::db::recent",
+      "name": "forget_last_opened_trashed_at"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/review.rs",
+      "line": 180,
+      "module": "crate::db::review",
+      "name": "Vault::note_has_tag"
+    },
+    {
+      "complexity": 1,
+      "coverage": 87.5,
+      "crap": 1.001953125,
+      "file": "src/db/tags.rs",
+      "line": 280,
+      "module": "crate::db::tags",
+      "name": "set_feedback"
+    },
+    {
+      "complexity": 1,
+      "coverage": 88.88888888888889,
+      "crap": 1.0013717421124828,
+      "file": "src/db/mod.rs",
+      "line": 201,
+      "module": "crate::db",
+      "name": "Vault::set_setting"
+    },
+    {
+      "complexity": 1,
+      "coverage": 90.0,
+      "crap": 1.001,
+      "file": "src/db/search.rs",
+      "line": 466,
+      "module": "crate::db::search",
+      "name": "Vault::facets"
+    },
+    {
+      "complexity": 1,
+      "coverage": 90.0,
+      "crap": 1.001,
+      "file": "src/db/tags.rs",
+      "line": 232,
+      "module": "crate::db::tags",
+      "name": "Vault::tag_feedback"
+    },
+    {
+      "complexity": 1,
+      "coverage": 90.0,
+      "crap": 1.001,
+      "file": "src/db/trash.rs",
+      "line": 291,
+      "module": "crate::db::trash",
+      "name": "Vault::trashed_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 92.85714285714286,
+      "crap": 1.0003644314868805,
+      "file": "src/db/heads.rs",
+      "line": 203,
+      "module": "crate::db::heads",
+      "name": "Vault::training_hashes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 93.33333333333333,
+      "crap": 1.0002962962962962,
+      "file": "src/db/heads.rs",
+      "line": 226,
+      "module": "crate::db::heads",
+      "name": "Vault::training_vectors"
+    },
+    {
+      "complexity": 1,
+      "coverage": 93.75,
+      "crap": 1.000244140625,
+      "file": "src/db/tags.rs",
+      "line": 57,
+      "module": "crate::db::tags",
+      "name": "Vault::tag_list"
+    },
+    {
+      "complexity": 1,
+      "coverage": 94.11764705882354,
+      "crap": 1.000203541624262,
+      "file": "src/db/compact.rs",
+      "line": 120,
+      "module": "crate::db::compact",
+      "name": "Vault::space"
+    },
+    {
+      "complexity": 1,
+      "coverage": 95.23809523809524,
+      "crap": 1.0001079796998165,
+      "file": "src/db/heads.rs",
+      "line": 132,
+      "module": "crate::db::heads",
+      "name": "Vault::read_heads"
+    },
+    {
+      "complexity": 1,
+      "coverage": 96.29629629629629,
+      "crap": 1.0000508052634254,
+      "file": "src/db/notes.rs",
+      "line": 186,
+      "module": "crate::db::notes",
+      "name": "Vault::note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 96.42857142857143,
+      "crap": 1.0000455539358601,
+      "file": "src/db/rules.rs",
+      "line": 9,
+      "module": "crate::db::rules",
+      "name": "Vault::import_rules"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 222,
+      "module": "crate::activity",
+      "name": "<Inner as Default>::default"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 306,
+      "module": "crate::activity",
+      "name": "Activity::clear"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 284,
+      "module": "crate::activity",
+      "name": "Activity::lock"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 291,
+      "module": "crate::activity",
+      "name": "Activity::reporter"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 295,
+      "module": "crate::activity",
+      "name": "Activity::snapshot"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 300,
+      "module": "crate::activity",
+      "name": "Activity::status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 237,
+      "module": "crate::activity",
+      "name": "Inner::snapshot"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 59,
+      "module": "crate::activity",
+      "name": "Job::index"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 110,
+      "module": "crate::activity",
+      "name": "JobStatus::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 431,
+      "module": "crate::activity",
+      "name": "Reporter::fail"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 415,
+      "module": "crate::activity",
+      "name": "Reporter::finish"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 421,
+      "module": "crate::activity",
+      "name": "Reporter::finish_quietly"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 528,
+      "module": "crate::activity",
+      "name": "Reporter::log"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 480,
+      "module": "crate::activity",
+      "name": "Reporter::pause"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 368,
+      "module": "crate::activity",
+      "name": "Reporter::start"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 540,
+      "module": "crate::activity",
+      "name": "Reporter::stats"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/activity.rs",
+      "line": 475,
+      "module": "crate::activity",
+      "name": "Reporter::wait"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/classify/mod.rs",
+      "line": 69,
+      "module": "crate::classify",
+      "name": "<Config as Default>::default"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/classify/mod.rs",
+      "line": 307,
+      "module": "crate::classify",
+      "name": "Rng::next"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/classify/mod.rs",
+      "line": 290,
+      "module": "crate::classify",
+      "name": "dot"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/classify/mod.rs",
+      "line": 324,
+      "module": "crate::classify",
+      "name": "seed_for"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/classify/job.rs",
+      "line": 151,
+      "module": "crate::classify::job",
+      "name": "corpus_hasher"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/commands/about.rs",
+      "line": 17,
+      "module": "crate::commands::about",
+      "name": "read_notices"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 61,
+      "module": "crate::config",
+      "name": "AppConfig::forget"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 37,
+      "module": "crate::config",
+      "name": "AppConfig::load"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 55,
+      "module": "crate::config",
+      "name": "AppConfig::remember"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 90,
+      "module": "crate::config",
+      "name": "Config::get"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 85,
+      "module": "crate::config",
+      "name": "Config::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/config.rs",
+      "line": 96,
+      "module": "crate::config",
+      "name": "Config::update"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 186,
+      "module": "crate::db",
+      "name": "Vault::close"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 211,
+      "module": "crate::db",
+      "name": "Vault::delete_setting"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 165,
+      "module": "crate::db",
+      "name": "Vault::interrupt_handle"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 137,
+      "module": "crate::db",
+      "name": "Vault::open"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 194,
+      "module": "crate::db",
+      "name": "Vault::setting"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 241,
+      "module": "crate::db",
+      "name": "memory_security"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 291,
+      "module": "crate::db",
+      "name": "now_ms"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 299,
+      "module": "crate::db",
+      "name": "quote_list"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/mod.rs",
+      "line": 236,
+      "module": "crate::db",
+      "name": "set_memory_security"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/compact.rs",
+      "line": 114,
+      "module": "crate::db::compact",
+      "name": "Vault::incremental"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/compact.rs",
+      "line": 109,
+      "module": "crate::db::compact",
+      "name": "Vault::live_bytes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/compact.rs",
+      "line": 187,
+      "module": "crate::db::compact",
+      "name": "available_space"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/compact.rs",
+      "line": 65,
+      "module": "crate::db::compact",
+      "name": "needed_bytes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/compact.rs",
+      "line": 216,
+      "module": "crate::db::compact::imp",
+      "name": "available_space"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 123,
+      "module": "crate::db::embeddings",
+      "name": "<QueueCursor as Default>::default"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 89,
+      "module": "crate::db::embeddings",
+      "name": "QueueCounts::total"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 536,
+      "module": "crate::db::embeddings",
+      "name": "Vault::change_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 528,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 381,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_first_pending"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 145,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_model"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 169,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_model_ready"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 365,
+      "module": "crate::db::embeddings",
+      "name": "Vault::embedding_queue_len"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 439,
+      "module": "crate::db::embeddings",
+      "name": "Vault::finish_embedding_model"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/embeddings.rs",
+      "line": 353,
+      "module": "crate::db::embeddings",
+      "name": "Vault::take_deleted_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/graph.rs",
+      "line": 211,
+      "module": "crate::db::graph",
+      "name": "marks"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/heads.rs",
+      "line": 123,
+      "module": "crate::db::heads",
+      "name": "Vault::tag_head"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/heads.rs",
+      "line": 128,
+      "module": "crate::db::heads",
+      "name": "Vault::tag_heads"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/heads.rs",
+      "line": 427,
+      "module": "crate::db::heads",
+      "name": "new_stored_head"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/internals.rs",
+      "line": 72,
+      "module": "crate::db::internals",
+      "name": "hex"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/links.rs",
+      "line": 157,
+      "module": "crate::db::links",
+      "name": "Vault::link_text"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/links.rs",
+      "line": 50,
+      "module": "crate::db::links",
+      "name": "Vault::resolve_link"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/links.rs",
+      "line": 56,
+      "module": "crate::db::links",
+      "name": "Vault::resolve_link_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/lock.rs",
+      "line": 37,
+      "module": "crate::db::lock",
+      "name": "lock_path"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/metadata.rs",
+      "line": 53,
+      "module": "crate::db::metadata",
+      "name": "Vault::edit_notes_metadata"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/metadata.rs",
+      "line": 180,
+      "module": "crate::db::metadata",
+      "name": "same_tag"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/metadata.rs",
+      "line": 166,
+      "module": "crate::db::metadata",
+      "name": "write_tags"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 88,
+      "module": "crate::db::notes",
+      "name": "<ReadStatus as ToSql>::to_sql"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 105,
+      "module": "crate::db::notes",
+      "name": "Note::summary"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 138,
+      "module": "crate::db::notes",
+      "name": "NoteSummary::from_row"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 155,
+      "module": "crate::db::notes",
+      "name": "Vault::create_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 475,
+      "module": "crate::db::notes",
+      "name": "Vault::folder_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 533,
+      "module": "crate::db::notes",
+      "name": "Vault::folder_sizes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 525,
+      "module": "crate::db::notes",
+      "name": "Vault::folders"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 404,
+      "module": "crate::db::notes",
+      "name": "Vault::import_notes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 411,
+      "module": "crate::db::notes",
+      "name": "Vault::import_notes_within"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 452,
+      "module": "crate::db::notes",
+      "name": "Vault::note_exists"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 239,
+      "module": "crate::db::notes",
+      "name": "Vault::rename_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 615,
+      "module": "crate::db::notes",
+      "name": "set_fts_hashsize"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/notes.rs",
+      "line": 554,
+      "module": "crate::db::notes",
+      "name": "subtree_params"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/readme.rs",
+      "line": 16,
+      "module": "crate::db::readme",
+      "name": "Vault::add_readme"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/reasons.rs",
+      "line": 142,
+      "module": "crate::db::reasons",
+      "name": "Vault::titled"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/reasons.rs",
+      "line": 157,
+      "module": "crate::db::reasons",
+      "name": "placeholders"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/recent.rs",
+      "line": 119,
+      "module": "crate::db::recent",
+      "name": "Vault::clear_last_opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/recent.rs",
+      "line": 74,
+      "module": "crate::db::recent",
+      "name": "Vault::clear_recent_opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/recent.rs",
+      "line": 27,
+      "module": "crate::db::recent",
+      "name": "Vault::recent_opened_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/recent.rs",
+      "line": 123,
+      "module": "crate::db::recent",
+      "name": "Vault::recent_opened_ids"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/recent.rs",
+      "line": 131,
+      "module": "crate::db::recent",
+      "name": "Vault::write_recent_opened"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/retag.rs",
+      "line": 97,
+      "module": "crate::db::retag",
+      "name": "Vault::finish_retag"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/review.rs",
+      "line": 66,
+      "module": "crate::db::review",
+      "name": "Vault::tag_scorer"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/review.rs",
+      "line": 201,
+      "module": "crate::db::review",
+      "name": "doubt_point"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/schema.rs",
+      "line": 466,
+      "module": "crate::db::schema",
+      "name": "create_list_indexes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/schema.rs",
+      "line": 499,
+      "module": "crate::db::schema",
+      "name": "disk_full"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 122,
+      "module": "crate::db::search",
+      "name": "SearchPage::words"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 479,
+      "module": "crate::db::search",
+      "name": "Vault::attribute_values"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 139,
+      "module": "crate::db::search",
+      "name": "Vault::search"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 145,
+      "module": "crate::db::search",
+      "name": "Vault::search_page"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 483,
+      "module": "crate::db::search",
+      "name": "Vault::strings"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 670,
+      "module": "crate::db::search",
+      "name": "clean_snippet"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/search.rs",
+      "line": 676,
+      "module": "crate::db::search",
+      "name": "escape_like"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/tags.rs",
+      "line": 76,
+      "module": "crate::db::tags",
+      "name": "Vault::set_tag_description"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/tags.rs",
+      "line": 139,
+      "module": "crate::db::tags",
+      "name": "Vault::suggestion_threshold"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/tags.rs",
+      "line": 245,
+      "module": "crate::db::tags",
+      "name": "note_tag_names"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 341,
+      "module": "crate::db::trash",
+      "name": "Vault::empty_trash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 385,
+      "module": "crate::db::trash",
+      "name": "Vault::purge_trash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 285,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_count"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 352,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_days"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 83,
+      "module": "crate::db::trash",
+      "name": "Vault::trash_note"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/db/trash.rs",
+      "line": 67,
+      "module": "crate::db::trash",
+      "name": "trash_time"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/mod.rs",
+      "line": 149,
+      "module": "crate::discover",
+      "name": "Filling::trim"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/mod.rs",
+      "line": 110,
+      "module": "crate::discover",
+      "name": "default_groups"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/mod.rs",
+      "line": 157,
+      "module": "crate::discover",
+      "name": "run"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 187,
+      "module": "crate::discover::kmeans",
+      "name": "SplitMix64::below"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 174,
+      "module": "crate::discover::kmeans",
+      "name": "SplitMix64::next"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 183,
+      "module": "crate::discover::kmeans",
+      "name": "SplitMix64::unit"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/kmeans.rs",
+      "line": 91,
+      "module": "crate::discover::kmeans",
+      "name": "distance"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/words.rs",
+      "line": 84,
+      "module": "crate::discover::words",
+      "name": "is_stop_word"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/discover/words.rs",
+      "line": 43,
+      "module": "crate::discover::words",
+      "name": "words"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 327,
+      "module": "crate::embed",
+      "name": "Embedder::embed_first_batch"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 311,
+      "module": "crate::embed",
+      "name": "Embedder::embed_query"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 383,
+      "module": "crate::embed",
+      "name": "blob_to_vector"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 363,
+      "module": "crate::embed",
+      "name": "content_hash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 280,
+      "module": "crate::embed",
+      "name": "descriptor"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 371,
+      "module": "crate::embed",
+      "name": "partial_hash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/mod.rs",
+      "line": 379,
+      "module": "crate::embed",
+      "name": "vector_to_blob"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 83,
+      "module": "crate::embed::download",
+      "name": "Downloader::allowing_http"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 77,
+      "module": "crate::embed::download",
+      "name": "Downloader::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 87,
+      "module": "crate::embed::download",
+      "name": "Downloader::with_https_only"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 235,
+      "module": "crate::embed::download",
+      "name": "content_range_start"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 230,
+      "module": "crate::embed::download",
+      "name": "host"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/download.rs",
+      "line": 226,
+      "module": "crate::embed::download",
+      "name": "part_path"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/gpu.rs",
+      "line": 37,
+      "module": "crate::embed::gpu",
+      "name": "adapter"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/gpu.rs",
+      "line": 29,
+      "module": "crate::embed::gpu",
+      "name": "best"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/job.rs",
+      "line": 56,
+      "module": "crate::embed::job",
+      "name": "EmbedderSource::is_loaded"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/job.rs",
+      "line": 65,
+      "module": "crate::embed::job",
+      "name": "EmbedderSource::measured_rate"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/job.rs",
+      "line": 62,
+      "module": "crate::embed::job",
+      "name": "EmbedderSource::vault_models"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/job.rs",
+      "line": 147,
+      "module": "crate::embed::job",
+      "name": "run"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 57,
+      "module": "crate::embed::models",
+      "name": "Availability::is_available"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 152,
+      "module": "crate::embed::models",
+      "name": "FileChecks::forget"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 156,
+      "module": "crate::embed::models",
+      "name": "FileChecks::lock"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 358,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::change"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 352,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::forget_failures"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 328,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::forget_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 344,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::load"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 364,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::lock"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 315,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::status"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/models.rs",
+      "line": 336,
+      "module": "crate::embed::models",
+      "name": "ModelTracker::vault_models"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 248,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::embed"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 256,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::embed_batch"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 252,
+      "module": "crate::embed::onnx",
+      "name": "<OnnxEmbedder as Embedder>::embed_query"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 315,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::batch_with"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 305,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::embed_with"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 58,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::load"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 64,
+      "module": "crate::embed::onnx",
+      "name": "OnnxEmbedder::load_with_threads"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/onnx.rs",
+      "line": 413,
+      "module": "crate::embed::onnx",
+      "name": "environment"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 292,
+      "module": "crate::embed::related",
+      "name": "<Score as Ord>::cmp"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 286,
+      "module": "crate::embed::related",
+      "name": "<Score as PartialOrd>::partial_cmp"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 259,
+      "module": "crate::embed::related",
+      "name": "Allowed::except"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 254,
+      "module": "crate::embed::related",
+      "name": "Allowed::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 86,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::contains"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 90,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::hash"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 71,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::is_empty"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 67,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::len"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 77,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::memory_bytes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 62,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::model"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 167,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::nearest"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/embed/related.rs",
+      "line": 48,
+      "module": "crate::embed::related",
+      "name": "RelatedIndex::new"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/graph.rs",
+      "line": 58,
+      "module": "crate::graph",
+      "name": "<GraphOptions as Default>::default"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/graph.rs",
+      "line": 121,
+      "module": "crate::graph",
+      "name": "note_key"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/mod.rs",
+      "line": 620,
+      "module": "crate::import",
+      "name": "Skipped::into_list"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/mod.rs",
+      "line": 199,
+      "module": "crate::import",
+      "name": "scan"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/mod.rs",
+      "line": 396,
+      "module": "crate::import",
+      "name": "target_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/clean.rs",
+      "line": 99,
+      "module": "crate::import::clean",
+      "name": "html_document"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/dates.rs",
+      "line": 37,
+      "module": "crate::import::dates",
+      "name": "date_in_name"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/dates.rs",
+      "line": 54,
+      "module": "crate::import::dates",
+      "name": "midnight"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/formats.rs",
+      "line": 84,
+      "module": "crate::import::formats",
+      "name": "extension"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/formats.rs",
+      "line": 194,
+      "module": "crate::import::formats",
+      "name": "fenced"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/formats.rs",
+      "line": 89,
+      "module": "crate::import::formats",
+      "name": "is_document"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/formats.rs",
+      "line": 105,
+      "module": "crate::import::formats",
+      "name": "never_text"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/formats.rs",
+      "line": 176,
+      "module": "crate::import::formats",
+      "name": "utf16"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/rules.rs",
+      "line": 116,
+      "module": "crate::import::rules",
+      "name": "Rule::defaults"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/rules.rs",
+      "line": 57,
+      "module": "crate::import::rules",
+      "name": "Source::parse"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/rules.rs",
+      "line": 286,
+      "module": "crate::import::rules",
+      "name": "first_lines"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/rules.rs",
+      "line": 292,
+      "module": "crate::import::rules",
+      "name": "map_value"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/import/rules.rs",
+      "line": 358,
+      "module": "crate::import::rules",
+      "name": "squeeze"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/locale.rs",
+      "line": 41,
+      "module": "crate::locale",
+      "name": "from_env"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/markdown.rs",
+      "line": 427,
+      "module": "crate::markdown",
+      "name": "in_ranges"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/markdown.rs",
+      "line": 149,
+      "module": "crate::markdown",
+      "name": "normalize_folder"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/meaning.rs",
+      "line": 172,
+      "module": "crate::meaning",
+      "name": "rrf"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 66,
+      "module": "crate::session",
+      "name": "<ImportRunning as Drop>::drop"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 92,
+      "module": "crate::session",
+      "name": "Activity::idle_at"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 88,
+      "module": "crate::session",
+      "name": "Activity::now"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 195,
+      "module": "crate::session",
+      "name": "Session::activity"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 382,
+      "module": "crate::session",
+      "name": "Session::auto_lock_minutes"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 287,
+      "module": "crate::session",
+      "name": "Session::begin_import"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 329,
+      "module": "crate::session",
+      "name": "Session::compact::<Done as Drop>::drop"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 310,
+      "module": "crate::session",
+      "name": "Session::compacting"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 168,
+      "module": "crate::session",
+      "name": "Session::drop_related_index"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 200,
+      "module": "crate::session",
+      "name": "Session::generation"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 402,
+      "module": "crate::session",
+      "name": "Session::guard"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 378,
+      "module": "crate::session",
+      "name": "Session::idle_for"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 293,
+      "module": "crate::session",
+      "name": "Session::import_running"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 373,
+      "module": "crate::session",
+      "name": "Session::is_open"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 136,
+      "module": "crate::session",
+      "name": "Session::lock_if_idle"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 215,
+      "module": "crate::session",
+      "name": "Session::path"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 174,
+      "module": "crate::session",
+      "name": "Session::related_index"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 231,
+      "module": "crate::session",
+      "name": "Session::search"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 251,
+      "module": "crate::session",
+      "name": "Session::search_is_current"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 353,
+      "module": "crate::session",
+      "name": "Session::search_running"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 156,
+      "module": "crate::session",
+      "name": "Session::take"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 219,
+      "module": "crate::session",
+      "name": "Session::with_vault"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 429,
+      "module": "crate::session",
+      "name": "minutes_to_duration"
+    },
+    {
+      "complexity": 1,
+      "coverage": 100.0,
+      "crap": 1.0,
+      "file": "src/session.rs",
+      "line": 425,
+      "module": "crate::session",
+      "name": "valid_minutes"
+    },
+    {
+      "complexity": 2,
+      "coverage": null,
+      "crap": null,
+      "file": "src/db/compact.rs",
+      "line": 197,
+      "module": "crate::db::compact::imp",
+      "name": "available_space"
+    },
+    {
+      "complexity": 1,
+      "coverage": null,
+      "crap": null,
+      "file": "src/embed/gpu.rs",
+      "line": 84,
+      "module": "crate::embed::gpu::imp",
+      "name": "adapters"
+    },
+    {
+      "complexity": 1,
+      "coverage": null,
+      "crap": null,
+      "file": "src/embed/onnx.rs",
+      "line": 405,
+      "module": "crate::embed::onnx",
+      "name": "directml"
+    }
+  ]
+}
