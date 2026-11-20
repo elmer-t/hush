@@ -10,6 +10,7 @@
     type ActivityState,
     type JobStatus,
   } from "$lib/api";
+  import { clockTime, dateTime } from "$lib/dates";
   import Icon from "$lib/Icon.svelte";
   import { isSplit, jobsWidth, KEYS, loadStored, saveStored, SPLIT } from "$lib/layout";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
@@ -92,10 +93,6 @@
 
   function ago(at: number): string {
     return `${span(now - at)} ago`;
-  }
-
-  function clock(at: number): string {
-    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
   function percent(job: JobStatus): number | null {
@@ -188,7 +185,7 @@
               <td class="num">{job.etaSecs != null && job.state === "running" ? span(job.etaSecs * 1000) : ""}</td>
               <td class="last">
                 {#if job.lastRun}
-                  <span title={new Date(job.lastRun.finishedAt).toLocaleString()}>
+                  <span title={dateTime(job.lastRun.finishedAt)}>
                     {ago(job.lastRun.finishedAt)}, {duration(job.lastRun.durationMs)}
                   </span>
                   <span class="muted">{job.lastRun.summary}</span>
@@ -230,7 +227,7 @@
                 <summary>{stats.heads.length.toLocaleString()}</summary>
                 <ul>
                   {#each stats.heads as head (head.tag)}
-                    <li title={`${head.model}, ${new Date(head.trainedAt).toLocaleString()}`}>
+                    <li title={`${head.model}, ${dateTime(head.trainedAt)}`}>
                       {head.tag} <span class="muted">{ago(head.trainedAt)}</span>
                     </li>
                   {/each}
@@ -244,7 +241,7 @@
         <div><dt>Schema</dt><dd>{stats?.schemaVersion != null ? `v${stats.schemaVersion}` : "–"}</dd></div>
         <div>
           <dt>Counted</dt>
-          <dd class="muted">{stats?.countedAt != null ? clock(stats.countedAt) : "–"}</dd>
+          <dd class="muted">{stats?.countedAt != null ? clockTime(stats.countedAt) : "–"}</dd>
         </div>
       </dl>
     </div>
@@ -286,7 +283,7 @@
         <ol>
           {#each log as entry (entry.seq)}
             <li class:error={entry.error}>
-              <time datetime={new Date(entry.at).toISOString()}>{clock(entry.at)}</time>
+              <time datetime={new Date(entry.at).toISOString()}>{clockTime(entry.at)}</time>
               <span class="job">{JOB_NAMES[entry.job]}</span>
               <span class="message">{entry.message}</span>
             </li>
