@@ -241,8 +241,8 @@ fn hold_for_pause(
 
 /// The work between two passes: whether to run the next pass now (`false`: look
 /// again). While nothing is queued it runs a page of the safety-net scan, or once that
-/// is done waits for `poll`. A queue that can't be read stops the job quietly, as a
-/// lock does (`Err(Locked)`).
+/// is done waits for `poll`. A queue that can't be read, like a lock during the wait,
+/// stops the job quietly (`Err(Locked)`).
 fn between_passes(
     session: &Session,
     generation: u64,
@@ -260,8 +260,8 @@ fn between_passes(
         return Ok(true);
     }
     activity.idle(Job::Embedding, Some("nothing queued"));
-    if let Some(after) = net.after {
-        net.advance(session, generation, after, activity)?;
+    if net.after.is_some() {
+        net.advance(session, generation, activity)?;
         std::thread::sleep(SCAN_PAUSE);
         return Ok(false);
     }
@@ -302,8 +302,11 @@ impl Default for SafetyNet {
 }
 
 impl SafetyNet {
-    /// Scans the page after note `after` and reports how far the scan got.
-    fn advance(&mut self, session: &Session, generation: u64, after: i64, activity: &Reporter<'_>) -> Result<(), JobError> {
+    /// Scans the next page and reports how far the scan got.
+    fn advance(&mut self, session: &Session, generation: u64, activity: &Reporter<'_>) -> Result<(), JobError> {
+        let Some(after) = self.after else {
+            return Ok(());
+        };
         let (stale, embeddable, next) = safety_net_page(session, generation, after).inspect_err(|e| {
             if !matches!(e, JobError::Locked) {
                 activity.fail(Job::SafetyNet, e.to_string());
@@ -317,25 +320,24 @@ impl SafetyNet {
     }
 
     fn report(&self, activity: &Reporter<'_>) {
-        let found = self.found;
         if self.after.is_some() {
             activity.progress(
                 Job::SafetyNet,
-                format!("checking stored hashes, {} queued so far", count(found as u64)),
+                format!("checking stored hashes, {} queued so far", count(self.found as u64)),
                 self.checked as u64,
                 None,
             );
             return;
         }
-        if found > 0 {
-            eprintln!("hush: safety-net scan queued {found} notes that no write had queued");
+        if self.found > 0 {
+            eprintln!("hush: safety-net scan queued {} notes that no write had queued", self.found);
         }
         activity.finish(
             Job::SafetyNet,
             format!(
                 "checked {} notes, queued {} that no write had queued",
                 count(self.checked as u64),
-                count(found as u64)
+                count(self.found as u64)
             ),
         );
     }
@@ -915,8 +917,7 @@ mod tests {
             pass(&session, g, &Lengths, &mut |_| {}).unwrap();
         }
         // A vector some code path wrote without its text's hash, and without queuing it.
-        let wrong = db::QueuedVector { id: ids[0], version: -2, hash: [0; 32], vector: vec![1.0, 0.0], partial: false };
-        session.with_vault(|v| v.write_queued_embeddings("lengths", &[wrong])).unwrap();
+        session.with_vault(|v| v.write_embeddings("lengths", &[(ids[0], [0; 32], vec![1.0, 0.0])])).unwrap();
 
         assert!(!between_passes(&session, g, poll, &mut net, &activity).unwrap(), "nothing queued: a page of the scan");
         assert!(net.after.is_some());
@@ -940,6 +941,7 @@ mod tests {
 
         session.lock();
         assert!(matches!(between_passes(&session, g, poll, &mut net, &activity), Err(JobError::Locked)));
-        assert!(matches!(net.advance(&session, g, 0, &activity), Err(JobError::Locked)));
+        net.after = Some(0);
+        assert!(matches!(net.advance(&session, g, &activity), Err(JobError::Locked)));
     }
 }
