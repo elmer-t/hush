@@ -134,6 +134,164 @@ pub type Result<T> = std::result::Result<T, CommandError>;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::io;
+
+    /// The position of each `CommandError` variant in `command_errors`. No wildcard arm:
+    /// adding a variant stops compiling here, so its `kind` gets a row too.
+    fn command_slot(e: &CommandError) -> usize {
+        match e {
+            CommandError::Session(_) => 0,
+            CommandError::Config(_) => 1,
+            CommandError::ImportSource(_) => 2,
+            CommandError::ImportRunning => 3,
+            CommandError::StaleGroups => 4,
+            CommandError::UnknownModel(_) => 5,
+            CommandError::ModelUnavailable(_) => 6,
+            CommandError::ModelFiles(_) => 7,
+            CommandError::Notices(_) => 8,
+        }
+    }
+
+    fn command_errors() -> Vec<(CommandError, &'static str)> {
+        let io = || io::Error::other("x");
+        vec![
+            (SessionError::Locked.into(), "locked"),
+            (CommandError::Config(io()), "config"),
+            (CommandError::ImportSource(io()), "importSource"),
+            (CommandError::ImportRunning, "importRunning"),
+            (CommandError::StaleGroups, "staleGroups"),
+            (CommandError::UnknownModel("m".into()), "unknownModel"),
+            (CommandError::ModelUnavailable("m".into()), "modelUnavailable"),
+            (CommandError::ModelFiles("m".into()), "modelFiles"),
+            (CommandError::Notices("m".into()), "notices"),
+        ]
+    }
+
+    /// Same for `SessionError`; the `Db` variant is covered by `db_slot`.
+    fn session_slot(e: &SessionError) -> usize {
+        match e {
+            SessionError::Locked => 0,
+            SessionError::InvalidAutoLock => 1,
+            SessionError::Compacting => 2,
+            SessionError::Db(_) => 3,
+        }
+    }
+
+    fn session_errors() -> Vec<(SessionError, &'static str)> {
+        vec![
+            (SessionError::Locked, "locked"),
+            (SessionError::InvalidAutoLock, "invalidAutoLock"),
+            (SessionError::Compacting, "compacting"),
+            (SessionError::Db(db::Error::VaultInUse), "vaultInUse"),
+        ]
+    }
+
+    /// Same for `db::Error`.
+    fn db_slot(e: &db::Error) -> usize {
+        use db::Error as D;
+        match e {
+            D::WrongPassphrase => 0,
+            D::EmptyPassphrase => 1,
+            D::PassphraseTooShort => 2,
+            D::VaultNotFound => 3,
+            D::VaultExists => 4,
+            D::VaultInUse => 5,
+            D::Lock(_) => 6,
+            D::UnsupportedVersion => 7,
+            D::InvalidTitle(_) => 8,
+            D::TitleTaken => 9,
+            D::NoteNotFound => 10,
+            D::MoveClash(_) => 11,
+            D::InvalidFolderMove(_) => 12,
+            D::InvalidFolder(_) => 13,
+            D::InvalidTag(_) => 14,
+            D::InvalidRule(_) => 15,
+            D::InvalidTrashDays => 16,
+            D::InvalidThreshold => 17,
+            D::InvalidRecentOpenedCount => 18,
+            D::InvalidRating => 19,
+            D::NotEnoughDiskSpace { .. } => 20,
+            D::DiskSpace(_) => 21,
+            D::UpgradeDiskFull => 22,
+            D::Sql(_) => 23,
+        }
+    }
+
+    fn db_errors() -> Vec<(db::Error, &'static str)> {
+        use db::Error as D;
+        let io = || io::Error::other("x");
+        vec![
+            (D::WrongPassphrase, "wrongPassphrase"),
+            (D::EmptyPassphrase, "emptyPassphrase"),
+            (D::PassphraseTooShort, "passphraseTooShort"),
+            (D::VaultNotFound, "vaultNotFound"),
+            (D::VaultExists, "vaultExists"),
+            (D::VaultInUse, "vaultInUse"),
+            (D::Lock(io()), "vaultLock"),
+            (D::UnsupportedVersion, "unsupportedVersion"),
+            (D::InvalidTitle("t".into()), "invalidTitle"),
+            (D::TitleTaken, "titleTaken"),
+            (D::NoteNotFound, "noteNotFound"),
+            (D::MoveClash(vec!["a".into()]), "moveClash"),
+            (D::InvalidFolderMove("m".into()), "invalidFolderMove"),
+            (D::InvalidFolder("m".into()), "invalidFolder"),
+            (D::InvalidTag("t".into()), "invalidTag"),
+            (D::InvalidRule("r".into()), "invalidRule"),
+            (D::InvalidTrashDays, "invalidTrashDays"),
+            (D::InvalidThreshold, "invalidThreshold"),
+            (D::InvalidRecentOpenedCount, "invalidRecentOpenedCount"),
+            (D::InvalidRating, "invalidRating"),
+            (D::NotEnoughDiskSpace { needed: 2, available: 1 }, "notEnoughDiskSpace"),
+            (D::DiskSpace(io()), "diskSpace"),
+            (D::UpgradeDiskFull, "upgradeDiskFull"),
+            (D::Sql(rusqlite::Error::InvalidQuery), "database"),
+        ]
+    }
+
+    /// Row `i` of the list is the variant `slot` maps to `i`: nothing missing, nothing twice.
+    fn assert_every_slot<T>(rows: &[(T, &str)], slot: impl Fn(&T) -> usize) {
+        let slots: Vec<usize> = rows.iter().map(|(e, _)| slot(e)).collect();
+        assert_eq!(slots, (0..rows.len()).collect::<Vec<_>>());
+    }
+
+    fn kind_of(e: CommandError) -> String {
+        serde_json::to_value(&e).unwrap()["kind"].as_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn every_command_error_serializes_its_kind() {
+        let rows = command_errors();
+        assert_every_slot(&rows, command_slot);
+        for (e, kind) in rows {
+            assert_eq!(kind_of(e), kind);
+        }
+    }
+
+    #[test]
+    fn every_session_error_serializes_its_kind() {
+        let rows = session_errors();
+        assert_every_slot(&rows, session_slot);
+        for (e, kind) in rows {
+            assert_eq!(kind_of(e.into()), kind);
+        }
+    }
+
+    #[test]
+    fn every_db_error_serializes_its_kind() {
+        let rows = db_errors();
+        assert_every_slot(&rows, db_slot);
+        for (e, kind) in rows {
+            assert_eq!(kind_of(e.into()), kind);
+        }
+    }
+
+    #[test]
+    fn the_serialized_error_carries_the_message() {
+        let v = serde_json::to_value(CommandError::ImportRunning).unwrap();
+        assert_eq!(v["message"], "an import is already running");
+    }
+
     /// Every command module, as compiled.
     const SOURCES: &[(&str, &str)] = &[
         ("about", include_str!("about.rs")),
