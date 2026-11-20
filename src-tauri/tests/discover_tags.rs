@@ -509,3 +509,63 @@ fn fixture_vault_journal_and_dream_notes_group_together() {
     println!("\njournal notes: {jn} of {} in group {}; dream notes: {dn} of {} in group {}", journal.len(), jg + 1, dream.len(), dg + 1);
     assert!(jn * 2 > journal.len() && dn * 2 > dream.len());
 }
+
+/// Every step checks for a stop, so a run cancelled after any number of checks, up to the
+/// run's own count, ends as cancelled, and one that is not cancelled ends fine.
+#[test]
+fn every_step_stops_when_cancelled() {
+    let (_dir, session, generation) = session();
+    many_themed_notes(&session, 10);
+    let options = Options { groups: Some(3), scope: Scope::All };
+    let mut finished = None;
+    for allowed in 0..500 {
+        let calls = std::cell::Cell::new(0);
+        let cancelled = || {
+            calls.set(calls.get() + 1);
+            calls.get() > allowed
+        };
+        match discover::run_sampled(&session, generation, &options, 12, &cancelled) {
+            Err(DiscoverError::Cancelled) => {}
+            Ok(d) => {
+                assert_eq!((d.notes, d.sampled), (30, 12));
+                finished = Some(allowed);
+                break;
+            }
+            Err(e) => panic!("cancelled after {allowed} checks: {e}"),
+        }
+    }
+    // The scope, sample, assign, word and group steps each check at least once.
+    assert!(finished.unwrap() >= 5, "{finished:?}");
+}
+
+#[test]
+fn a_lock_during_the_run_stops_it() {
+    let (_dir, session, generation) = session();
+    many_themed_notes(&session, 10);
+    let options = Options { groups: Some(3), scope: Scope::All };
+    let calls = std::cell::Cell::new(0);
+    let lock_on_third_check = || {
+        calls.set(calls.get() + 1);
+        if calls.get() == 3 {
+            session.lock();
+        }
+        false
+    };
+    let result = discover::run_sampled(&session, generation, &options, 12, &lock_on_third_check);
+    assert!(matches!(result, Err(DiscoverError::Locked)));
+}
+
+#[test]
+fn a_vector_of_another_length_is_left_out() {
+    let (_dir, session, generation) = session();
+    let themes = themed_notes(&session);
+    let stray = themes[2][2];
+    session.with_vault(|v| {
+        set_vector(v, MODEL, stray, &[1.0, 0.0, 0.0]);
+        Ok(())
+    })
+    .unwrap();
+    let d = run(&session, generation, Options { groups: Some(3), scope: Scope::All });
+    assert_eq!((d.notes, d.sampled), (8, 8));
+    assert!(!d.groups.iter().any(|g| g.members.contains(&stray)));
+}

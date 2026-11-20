@@ -163,6 +163,40 @@ pub fn run(
     run_sampled(session, generation, options, SAMPLE_SIZE, cancelled)
 }
 
+/// What a run needs to stop early: the cancel flag and whether its vault is still open.
+struct Run<'a> {
+    session: &'a Session,
+    generation: u64,
+    cancelled: &'a dyn Fn() -> bool,
+}
+
+impl Run<'_> {
+    fn stop(&self) -> bool {
+        (self.cancelled)() || !self.session.is_open(self.generation)
+    }
+
+    fn check(&self) -> Result<(), DiscoverError> {
+        if !self.session.is_open(self.generation) {
+            Err(DiscoverError::Locked)
+        } else if (self.cancelled)() {
+            Err(DiscoverError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn vault<T>(&self, f: impl FnOnce(&mut crate::db::Vault) -> db::Result<T>) -> Result<T, DiscoverError> {
+        Ok(self.session.with_vault_quiet(self.generation, f)?)
+    }
+}
+
+/// The sample's normalised vectors, `dims` floats each, in the order of `ids`.
+struct Sampled {
+    ids: Vec<i64>,
+    points: Vec<f32>,
+    dims: usize,
+}
+
 /// [`run`] with a sample of `sample_size` instead of [`SAMPLE_SIZE`], so tests can
 /// sample a small vault.
 #[doc(hidden)]
@@ -173,131 +207,166 @@ pub fn run_sampled(
     sample_size: usize,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Discovery, DiscoverError> {
-    let stop = || cancelled() || !session.is_open(generation);
-    let check = || -> Result<(), DiscoverError> {
-        if !session.is_open(generation) {
-            Err(DiscoverError::Locked)
-        } else if cancelled() {
-            Err(DiscoverError::Cancelled)
-        } else {
-            Ok(())
-        }
-    };
+    let run = Run { session, generation, cancelled };
 
-    let Some(model) = session.with_vault_quiet(generation, |v| v.embedding_model_ready())? else {
+    let Some(model) = run.vault(|v| v.embedding_model_ready())? else {
         return Ok(Discovery { model: None, notes: 0, sampled: 0, k: 0, groups: Vec::new() });
     };
 
-    // The notes in scope, ids only.
-    let mut scope: Vec<i64> = Vec::new();
-    let mut cursor = ScopeCursor::default();
-    loop {
-        check()?;
-        let (page, next) = session.with_vault_quiet(generation, |v| v.discover_scope(&options.scope, &cursor, SCOPE_PAGE))?;
-        scope.extend(page);
-        match next {
-            Some(c) => cursor = c,
-            None => break,
-        }
-    }
-    scope.sort_unstable();
-    scope.dedup();
-
-    // The sample's vectors, in pages. Every vector is normalised again, so cosine is a
-    // dot product, and one of another length (a stray row) is left out.
+    let scope = scope_ids(&run, &options.scope, SCOPE_PAGE)?;
     let chosen = sample(&scope, sample_size, SEED);
-    let mut sampled: Vec<i64> = Vec::with_capacity(chosen.len());
-    let mut points: Vec<f32> = Vec::new();
-    let mut dims = 0;
-    for page in chosen.chunks(PAGE as usize) {
-        check()?;
-        for (id, mut vector) in session.with_vault_quiet(generation, |v| v.discover_vectors(&model, page))? {
-            if dims == 0 {
-                dims = vector.len();
-            }
-            if vector.len() != dims || dims == 0 {
-                continue;
-            }
-            crate::embed::normalize(&mut vector);
-            points.extend_from_slice(&vector);
-            sampled.push(id);
-        }
-    }
+    let Sampled { ids: sampled, points, dims } = sample_vectors(&run, &model, &chosen)?;
 
     let n = sampled.len();
     if n == 0 {
         return Ok(Discovery { model: Some(model), notes: 0, sampled: 0, k: 0, groups: Vec::new() });
     }
     let k = options.groups.map_or_else(|| default_groups(n), |g| g.clamp(1, MAX_GROUPS).min(n));
-    let clusters = kmeans::kmeans(&points, dims, k, SEED, &stop).ok_or_else(|| check().err().unwrap_or(DiscoverError::Cancelled))?;
+    let clusters =
+        kmeans::kmeans(&points, dims, k, SEED, &|| run.stop()).ok_or_else(|| run.check().err().unwrap_or(DiscoverError::Cancelled))?;
 
+    let mut filling = fill_sampled(&sampled, points, dims, &clusters, k);
+    let mut notes = n;
+    if scope.len() > chosen.len() {
+        notes += assign_rest(&run, &model, &scope, &chosen, dims, &clusters.centroids, &mut filling)?;
+    }
+    drop(scope);
+
+    let counts = count_words(&run, &sampled, &clusters.assignments, k)?;
+    let top = words::distinctive(&counts, WORDS_PER_GROUP);
+    drop(counts);
+
+    let groups = build_groups(&run, filling, top)?;
+    Ok(Discovery { model: Some(model), notes, sampled: n, k, groups })
+}
+
+/// The notes in scope, ids only, sorted, read a page at a time.
+fn scope_ids(run: &Run, scope: &Scope, page_size: u32) -> Result<Vec<i64>, DiscoverError> {
+    let mut ids: Vec<i64> = Vec::new();
+    let mut cursor = ScopeCursor::default();
+    loop {
+        run.check()?;
+        let (page, next) = run.vault(|v| v.discover_scope(scope, &cursor, page_size))?;
+        ids.extend(page);
+        match next {
+            Some(c) => cursor = c,
+            None => break,
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// The sample's vectors, in pages. Every vector is normalised again, so cosine is a
+/// dot product, and one of another length (a stray row) is left out.
+fn sample_vectors(run: &Run, model: &str, chosen: &[i64]) -> Result<Sampled, DiscoverError> {
+    let mut sampled = Sampled { ids: Vec::with_capacity(chosen.len()), points: Vec::new(), dims: 0 };
+    for page in chosen.chunks(PAGE as usize) {
+        run.check()?;
+        for (id, mut vector) in run.vault(|v| v.discover_vectors(model, page))? {
+            if sampled.dims == 0 {
+                sampled.dims = vector.len();
+            }
+            if vector.len() != sampled.dims || sampled.dims == 0 {
+                continue;
+            }
+            crate::embed::normalize(&mut vector);
+            sampled.points.extend_from_slice(&vector);
+            sampled.ids.push(id);
+        }
+    }
+    Ok(sampled)
+}
+
+/// The sampled notes, each in the group k-means put it in.
+fn fill_sampled(sampled: &[i64], points: Vec<f32>, dims: usize, clusters: &kmeans::Clusters, k: usize) -> Vec<Filling> {
     let mut filling: Vec<Filling> = (0..k).map(|_| Filling::default()).collect();
     for (i, &g) in clusters.assignments.iter().enumerate() {
         let centre = &clusters.centroids[g * dims..(g + 1) * dims];
         filling[g].add(sampled[i], kmeans::dot(&points[i * dims..(i + 1) * dims], centre));
     }
-    drop(points);
+    filling
+}
 
-    // Every other note in scope joins its nearest centre, in one pass over the stored
-    // vectors (front to back, which beats looking each note up); only ids are kept.
-    let mut notes = n;
-    if scope.len() > chosen.len() {
-        let mut after = 0;
-        loop {
-            check()?;
-            let (page, next) = session.with_vault_quiet(generation, |v| v.discover_vector_page(&model, after, VECTOR_PAGE))?;
-            let mut ids = Vec::with_capacity(page.len());
-            let mut batch = Vec::with_capacity(page.len() * dims);
-            for (id, mut vector) in page {
-                if vector.len() != dims || scope.binary_search(&id).is_err() || chosen.binary_search(&id).is_ok() {
-                    continue;
-                }
-                crate::embed::normalize(&mut vector);
-                batch.extend_from_slice(&vector);
-                ids.push(id);
-            }
-            if !ids.is_empty() {
-                let (groups, scores) = kmeans::assign(&batch, dims, &clusters.centroids);
-                for ((id, g), score) in ids.into_iter().zip(groups).zip(scores) {
-                    filling[g].add(id, score);
-                    notes += 1;
-                }
-            }
-            match next {
-                Some(a) => after = a,
-                None => break,
+/// From a page of stored vectors, the ids and normalised vectors of the notes that are
+/// in `scope`, were not sampled and have `dims` floats.
+fn unsampled_vectors(page: Vec<(i64, Vec<f32>)>, dims: usize, scope: &[i64], chosen: &[i64]) -> (Vec<i64>, Vec<f32>) {
+    let mut ids = Vec::with_capacity(page.len());
+    let mut batch = Vec::with_capacity(page.len() * dims);
+    for (id, mut vector) in page {
+        if vector.len() != dims || scope.binary_search(&id).is_err() || chosen.binary_search(&id).is_ok() {
+            continue;
+        }
+        crate::embed::normalize(&mut vector);
+        batch.extend_from_slice(&vector);
+        ids.push(id);
+    }
+    (ids, batch)
+}
+
+/// Every other note in scope joins its nearest centre, in one pass over the stored
+/// vectors (front to back, which beats looking each note up); only ids are kept.
+/// Returns how many notes joined.
+fn assign_rest(
+    run: &Run,
+    model: &str,
+    scope: &[i64],
+    chosen: &[i64],
+    dims: usize,
+    centroids: &[f32],
+    filling: &mut [Filling],
+) -> Result<usize, DiscoverError> {
+    let mut joined = 0;
+    let mut after = 0;
+    loop {
+        run.check()?;
+        let (page, next) = run.vault(|v| v.discover_vector_page(model, after, VECTOR_PAGE))?;
+        let (ids, batch) = unsampled_vectors(page, dims, scope, chosen);
+        if !ids.is_empty() {
+            let (groups, scores) = kmeans::assign(&batch, dims, centroids);
+            for ((id, g), score) in ids.into_iter().zip(groups).zip(scores) {
+                filling[g].add(id, score);
+                joined += 1;
             }
         }
+        match next {
+            Some(a) => after = a,
+            None => break,
+        }
     }
-    drop(scope);
+    Ok(joined)
+}
 
-    // Word counts per group from the sampled notes' title and body without frontmatter
-    // (what was embedded), read a page at a time; the texts are dropped once counted.
-    let group_of: std::collections::HashMap<i64, usize> =
-        sampled.iter().zip(&clusters.assignments).map(|(&id, &g)| (id, g)).collect();
+/// Word counts per group from the sampled notes' title and body without frontmatter
+/// (what was embedded), read a page at a time; the texts are dropped once counted.
+fn count_words(run: &Run, sampled: &[i64], assignments: &[usize], k: usize) -> Result<Vec<words::GroupWords>, DiscoverError> {
+    let group_of: std::collections::HashMap<i64, usize> = sampled.iter().zip(assignments).map(|(&id, &g)| (id, g)).collect();
     let mut counts = vec![words::GroupWords::default(); k];
     for page in sampled.chunks(PAGE as usize) {
-        check()?;
-        let texts = session.with_vault_quiet(generation, |v| v.embedding_texts(page))?;
+        run.check()?;
+        let texts = run.vault(|v| v.embedding_texts(page))?;
         for note in &texts {
             if let Some(&g) = group_of.get(&note.id) {
                 counts[g].add_note(&note.text);
             }
         }
     }
-    check()?;
-    let top = words::distinctive(&counts, WORDS_PER_GROUP);
-    drop(counts);
+    run.check()?;
+    Ok(counts)
+}
 
-    let mut groups = Vec::with_capacity(k);
+/// The non-empty groups with their distinctive words, largest first.
+fn build_groups(run: &Run, filling: Vec<Filling>, top: Vec<Vec<String>>) -> Result<Vec<Group>, DiscoverError> {
+    let mut groups = Vec::with_capacity(filling.len());
     for (mut f, words) in filling.into_iter().zip(top) {
         if f.members.is_empty() {
             continue;
         }
-        check()?;
+        run.check()?;
         f.trim();
         let ids: Vec<i64> = f.nearest.iter().map(|n| n.1).collect();
-        let titles = session.with_vault_quiet(generation, |v| v.discover_titles(&ids))?;
+        let titles = run.vault(|v| v.discover_titles(&ids))?;
         let notes = f
             .nearest
             .iter()
@@ -310,7 +379,7 @@ pub fn run_sampled(
         groups.push(Group { words, size: f.members.len(), notes, members: f.members });
     }
     groups.sort_by(|a: &Group, b: &Group| b.size.cmp(&a.size).then(a.members[0].cmp(&b.members[0])));
-    Ok(Discovery { model: Some(model), notes, sampled: n, k, groups })
+    Ok(groups)
 }
 
 #[cfg(test)]
