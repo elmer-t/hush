@@ -1,4 +1,4 @@
-//! The background job that keeps every tag's head up to date. It runs a pass on unlock,
+﻿//! The background job that keeps every tag's head up to date. It runs a pass on unlock,
 //! then again whenever the vault has changed and been quiet for a while (30 s in the
 //! app), so an import or a burst of edits trains once; it doesn't start while an import
 //! runs or notes are queued for embedding. Same rules as the embedding job: it reaches the vault only through
@@ -21,7 +21,7 @@ use super::{
     Config, Example, FOLDS, Head, MIN_NEGATIVES, MIN_POSITIVES, REJECTED_WEIGHT, TRAINING_VERSION, UNTAGGED_WEIGHT,
     balance, cross_validate, seed_for, train,
 };
-use crate::activity::{Job, count, duration_text};
+use crate::activity::{Job, Reporter, count, duration_text};
 use crate::db::{self, StoredHead, new_stored_head};
 use crate::embed::job::sleep_while_open;
 use crate::session::{Session, SessionError};
@@ -114,18 +114,8 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
         }
         if changed_at.is_some_and(|t| t.elapsed() >= quiet) {
             changed_at = None;
-            match pass(session, generation) {
-                Ok(p) => {
-                    if !p.trained.is_empty() || p.dropped > 0 {
-                        report(&p);
-                    }
-                }
-                Err(TrainError::Locked) => return,
-                // Not fatal: suggestions fall back to descriptions; the next change retries.
-                Err(e) => {
-                    eprintln!("hush: tag training failed: {e}");
-                    activity.fail(Job::Training, e.to_string());
-                }
+            if !finish_pass(&activity, pass(session, generation), &report) {
+                return;
             }
             // Its own writes aren't a reason to train again.
             match session.with_vault_quiet(generation, |v| Ok(v.change_count())) {
@@ -135,6 +125,76 @@ pub fn run(session: &Session, generation: u64, poll: Duration, quiet: Duration, 
         }
         if !sleep_while_open(session, generation, poll) {
             return;
+        }
+    }
+}
+
+/// Reports a finished pass. `false` once the vault is locked and the job should stop.
+fn finish_pass(activity: &Reporter, result: Result<TrainPass, TrainError>, report: &impl Fn(&TrainPass)) -> bool {
+    match result {
+        Ok(p) => {
+            if !p.trained.is_empty() || p.dropped > 0 {
+                report(&p);
+            }
+        }
+        Err(TrainError::Locked) => return false,
+        // Not fatal: suggestions fall back to descriptions; the next change retries.
+        Err(e) => {
+            eprintln!("hush: tag training failed: {e}");
+            activity.fail(Job::Training, e.to_string());
+        }
+    }
+    true
+}
+
+/// The ids and content hashes of every note with a `model` vector, in id order, `page`
+/// at a time, and the hash over them that [`plan_heads`] takes.
+fn read_hashes(session: &Session, generation: u64, model: &str, page: u32) -> Result<(Vec<i64>, Sha256), TrainError> {
+    let activity = session.activity().reporter(generation);
+    let mut ids: Vec<i64> = Vec::new();
+    let mut corpus = corpus_hasher(model);
+    let mut after = 0;
+    loop {
+        let (rows, next) = session.with_vault_quiet(generation, |v| v.training_hashes(model, after, page))?;
+        for (id, hash) in rows {
+            corpus.update(id.to_le_bytes());
+            corpus.update(hash);
+            ids.push(id);
+        }
+        activity.progress(Job::Training, "checking note vectors", ids.len() as u64, None);
+        match next {
+            Some(n) => after = n,
+            None => return Ok((ids, corpus)),
+        }
+    }
+}
+
+type Vectors = Vec<Zeroizing<Vec<f32>>>;
+
+/// [`read_hashes`] with the vectors (1.5 KB per note), in the same order.
+fn read_vectors(
+    session: &Session,
+    generation: u64,
+    model: &str,
+    page: u32,
+) -> Result<(Vec<i64>, Sha256, Vectors), TrainError> {
+    let activity = session.activity().reporter(generation);
+    let mut ids: Vec<i64> = Vec::new();
+    let mut corpus = corpus_hasher(model);
+    let mut vectors = Vectors::new();
+    let mut after = 0;
+    loop {
+        let rows = session.with_vault_quiet(generation, |v| v.training_vectors(model, after, page))?;
+        for (id, hash, vector) in rows.vectors {
+            corpus.update(id.to_le_bytes());
+            corpus.update(hash);
+            ids.push(id);
+            vectors.push(vector);
+        }
+        activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
+        match rows.next {
+            Some(next) => after = next,
+            None => return Ok((ids, corpus, vectors)),
         }
     }
 }
@@ -205,43 +265,13 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
     // that is read first; the vectors (1.5 KB per note) are only loaded when a head
     // needs training. Most passes on unlock find every head current.
     activity.start(Job::Training, "checking note vectors");
-    let mut ids: Vec<i64> = Vec::new();
-    let mut corpus = corpus_hasher(&model);
-    let mut after = 0;
-    loop {
-        let (page, next) = session.with_vault_quiet(generation, |v| v.training_hashes(&model, after, PAGE))?;
-        for (id, hash) in page {
-            corpus.update(id.to_le_bytes());
-            corpus.update(hash);
-            ids.push(id);
-        }
-        activity.progress(Job::Training, "checking note vectors", ids.len() as u64, None);
-        match next {
-            Some(n) => after = n,
-            None => break,
-        }
-    }
+    let (mut ids, corpus) = read_hashes(session, generation, &model, PAGE)?;
     let mut plan = plan_heads(&labels, &heads, &model, &ids, corpus.finalize().into());
     let mut vectors: Vec<Zeroizing<Vec<f32>>> = Vec::new();
     if !plan.stale.is_empty() {
         activity.start(Job::Training, "reading note vectors");
-        ids.clear();
-        let mut corpus = corpus_hasher(&model);
-        let mut after = 0;
-        loop {
-            let page = session.with_vault_quiet(generation, |v| v.training_vectors(&model, after, PAGE))?;
-            for (id, hash, vector) in page.vectors {
-                corpus.update(id.to_le_bytes());
-                corpus.update(hash);
-                ids.push(id);
-                vectors.push(vector);
-            }
-            activity.progress(Job::Training, "reading note vectors", ids.len() as u64, None);
-            match page.next {
-                Some(next) => after = next,
-                None => break,
-            }
-        }
+        let corpus;
+        (ids, corpus, vectors) = read_vectors(session, generation, &model, PAGE)?;
         // Planned again: notes may have changed since the check.
         plan = plan_heads(&labels, &heads, &model, &ids, corpus.finalize().into());
     }
@@ -312,4 +342,86 @@ pub fn pass(session: &Session, generation: u64) -> Result<TrainPass, TrainError>
         activity.finish(Job::Training, summary);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::activity::State;
+    use crate::db::Vault;
+
+    const MODEL: &str = "fake-4";
+
+    /// An unlocked vault with `n` notes, each with a vector of its own.
+    fn indexed(n: usize) -> (tempfile::TempDir, Session, u64, Vec<i64>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.hush");
+        let session = Session::default();
+        let generation = session.unlock(Vault::create(&path, "job test passphrase").unwrap(), path).unwrap();
+        let ids: Vec<i64> =
+            (0..n).map(|i| session.with_vault(|v| v.create_note("", &format!("n{i}"), "body")).unwrap()).collect();
+        let rows: Vec<(i64, [u8; 32], Vec<f32>)> =
+            ids.iter().map(|id| (*id, [*id as u8; 32], vec![*id as f32, 1.0, 0.0, 0.0])).collect();
+        session.with_vault(|v| v.write_embeddings(MODEL, &rows)).unwrap();
+        (dir, session, generation, ids)
+    }
+
+    #[test]
+    fn hashes_are_read_across_pages() {
+        let (_dir, session, g, ids) = indexed(5);
+        let (one, corpus_one) = read_hashes(&session, g, MODEL, 500).unwrap();
+        let (paged, corpus_paged) = read_hashes(&session, g, MODEL, 2).unwrap();
+        assert_eq!(one, ids);
+        assert_eq!(paged, ids);
+        assert_eq!(corpus_one.finalize(), corpus_paged.finalize());
+        // A page that exactly fits the notes ends on an empty one.
+        assert_eq!(read_hashes(&session, g, MODEL, 5).unwrap().0, ids);
+        assert!(read_hashes(&session, g, "other", 2).unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn vectors_are_read_across_pages_with_the_same_corpus_as_the_hashes() {
+        let (_dir, session, g, ids) = indexed(5);
+        let (found, corpus, vectors) = read_vectors(&session, g, MODEL, 2).unwrap();
+        assert_eq!(found, ids);
+        assert_eq!(vectors.len(), 5);
+        assert_eq!(vectors[3].as_slice(), [ids[3] as f32, 1.0, 0.0, 0.0]);
+        let (_, hashed) = read_hashes(&session, g, MODEL, 2).unwrap();
+        assert_eq!(corpus.finalize(), hashed.finalize());
+    }
+
+    #[test]
+    fn reading_stops_with_locked_when_the_vault_locks() {
+        let (_dir, session, g, _) = indexed(1);
+        session.lock();
+        assert!(matches!(read_hashes(&session, g, MODEL, 2), Err(TrainError::Locked)));
+        assert!(matches!(read_vectors(&session, g, MODEL, 2), Err(TrainError::Locked)));
+    }
+
+    #[test]
+    fn a_finished_pass_is_reported_only_when_it_changed_a_head() {
+        let (_dir, session, g, _) = indexed(0);
+        let activity = session.activity().reporter(g);
+        let reported = Cell::new(0);
+        let report = |_: &TrainPass| reported.set(reported.get() + 1);
+        assert!(finish_pass(&activity, Ok(TrainPass::default()), &report));
+        assert_eq!(reported.get(), 0);
+        assert!(finish_pass(&activity, Ok(TrainPass { dropped: 1, ..TrainPass::default() }), &report));
+        assert!(finish_pass(&activity, Ok(TrainPass { trained: vec!["a".into()], ..TrainPass::default() }), &report));
+        assert_eq!(reported.get(), 2);
+    }
+
+    #[test]
+    fn a_locked_pass_stops_the_job_and_a_failed_one_does_not() {
+        let (_dir, session, g, _) = indexed(0);
+        let activity = session.activity().reporter(g);
+        let report = |_: &TrainPass| panic!("nothing changed");
+        assert!(!finish_pass(&activity, Err(TrainError::Locked), &report));
+        assert!(finish_pass(&activity, Err(TrainError::Db(db::Error::VaultNotFound)), &report));
+        let status = session.activity().status(Job::Training);
+        assert_eq!(status.state, State::Failed);
+        assert_eq!(status.reason.as_deref(), Some("vault file not found"));
+    }
 }
