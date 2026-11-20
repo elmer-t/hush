@@ -169,17 +169,19 @@ fn read_hashes(session: &Session, generation: u64, model: &str, page: u32) -> Re
     }
 }
 
+type Vectors = Vec<Zeroizing<Vec<f32>>>;
+
 /// [`read_hashes`] with the vectors (1.5 KB per note), in the same order.
 fn read_vectors(
     session: &Session,
     generation: u64,
     model: &str,
     page: u32,
-) -> Result<(Vec<i64>, Sha256, Vec<Zeroizing<Vec<f32>>>), TrainError> {
+) -> Result<(Vec<i64>, Sha256, Vectors), TrainError> {
     let activity = session.activity().reporter(generation);
     let mut ids: Vec<i64> = Vec::new();
     let mut corpus = corpus_hasher(model);
-    let mut vectors: Vec<Zeroizing<Vec<f32>>> = Vec::new();
+    let mut vectors = Vectors::new();
     let mut after = 0;
     loop {
         let rows = session.with_vault_quiet(generation, |v| v.training_vectors(model, after, page))?;
