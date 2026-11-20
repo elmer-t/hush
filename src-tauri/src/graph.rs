@@ -135,23 +135,7 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
         }
     };
 
-    // The local graph's centre gets its closest notes in meaning too, if there is room.
-    let mut meaning_unavailable = false;
-    let mut centre_meaning = Vec::new();
-    if let (GraphScope::Local { id, .. }, true) = (scope, options.meaning) {
-        match related::related_notes(session, *id, options.neighbours)? {
-            Some(notes) => {
-                for n in notes.into_iter().filter(|n| n.score >= options.threshold) {
-                    if !depths.contains_key(&n.note.id) && ids.len() < cap {
-                        depths.insert(n.note.id, 1);
-                        ids.push(n.note.id);
-                    }
-                    centre_meaning.push((n.note.id, n.score));
-                }
-            }
-            None => meaning_unavailable = true,
-        }
-    }
+    let (centre_meaning, mut meaning_unavailable) = add_centre_meaning(session, scope, options, cap, &mut ids, &mut depths)?;
 
     let mut summaries: Vec<NoteSummary> = Vec::with_capacity(ids.len());
     let mut links: Vec<(i64, LinkTarget)> = Vec::new();
@@ -182,6 +166,53 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
         })
         .collect();
     let mut edges = Vec::new();
+    add_link_edges(links, &present, options, cap, &mut nodes, &mut edges);
+    if options.tags {
+        add_tags(session, &tags, &present, options, &mut nodes, &mut edges)?;
+    }
+    if options.meaning && !meaning_unavailable {
+        meaning_unavailable = !add_meaning_edges(session, scope, &ids, &present, &centre_meaning, options, &mut edges)?;
+    }
+    Ok(Graph { nodes, edges, total, capped, meaning_unavailable })
+}
+
+/// The local graph's centre gets its closest notes in meaning too, if there is room.
+/// Returns those notes with their scores, and whether meaning is unavailable.
+fn add_centre_meaning(
+    session: &Session,
+    scope: &GraphScope,
+    options: &GraphOptions,
+    cap: usize,
+    ids: &mut Vec<i64>,
+    depths: &mut HashMap<i64, u8>,
+) -> Result<(Vec<(i64, f32)>, bool), SessionError> {
+    let mut centre_meaning = Vec::new();
+    if let (GraphScope::Local { id, .. }, true) = (scope, options.meaning) {
+        match related::related_notes(session, *id, options.neighbours)? {
+            Some(notes) => {
+                for n in notes.into_iter().filter(|n| n.score >= options.threshold) {
+                    if !depths.contains_key(&n.note.id) && ids.len() < cap {
+                        depths.insert(n.note.id, 1);
+                        ids.push(n.note.id);
+                    }
+                    centre_meaning.push((n.note.id, n.score));
+                }
+            }
+            None => return Ok((centre_meaning, true)),
+        }
+    }
+    Ok((centre_meaning, false))
+}
+
+/// Link edges between notes in view, and with `ghosts` the nodes of unresolved targets.
+fn add_link_edges(
+    links: Vec<(i64, LinkTarget)>,
+    present: &HashSet<i64>,
+    options: &GraphOptions,
+    cap: usize,
+    nodes: &mut Vec<GraphNode>,
+    edges: &mut Vec<GraphEdge>,
+) {
     let mut ghosts: BTreeMap<String, String> = BTreeMap::new();
     for (from, to) in links {
         match to {
@@ -209,71 +240,89 @@ pub fn build(session: &Session, scope: &GraphScope, options: &GraphOptions) -> R
             depth: None,
         });
     }
-    if options.tags {
-        // Notes in view per tag.
-        let mut in_view: BTreeMap<&str, usize> = BTreeMap::new();
-        for tag in tags.iter().filter(|(id, _)| present.contains(id)).flat_map(|(_, l)| l.iter()) {
-            *in_view.entry(tag).or_default() += 1;
+}
+
+/// Tag nodes, each joined to the notes in view that have it.
+fn add_tags(
+    session: &Session,
+    tags: &BTreeMap<i64, Vec<String>>,
+    present: &HashSet<i64>,
+    options: &GraphOptions,
+    nodes: &mut Vec<GraphNode>,
+    edges: &mut Vec<GraphEdge>,
+) -> Result<(), SessionError> {
+    // Notes in view per tag.
+    let mut in_view: BTreeMap<&str, usize> = BTreeMap::new();
+    for tag in tags.iter().filter(|(id, _)| present.contains(id)).flat_map(|(_, l)| l.iter()) {
+        *in_view.entry(tag).or_default() += 1;
+    }
+    let mut shown: BTreeSet<&str> = in_view.keys().copied().collect();
+    if !options.rare_tags {
+        // Only a tag on one note in view can be on one note in the vault.
+        let once: Vec<&str> = in_view.iter().filter(|(_, n)| **n == 1).map(|(t, _)| *t).collect();
+        let mut rare = Vec::new();
+        for page in once.chunks(PAGE) {
+            session.with_vault(|v| {
+                rare.extend(v.rare_tags(page)?);
+                Ok(())
+            })?;
         }
-        let mut shown: BTreeSet<&str> = in_view.keys().copied().collect();
-        if !options.rare_tags {
-            // Only a tag on one note in view can be on one note in the vault.
-            let once: Vec<&str> = in_view.iter().filter(|(_, n)| **n == 1).map(|(t, _)| *t).collect();
-            let mut rare = Vec::new();
-            for page in once.chunks(PAGE) {
-                session.with_vault(|v| {
-                    rare.extend(v.rare_tags(page)?);
-                    Ok(())
-                })?;
-            }
-            for tag in &rare {
-                shown.remove(tag.as_str());
-            }
-        }
-        for (id, list) in &tags {
-            if !present.contains(id) {
-                continue;
-            }
-            for tag in list.iter().filter(|t| shown.contains(t.as_str())) {
-                edges.push(GraphEdge { source: note_key(*id), target: format!("t:{tag}"), kind: EdgeKind::Tag, score: None });
-            }
-        }
-        for tag in shown {
-            nodes.push(GraphNode {
-                key: format!("t:{tag}"),
-                kind: NodeKind::Tag,
-                id: None,
-                label: format!("#{tag}"),
-                folder: String::new(),
-                topic: None,
-                tags: Vec::new(),
-                depth: None,
-            });
+        for tag in &rare {
+            shown.remove(tag.as_str());
         }
     }
-    if options.meaning && !meaning_unavailable {
-        match meaning_edges(session, &ids, options)? {
-            Some(mut pairs) => {
-                // The centre's own closest notes are already exact; keep them even if
-                // they are not in each other's top few.
-                if let GraphScope::Local { id, .. } = scope {
-                    for &(other, score) in &centre_meaning {
-                        if present.contains(&other) {
-                            pairs.insert((*id.min(&other), *id.max(&other)), score);
-                        }
-                    }
-                }
-                edges.extend(pairs.into_iter().map(|((a, b), score)| GraphEdge {
-                    source: note_key(a),
-                    target: note_key(b),
-                    kind: EdgeKind::Meaning,
-                    score: Some(score),
-                }));
-            }
-            None => meaning_unavailable = true,
+    for (id, list) in tags {
+        if !present.contains(id) {
+            continue;
+        }
+        for tag in list.iter().filter(|t| shown.contains(t.as_str())) {
+            edges.push(GraphEdge { source: note_key(*id), target: format!("t:{tag}"), kind: EdgeKind::Tag, score: None });
         }
     }
-    Ok(Graph { nodes, edges, total, capped, meaning_unavailable })
+    for tag in shown {
+        nodes.push(GraphNode {
+            key: format!("t:{tag}"),
+            kind: NodeKind::Tag,
+            id: None,
+            label: format!("#{tag}"),
+            folder: String::new(),
+            topic: None,
+            tags: Vec::new(),
+            depth: None,
+        });
+    }
+    Ok(())
+}
+
+/// Meaning edges between the notes in view. Returns false when no model is ready.
+fn add_meaning_edges(
+    session: &Session,
+    scope: &GraphScope,
+    ids: &[i64],
+    present: &HashSet<i64>,
+    centre_meaning: &[(i64, f32)],
+    options: &GraphOptions,
+    edges: &mut Vec<GraphEdge>,
+) -> Result<bool, SessionError> {
+    let Some(mut pairs) = meaning_edges(session, ids, options)? else {
+        return Ok(false);
+    };
+    // The centre's own closest notes are already exact; keep them even if
+    // they are not in each other's top few.
+    if let GraphScope::Local { id, .. } = scope {
+        for &(other, score) in centre_meaning {
+            if present.contains(&other) {
+                pairs.insert((*id.min(&other), *id.max(&other)), score);
+            }
+        }
+    }
+    edges.extend(pairs.into_iter().map(|((a, b), score)| GraphEdge {
+        source: note_key(a),
+        target: note_key(b),
+        kind: EdgeKind::Meaning,
+        score: Some(score),
+    }));
+    Ok(true)
 }
 
 type Scoped = (Vec<i64>, HashMap<i64, u8>, usize, bool);
