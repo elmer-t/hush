@@ -1,4 +1,4 @@
-﻿//! The background job that keeps every tag's head up to date. It runs a pass on unlock,
+//! The background job that keeps every tag's head up to date. It runs a pass on unlock,
 //! then again whenever the vault has changed and been quiet for a while (30 s in the
 //! app), so an import or a burst of edits trains once; it doesn't start while an import
 //! runs or notes are queued for embedding. Same rules as the embedding job: it reaches the vault only through
