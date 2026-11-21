@@ -1,7 +1,7 @@
 mod common;
 
 use common::PASS;
-use hush_lib::db::{Error, MIN_PASSPHRASE_CHARS, Vault};
+use hush_lib::db::{Error, MIN_PASSPHRASE_CHARS, Vault, lock_path};
 
 #[test]
 fn create_lock_unlock_roundtrip() {
@@ -27,11 +27,23 @@ fn no_plaintext_on_disk() {
     vault.create_note("", "Diary", "swordfish").unwrap();
 
     // Check the main file and the WAL while the vault is still open.
+    let lock = lock_path(&path);
+    let mut checked = Vec::new();
     for entry in std::fs::read_dir(dir.path()).unwrap() {
-        let bytes = std::fs::read(entry.unwrap().path()).unwrap();
-        assert!(!bytes.windows(9).any(|w| w == b"swordfish"));
-        assert!(!bytes.windows(5).any(|w| w == b"Diary"));
+        let file = entry.unwrap().path();
+        if file == lock {
+            // Held under an exclusive OS lock, which on Windows makes reading it fail.
+            // It is always empty, so its size is enough.
+            assert_eq!(std::fs::metadata(&file).unwrap().len(), 0);
+            continue;
+        }
+        let bytes = std::fs::read(&file).unwrap();
+        assert!(!bytes.windows(9).any(|w| w == b"swordfish"), "plaintext in {}", file.display());
+        assert!(!bytes.windows(5).any(|w| w == b"Diary"), "plaintext in {}", file.display());
+        checked.push(file);
     }
+    assert!(checked.contains(&path));
+    assert!(checked.contains(&dir.path().join("vault.hush-wal")));
     vault.close().unwrap();
 }
 
