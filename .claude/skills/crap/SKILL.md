@@ -34,14 +34,6 @@ cargo crap4rs --manifest-path src-tauri/Cargo.toml --threshold 16 > crap-report.
 - Exit status 2 means something scored above 16. That's the expected case here, not a failure. Status 1 is a real error (build or coverage failed).
 - To look at one area again without re-running the tests: `cargo crap4rs --manifest-path src-tauri/Cargo.toml --use-existing-coverage db import`.
 
-**Until #205 is fixed** (`no_plaintext_on_disk` fails on Windows), a plain run fails. Use this instead, which writes the report even when a test fails:
-
-```powershell
-cargo crap4rs --manifest-path src-tauri/Cargo.toml --threshold 16 -- --ignore-run-fail > crap-report.txt
-```
-
-Once #205 is closed, check whether the plain command works and remove this section.
-
 ## Reading the report
 
 - **Cov% 0.0**: compiled, never run by a test. Includes Tauri `#[tauri::command]` wrappers and code reached only by `#[ignore]`d tests (real model, GPU, benchmarks). Those don't run here, so their code shows as uncovered.
