@@ -1,4 +1,4 @@
-﻿//! Getting an optional model onto this computer: downloading it from the URL pinned in
+//! Getting an optional model onto this computer: downloading it from the URL pinned in
 //! its descriptor, or importing files the user already has. This is Hush's only network
 //! code (see `docs/decisions.md`, Optional models): it runs only when the user clicks
 //! Download, requests only the descriptor's URLs over HTTPS, and sends nothing but a

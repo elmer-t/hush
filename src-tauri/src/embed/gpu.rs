@@ -1,4 +1,4 @@
-﻿//! The GPUs Windows reports, so Settings can say which one a GPU model would use. The
+//! The GPUs Windows reports, so Settings can say which one a GPU model would use. The
 //! model itself runs through DirectML ([`super::onnx::Device::Gpu`]); this only reads
 //! adapter names and memory sizes through DXGI, and never touches note data.
 
