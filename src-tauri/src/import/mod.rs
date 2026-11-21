@@ -421,22 +421,12 @@ pub fn run(
     let target = markdown::normalize_folder(target);
     let existing_in_target =
         if target.is_empty() { 0 } else { on_vault(session, &vault_path, |v| v.count_in_folder(&target))? };
-    let mut report = ImportReport {
-        dry_run,
-        target: target.clone(),
-        existing_in_target,
-        files: total + scan.page_assets,
-        ..Default::default()
-    };
-    let mut folders: BTreeMap<String, usize> = BTreeMap::new();
-    let mut skipped = Skipped::default();
-    let mut unsupported: BTreeMap<String, usize> = BTreeMap::new();
+    let mut writer = Writer::new(session, &vault_path, target, dry_run, cancel);
+    writer.report.existing_in_target = existing_in_target;
+    writer.report.files = total + scan.page_assets;
     if scan.page_assets > 0 {
-        unsupported.insert(PAGE_ASSETS.into(), scan.page_assets);
+        writer.unsupported.insert(PAGE_ASSETS.into(), scan.page_assets);
     }
-    let mut imported_ids = Vec::new();
-    // (folder, title) of every note this import creates, lowercased, to keep them apart.
-    let mut planned: HashSet<(String, String)> = HashSet::new();
     progress(Progress { done: 0, total });
 
     if !dry_run {
@@ -449,129 +439,9 @@ pub fn run(
     let stop = AtomicBool::new(false);
     let stopped = || cancel.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed);
     let (ready, prepared) = mpsc::sync_channel(QUEUED_BATCHES);
-    let mut write_all = |prepared: mpsc::Receiver<Vec<Result<Prepared, PrepareError>>>| -> Result<(), ImportError> {
-        for (n, chunk) in scan.files.chunks(BATCH_SIZE).enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                report.cancelled = true;
-                break;
-            }
-            // The workers only stop early when cancelled.
-            let Ok(results) = prepared.recv() else {
-                report.cancelled = true;
-                break;
-            };
-            let mut batch = Vec::with_capacity(chunk.len());
-            for (rel, result) in chunk.iter().zip(results) {
-                match result {
-                    Ok(mut p) => {
-                        // After `prepare`, so the default topic stays the source-relative top folder.
-                        p.folder = target_folder(&target, &p.folder);
-                        give_unique_title(&mut p, &mut planned);
-                        batch.push(p);
-                    }
-                    Err(PrepareError::Unsupported) => {
-                        let ext = formats::extension(rel);
-                        let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
-                        *unsupported.entry(format).or_default() += 1;
-                    }
-                    Err(e) => skipped.push(false, FileMessage {
-                        path: rel.to_string_lossy().replace('\\', "/"),
-                        message: e.to_string(),
-                    }),
-                }
-            }
-
-            let outcomes: Vec<db::Result<i64>> = if dry_run {
-                on_vault(session, &vault_path, |v| {
-                    let mut outcomes = Vec::with_capacity(batch.len());
-                    for p in &batch {
-                        let taken = v.note_exists(&p.folder, &p.title)?;
-                        outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
-                    }
-                    Ok(outcomes)
-                })?
-            } else {
-                let notes: Vec<NewNote> = batch
-                    .iter()
-                    .map(|p| NewNote {
-                        folder: &p.folder,
-                        title: &p.title,
-                        body: &p.body,
-                        created_at: p.created_at,
-                        updated_at: p.updated_at,
-                    })
-                    .collect();
-                let mut outcomes = Vec::with_capacity(notes.len());
-                while outcomes.len() < notes.len() {
-                    if !outcomes.is_empty() {
-                        std::thread::sleep(WRITE_PAUSE);
-                        if cancel.load(Ordering::Relaxed) {
-                            report.cancelled = true;
-                            break;
-                        }
-                    }
-                    let rest = &notes[outcomes.len()..];
-                    outcomes.extend(on_vault(session, &vault_path, |v| v.import_notes_within(rest, INSERT_BUDGET))?);
-                }
-                outcomes
-            };
-
-            // Only the files written: a cancel can stop partway through a batch.
-            for p in &batch[..outcomes.len()] {
-                for w in &p.warnings {
-                    report.warning_count += 1;
-                    if report.warnings.len() < MAX_REPORTED {
-                        report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
-                    }
-                }
-            }
-            for (p, outcome) in batch.iter().zip(outcomes) {
-                match outcome {
-                    Ok(id) => {
-                        report.imported += 1;
-                        *folders.entry(p.folder.clone()).or_default() += 1;
-                        imported_ids.push(id);
-                        if dry_run && report.samples.len() < SAMPLE_COUNT && p.body != p.original {
-                            report.samples.push(Sample {
-                                path: p.path.clone(),
-                                folder: p.folder.clone(),
-                                before: truncate(&p.original),
-                                after: truncate(&p.body),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        let exists = matches!(e, db::Error::TitleTaken);
-                        let message = match e {
-                            db::Error::TitleTaken => {
-                                report.already_exist += 1;
-                                let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
-                                format!("a note titled '{}' already exists in {folder}", p.title)
-                            }
-                            e => e.to_string(),
-                        };
-                        skipped.push(exists, FileMessage { path: p.path.clone(), message });
-                    }
-                }
-            }
-            if report.cancelled {
-                break;
-            }
-            progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
-        }
-        Ok(())
-    };
     let written = std::thread::scope(|s| {
-        s.spawn(|| {
-            let ready = ready;
-            for chunk in scan.files.chunks(BATCH_SIZE) {
-                let Some(results) = prepare_batch(source, chunk, &rules, threads, &stopped) else { break };
-                if ready.send(results).is_err() {
-                    break;
-                }
-            }
-        });
-        let written = write_all(prepared);
+        s.spawn(|| prepare_all(source, &scan.files, &rules, threads, &stopped, ready));
+        let written = writer.write_all(&scan.files, prepared, &mut progress);
         stop.store(true, Ordering::Relaxed);
         written
     });
@@ -581,15 +451,7 @@ pub fn run(
     }
     written?;
 
-    let mut unsupported: Vec<FormatCount> =
-        unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
-    unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
-    report.unsupported = unsupported;
-    report.skipped_count = skipped.count;
-    report.skipped = skipped.into_list();
-    report.folder_count = folders.len();
-    report.folders = largest_folders(folders);
-
+    let (mut report, imported_ids) = writer.finish();
     if !dry_run && !imported_ids.is_empty() {
         report.ambiguous_links = on_vault(session, &vault_path, |v| v.ambiguous_links(&imported_ids))?
             .into_iter()
@@ -597,6 +459,221 @@ pub fn run(
             .collect();
     }
     Ok(report)
+}
+
+/// What [`prepare_batch`] returns: one result per file, in file order.
+type PreparedBatch = Vec<Result<Prepared, PrepareError>>;
+
+/// Prepares `files` a batch at a time and sends each batch to `ready`, until `stopped`
+/// or the receiver is gone.
+fn prepare_all(
+    source: &Path,
+    files: &[PathBuf],
+    rules: &[CompiledRule],
+    threads: usize,
+    stopped: &(dyn Fn() -> bool + Sync),
+    ready: mpsc::SyncSender<PreparedBatch>,
+) {
+    for chunk in files.chunks(BATCH_SIZE) {
+        let Some(results) = prepare_batch(source, chunk, rules, threads, stopped) else { break };
+        if ready.send(results).is_err() {
+            break;
+        }
+    }
+}
+
+/// Writes the prepared batches of one import and builds its report.
+struct Writer<'a> {
+    session: &'a Session,
+    vault_path: &'a Path,
+    target: String,
+    dry_run: bool,
+    cancel: &'a AtomicBool,
+    report: ImportReport,
+    folders: BTreeMap<String, usize>,
+    skipped: Skipped,
+    unsupported: BTreeMap<String, usize>,
+    imported_ids: Vec<i64>,
+    /// (folder, title) of every note this import creates, lowercased, to keep them apart.
+    planned: HashSet<(String, String)>,
+}
+
+impl<'a> Writer<'a> {
+    fn new(session: &'a Session, vault_path: &'a Path, target: String, dry_run: bool, cancel: &'a AtomicBool) -> Self {
+        let report = ImportReport { dry_run, target: target.clone(), ..Default::default() };
+        Self {
+            session,
+            vault_path,
+            target,
+            dry_run,
+            cancel,
+            report,
+            folders: BTreeMap::new(),
+            skipped: Skipped::default(),
+            unsupported: BTreeMap::new(),
+            imported_ids: Vec::new(),
+            planned: HashSet::new(),
+        }
+    }
+
+    /// Writes `files` batch by batch as the workers deliver them, until done or cancelled.
+    fn write_all(
+        &mut self,
+        files: &[PathBuf],
+        prepared: mpsc::Receiver<PreparedBatch>,
+        progress: &mut impl FnMut(Progress),
+    ) -> Result<(), ImportError> {
+        let total = files.len();
+        for (n, chunk) in files.chunks(BATCH_SIZE).enumerate() {
+            if self.cancel.load(Ordering::Relaxed) {
+                self.report.cancelled = true;
+                break;
+            }
+            // The workers only stop early when cancelled.
+            let Ok(results) = prepared.recv() else {
+                self.report.cancelled = true;
+                break;
+            };
+            self.write_batch(chunk, results)?;
+            if self.report.cancelled {
+                break;
+            }
+            progress(Progress { done: (n * BATCH_SIZE + chunk.len()).min(total), total });
+        }
+        Ok(())
+    }
+
+    /// Writes (or, in a dry run, checks) one batch and adds it to the report.
+    fn write_batch(&mut self, chunk: &[PathBuf], results: PreparedBatch) -> Result<(), ImportError> {
+        let batch = self.plan(chunk, results);
+        let outcomes = if self.dry_run { self.check_all(&batch)? } else { self.insert_all(&batch)? };
+        // Only the files written: a cancel can stop partway through a batch.
+        for p in &batch[..outcomes.len()] {
+            self.add_warnings(p);
+        }
+        for (p, outcome) in batch.iter().zip(outcomes) {
+            match outcome {
+                Ok(id) => self.add_imported(p, id),
+                Err(e) => self.add_skipped(p, e),
+            }
+        }
+        Ok(())
+    }
+
+    /// The files to write, placed under the target with unique titles. Files that can't
+    /// be imported go to the report.
+    fn plan(&mut self, chunk: &[PathBuf], results: PreparedBatch) -> Vec<Prepared> {
+        let mut batch = Vec::with_capacity(chunk.len());
+        for (rel, result) in chunk.iter().zip(results) {
+            match result {
+                Ok(mut p) => {
+                    // After `prepare`, so the default topic stays the source-relative top folder.
+                    p.folder = target_folder(&self.target, &p.folder);
+                    give_unique_title(&mut p, &mut self.planned);
+                    batch.push(p);
+                }
+                Err(PrepareError::Unsupported) => {
+                    let ext = formats::extension(rel);
+                    let format = if ext.is_empty() { "no extension".to_string() } else { format!(".{ext}") };
+                    *self.unsupported.entry(format).or_default() += 1;
+                }
+                Err(e) => self.skipped.push(
+                    false,
+                    FileMessage { path: rel.to_string_lossy().replace('\\', "/"), message: e.to_string() },
+                ),
+            }
+        }
+        batch
+    }
+
+    /// Dry run: whether each note would be written, without writing anything.
+    fn check_all(&self, batch: &[Prepared]) -> Result<Vec<db::Result<i64>>, ImportError> {
+        Ok(on_vault(self.session, self.vault_path, |v| {
+            let mut outcomes = Vec::with_capacity(batch.len());
+            for p in batch {
+                let taken = v.note_exists(&p.folder, &p.title)?;
+                outcomes.push(if taken { Err(db::Error::TitleTaken) } else { Ok(0) });
+            }
+            Ok(outcomes)
+        })?)
+    }
+
+    /// Writes the notes in transactions of at most [`INSERT_BUDGET`], with a pause
+    /// between them. Stops early when cancelled.
+    fn insert_all(&mut self, batch: &[Prepared]) -> Result<Vec<db::Result<i64>>, ImportError> {
+        let notes: Vec<NewNote> = batch
+            .iter()
+            .map(|p| NewNote {
+                folder: &p.folder,
+                title: &p.title,
+                body: &p.body,
+                created_at: p.created_at,
+                updated_at: p.updated_at,
+            })
+            .collect();
+        let mut outcomes = Vec::with_capacity(notes.len());
+        while outcomes.len() < notes.len() {
+            if !outcomes.is_empty() {
+                std::thread::sleep(WRITE_PAUSE);
+                if self.cancel.load(Ordering::Relaxed) {
+                    self.report.cancelled = true;
+                    break;
+                }
+            }
+            let rest = &notes[outcomes.len()..];
+            outcomes.extend(on_vault(self.session, self.vault_path, |v| v.import_notes_within(rest, INSERT_BUDGET))?);
+        }
+        Ok(outcomes)
+    }
+
+    fn add_warnings(&mut self, p: &Prepared) {
+        for w in &p.warnings {
+            self.report.warning_count += 1;
+            if self.report.warnings.len() < MAX_REPORTED {
+                self.report.warnings.push(FileMessage { path: p.path.clone(), message: w.clone() });
+            }
+        }
+    }
+
+    fn add_imported(&mut self, p: &Prepared, id: i64) {
+        self.report.imported += 1;
+        *self.folders.entry(p.folder.clone()).or_default() += 1;
+        self.imported_ids.push(id);
+        if self.dry_run && self.report.samples.len() < SAMPLE_COUNT && p.body != p.original {
+            self.report.samples.push(Sample {
+                path: p.path.clone(),
+                folder: p.folder.clone(),
+                before: truncate(&p.original),
+                after: truncate(&p.body),
+            });
+        }
+    }
+
+    fn add_skipped(&mut self, p: &Prepared, e: db::Error) {
+        let exists = matches!(e, db::Error::TitleTaken);
+        let message = if exists {
+            self.report.already_exist += 1;
+            let folder = if p.folder.is_empty() { "the vault root".to_string() } else { format!("'{}'", p.folder) };
+            format!("a note titled '{}' already exists in {folder}", p.title)
+        } else {
+            e.to_string()
+        };
+        self.skipped.push(exists, FileMessage { path: p.path.clone(), message });
+    }
+
+    /// The report, and the ids of the notes written.
+    fn finish(self) -> (ImportReport, Vec<i64>) {
+        let mut report = self.report;
+        let mut unsupported: Vec<FormatCount> =
+            self.unsupported.into_iter().map(|(format, count)| FormatCount { format, count }).collect();
+        unsupported.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.format.cmp(&b.format)));
+        report.unsupported = unsupported;
+        report.skipped_count = self.skipped.count;
+        report.skipped = self.skipped.into_list();
+        report.folder_count = self.folders.len();
+        report.folders = largest_folders(self.folders);
+        (report, self.imported_ids)
+    }
 }
 
 /// The skipped files listed in the report: up to [`MAX_REPORTED`] that couldn't be read,
@@ -721,6 +798,114 @@ mod tests {
 
     fn message(n: usize) -> FileMessage {
         FileMessage { path: format!("f{n:05}"), message: String::new() }
+    }
+
+    fn prepared(folder: &str, title: &str) -> Prepared {
+        Prepared {
+            path: format!("{folder}/{title}.md"),
+            folder: folder.into(),
+            title: title.into(),
+            body: format!("changed {title}"),
+            created_at: 0,
+            created_from: CreatedFrom::Modified,
+            updated_at: 0,
+            warnings: Vec::new(),
+            original: title.into(),
+            extension: "md".into(),
+        }
+    }
+
+    fn with_writer<T>(dry_run: bool, f: impl FnOnce(&mut Writer) -> T) -> T {
+        let session = Session::default();
+        let cancel = AtomicBool::new(false);
+        f(&mut Writer::new(&session, Path::new("v"), "t".into(), dry_run, &cancel))
+    }
+
+    #[test]
+    fn plan_counts_unsupported_files_and_reports_unreadable_ones() {
+        let files: Vec<PathBuf> = ["a.md", "b.doc", "c", "d.md"].iter().map(PathBuf::from).collect();
+        let results = vec![
+            Ok(prepared("x", "a")),
+            Err(PrepareError::Unsupported),
+            Err(PrepareError::Unsupported),
+            Err(PrepareError::TooLarge(11 * 1_048_576)),
+        ];
+        with_writer(false, |w| {
+            let batch = w.plan(&files, results);
+            assert_eq!(batch.len(), 1);
+            assert_eq!(batch[0].folder, "t/x");
+            assert_eq!(w.unsupported.get(".doc"), Some(&1));
+            assert_eq!(w.unsupported.get("no extension"), Some(&1));
+            assert_eq!(w.skipped.count, 1);
+            assert_eq!(std::mem::take(&mut w.skipped).into_list()[0].path, "d.md");
+        });
+    }
+
+    #[test]
+    fn warnings_are_counted_and_listed_up_to_the_cap() {
+        with_writer(false, |w| {
+            let mut p = prepared("", "a");
+            p.warnings = vec!["one".into(), "two".into()];
+            w.add_warnings(&p);
+            assert_eq!(w.report.warning_count, 2);
+            assert_eq!(w.report.warnings.len(), 2);
+            w.report.warnings = (0..MAX_REPORTED).map(message).collect();
+            w.add_warnings(&p);
+            assert_eq!(w.report.warning_count, 4);
+            assert_eq!(w.report.warnings.len(), MAX_REPORTED);
+        });
+    }
+
+    #[test]
+    fn only_a_dry_run_samples_changed_files() {
+        let mut unchanged = prepared("", "same");
+        unchanged.body = unchanged.original.clone();
+        with_writer(true, |w| {
+            w.add_imported(&prepared("f", "a"), 0);
+            w.add_imported(&unchanged, 0);
+            assert_eq!((w.report.imported, w.report.samples.len(), w.imported_ids.len()), (2, 1, 2));
+            assert_eq!(w.folders.get("f"), Some(&1));
+        });
+        with_writer(false, |w| {
+            w.add_imported(&prepared("f", "a"), 7);
+            assert!(w.report.samples.is_empty());
+            assert_eq!(w.imported_ids, [7]);
+        });
+    }
+
+    #[test]
+    fn a_skipped_note_says_why() {
+        with_writer(false, |w| {
+            w.add_skipped(&prepared("", "root"), db::Error::TitleTaken);
+            w.add_skipped(&prepared("f", "in folder"), db::Error::TitleTaken);
+            w.add_skipped(&prepared("f", "bad"), db::Error::InvalidTitle("bad".into()));
+            assert_eq!(w.report.already_exist, 2);
+            assert_eq!(w.skipped.count, 3);
+            let messages: Vec<String> = std::mem::take(&mut w.skipped).into_list().into_iter().map(|m| m.message).collect();
+            assert!(messages.contains(&"a note titled 'root' already exists in the vault root".to_string()));
+            assert!(messages.contains(&"a note titled 'in folder' already exists in 'f'".to_string()));
+            assert!(messages.contains(&"invalid title: bad".to_string()));
+        });
+    }
+
+    #[test]
+    fn a_lost_worker_counts_as_cancelled() {
+        let (ready, prepared) = mpsc::sync_channel::<PreparedBatch>(1);
+        drop(ready);
+        with_writer(false, |w| {
+            w.write_all(&[PathBuf::from("a.md")], prepared, &mut |_| {}).unwrap();
+            assert!(w.report.cancelled);
+        });
+    }
+
+    #[test]
+    fn cancelling_before_the_first_batch_writes_nothing() {
+        let session = Session::default();
+        let cancel = AtomicBool::new(true);
+        let mut w = Writer::new(&session, Path::new("v"), String::new(), false, &cancel);
+        let (_ready, prepared) = mpsc::sync_channel::<PreparedBatch>(1);
+        w.write_all(&[PathBuf::from("a.md")], prepared, &mut |_| panic!("no progress")).unwrap();
+        assert!(w.report.cancelled);
     }
 
     #[test]
