@@ -326,6 +326,31 @@ fn the_running_job_trains_anyway_once_the_queue_stalls() {
     });
 }
 
+/// An import brings notes that have no vectors yet: training holds off until it is over.
+#[test]
+fn the_running_job_waits_while_an_import_runs() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    notes(&session, "dream", 10, 12);
+    index(&session, g, &source);
+    let head = || session.with_vault(|v| v.tag_head("dream")).unwrap();
+    let import = session.begin_import();
+    std::thread::scope(|s| {
+        s.spawn(|| training::run(&session, g, Duration::from_millis(5), Duration::from_millis(100), |_| {}));
+        let _stop = LockOnDrop(&session);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(head().is_none(), "trained while an import ran");
+        let status = session.activity().status(hush_lib::activity::Job::Training);
+        assert_eq!(status.reason.as_deref(), Some("import running"));
+
+        drop(import);
+        let start = Instant::now();
+        while head().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(10), "never trained after the import ended");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+}
 /// Locks the vault when dropped, so a failed assertion stops the job instead of hanging the test.
 struct LockOnDrop<'a>(&'a Session);
 
