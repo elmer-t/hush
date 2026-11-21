@@ -228,3 +228,11 @@ fn reasons_report_direct_and_two_step_links_tags_and_shared_fields() {
 
     assert_eq!(reasons[2], hush_lib::db::Reasons::default(), "an unknown note has no reasons");
 }
+
+#[test]
+fn reasons_for_a_note_that_is_not_there_are_all_empty() {
+    let (_dir, mut vault) = common::vault();
+    let b = vault.create_note("", "B", "text").unwrap();
+    let reasons = vault.relation_reasons(999, &[b, 5]).unwrap();
+    assert_eq!(reasons, vec![hush_lib::db::Reasons::default(); 2]);
+}
