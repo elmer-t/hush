@@ -157,11 +157,18 @@ fn base_vault(prepared: &[Prepared], notes: usize, keep: Option<PathBuf>) -> (te
     (dir, copy)
 }
 
+#[cfg(unix)]
 fn drop_caches() -> bool {
     unsafe { libc_sync() };
     fs::write("/proc/sys/vm/drop_caches", "3").is_ok()
 }
 
+#[cfg(not(unix))]
+fn drop_caches() -> bool {
+    false
+}
+
+#[cfg(unix)]
 unsafe extern "C" {
     #[link_name = "sync"]
     fn libc_sync();
