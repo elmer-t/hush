@@ -187,10 +187,7 @@ pub fn run_with(
         }
     };
     let mut first = true;
-    // Where the safety-net scan continues; `None` once it is done.
-    let mut scan = Some(0);
-    let mut found = 0;
-    let mut checked = 0;
+    let mut net = SafetyNet::default();
     let mut paused = false;
     activity.wait(Job::SafetyNet, "runs once the queue is empty");
     // A failure here is left to the first pass, whose `related::update` tries again.
@@ -198,85 +195,151 @@ pub fn run_with(
         related_changed();
     }
     loop {
-        if let Some(reason) = session.pause_reason() {
-            paused = true;
-            report(IndexStatus::Paused);
-            activity.pause(Job::Embedding, reason);
-            if scan.is_some() {
-                activity.wait(Job::SafetyNet, reason);
-            }
-            if !sleep_while_open(session, generation, poll) {
+        if let Some(open) = hold_for_pause(session, generation, poll, &net, &activity, &mut report) {
+            if !open {
                 return;
             }
+            paused = true;
             continue;
         }
         if paused {
             paused = false;
             report(IndexStatus::Idle);
         }
-        if !first {
-            let pending = match session.with_vault_quiet(generation, |v| v.embedding_pending()) {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-            if !pending {
-                activity.idle(Job::Embedding, Some("nothing queued"));
-                if let Some(after) = scan {
-                    match safety_net_page(session, generation, after) {
-                        Ok((stale, embeddable, next)) => {
-                            found += stale;
-                            checked += embeddable;
-                            scan = next;
-                            if scan.is_none() {
-                                if found > 0 {
-                                    eprintln!("hush: safety-net scan queued {found} notes that no write had queued");
-                                }
-                                activity.finish(
-                                    Job::SafetyNet,
-                                    format!(
-                                        "checked {} notes, queued {} that no write had queued",
-                                        count(checked as u64),
-                                        count(found as u64)
-                                    ),
-                                );
-                            } else {
-                                activity.progress(
-                                    Job::SafetyNet,
-                                    format!("checking stored hashes, {} queued so far", count(found as u64)),
-                                    checked as u64,
-                                    None,
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            if !matches!(e, JobError::Locked) {
-                                activity.fail(Job::SafetyNet, e.to_string());
-                            }
-                            return fail(e, &mut report);
-                        }
-                    }
-                    std::thread::sleep(SCAN_PAUSE);
-                    continue;
-                }
-                if !sleep_while_open(session, generation, poll) {
-                    return;
-                }
-                continue;
-            }
-            if scan.is_some_and(|a| a > 0) {
-                activity.pause(Job::SafetyNet, "queued notes go first");
-            }
-        }
-        first = false;
-        match pass(session, generation, source, &mut report) {
-            Ok(p) => {
-                paused = p.paused;
-                if p.related_changed {
-                    related_changed();
-                }
-            }
+        let go = if first { Ok(true) } else { between_passes(session, generation, poll, &mut net, &activity) };
+        match go {
+            Ok(true) => {}
+            Ok(false) => continue,
             Err(e) => return fail(e, &mut report),
         }
+        first = false;
+        match run_pass(session, generation, source, &mut report, &related_changed) {
+            Ok(p) => paused = p,
+            Err(e) => return fail(e, &mut report),
+        }
+    }
+}
+
+/// While an import runs or the vault is compacted: reports the pause and waits for
+/// `poll`. `None` when nothing pauses the job, else whether the vault is still open.
+fn hold_for_pause(
+    session: &Session,
+    generation: u64,
+    poll: Duration,
+    net: &SafetyNet,
+    activity: &Reporter<'_>,
+    report: &mut dyn FnMut(IndexStatus),
+) -> Option<bool> {
+    let reason = session.pause_reason()?;
+    report(IndexStatus::Paused);
+    activity.pause(Job::Embedding, reason);
+    if net.after.is_some() {
+        activity.wait(Job::SafetyNet, reason);
+    }
+    Some(sleep_while_open(session, generation, poll))
+}
+
+/// The work between two passes: whether to run the next pass now (`false`: look
+/// again). While nothing is queued it runs a page of the safety-net scan, or once that
+/// is done waits for `poll`. A queue that can't be read, like a lock during the wait,
+/// stops the job quietly (`Err(Locked)`).
+fn between_passes(
+    session: &Session,
+    generation: u64,
+    poll: Duration,
+    net: &mut SafetyNet,
+    activity: &Reporter<'_>,
+) -> Result<bool, JobError> {
+    let Ok(pending) = session.with_vault_quiet(generation, |v| v.embedding_pending()) else {
+        return Err(JobError::Locked);
+    };
+    if pending {
+        if net.after.is_some_and(|a| a > 0) {
+            activity.pause(Job::SafetyNet, "queued notes go first");
+        }
+        return Ok(true);
+    }
+    activity.idle(Job::Embedding, Some("nothing queued"));
+    if net.after.is_some() {
+        net.advance(session, generation, activity)?;
+        std::thread::sleep(SCAN_PAUSE);
+        return Ok(false);
+    }
+    if !sleep_while_open(session, generation, poll) {
+        return Err(JobError::Locked);
+    }
+    Ok(false)
+}
+
+/// Runs a pass and passes on a change of the related-notes index. Returns whether the
+/// pass paused.
+fn run_pass(
+    session: &Session,
+    generation: u64,
+    source: &dyn EmbedderSource,
+    report: &mut dyn FnMut(IndexStatus),
+    related_changed: &dyn Fn(),
+) -> Result<bool, JobError> {
+    let p = pass(session, generation, source, report)?;
+    if p.related_changed {
+        related_changed();
+    }
+    Ok(p.paused)
+}
+
+/// The safety-net scan of this unlock, run a page at a time between passes.
+struct SafetyNet {
+    /// Where the scan continues; `None` once it is done.
+    after: Option<i64>,
+    found: usize,
+    checked: usize,
+}
+
+impl Default for SafetyNet {
+    fn default() -> Self {
+        Self { after: Some(0), found: 0, checked: 0 }
+    }
+}
+
+impl SafetyNet {
+    /// Scans the next page and reports how far the scan got.
+    fn advance(&mut self, session: &Session, generation: u64, activity: &Reporter<'_>) -> Result<(), JobError> {
+        let Some(after) = self.after else {
+            return Ok(());
+        };
+        let (stale, embeddable, next) = safety_net_page(session, generation, after).inspect_err(|e| {
+            if !matches!(e, JobError::Locked) {
+                activity.fail(Job::SafetyNet, e.to_string());
+            }
+        })?;
+        self.found += stale;
+        self.checked += embeddable;
+        self.after = next;
+        self.report(activity);
+        Ok(())
+    }
+
+    fn report(&self, activity: &Reporter<'_>) {
+        if self.after.is_some() {
+            activity.progress(
+                Job::SafetyNet,
+                format!("checking stored hashes, {} queued so far", count(self.found as u64)),
+                self.checked as u64,
+                None,
+            );
+            return;
+        }
+        if self.found > 0 {
+            eprintln!("hush: safety-net scan queued {} notes that no write had queued", self.found);
+        }
+        activity.finish(
+            Job::SafetyNet,
+            format!(
+                "checked {} notes, queued {} that no write had queued",
+                count(self.checked as u64),
+                count(self.found as u64)
+            ),
+        );
     }
 }
 
@@ -807,5 +870,78 @@ mod tests {
         let mut stuck = Eta::default();
         stuck.update(at(0), 10, 100);
         assert_eq!(stuck.update(at(30), 10, 100), None);
+    }
+
+    /// Two-dimensional vectors from the text's length: fast, and enough for the job.
+    struct Lengths;
+
+    impl Embedder for Lengths {
+        fn model_id(&self) -> &str {
+            "lengths"
+        }
+
+        fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+            let mut v = vec![1.0, text.len() as f32];
+            crate::embed::normalize(&mut v);
+            Ok(v)
+        }
+    }
+
+    impl EmbedderSource for Lengths {
+        fn embedder(&self, _model: &str) -> Result<Arc<dyn Embedder>, EmbedError> {
+            Ok(Arc::new(Lengths))
+        }
+    }
+
+    /// Between passes the safety-net scan runs a page at a time while nothing is queued,
+    /// pauses while queued notes go first, and reports what it found once done.
+    #[test]
+    fn between_passes_the_safety_net_runs_a_page_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v.hush");
+        let vault = crate::db::Vault::create(&path, "test passphrase").unwrap();
+        vault.set_embedding_model("lengths").unwrap();
+        let session = Session::default();
+        let g = session.unlock(vault, path).unwrap();
+        let ids: Vec<i64> = session
+            .with_vault(|v| (0..600).map(|i| v.create_note("", &format!("N{i}"), "some text")).collect())
+            .unwrap();
+        let activity = session.activity().reporter(g);
+        let poll = Duration::from_millis(1);
+        let mut net = SafetyNet::default();
+        let safety_net = || session.activity().status(Job::SafetyNet);
+
+        assert!(between_passes(&session, g, poll, &mut net, &activity).unwrap(), "queued notes: a pass runs");
+        assert_ne!(safety_net().state, crate::activity::State::Paused, "the scan hasn't started");
+        while session.with_vault_quiet(g, |v| v.embedding_pending()).unwrap() {
+            pass(&session, g, &Lengths, &mut |_| {}).unwrap();
+        }
+        // A vector some code path wrote without its text's hash, and without queuing it.
+        session.with_vault(|v| v.write_embeddings("lengths", &[(ids[0], [0; 32], vec![1.0, 0.0])])).unwrap();
+
+        assert!(!between_passes(&session, g, poll, &mut net, &activity).unwrap(), "nothing queued: a page of the scan");
+        assert!(net.after.is_some());
+        assert_eq!((net.checked, net.found), (500, 1));
+        assert_eq!(safety_net().done, Some(500));
+        assert_eq!(safety_net().doing.as_deref(), Some("checking stored hashes, 1 queued so far"));
+
+        assert!(between_passes(&session, g, poll, &mut net, &activity).unwrap(), "the scan queued a note: a pass runs");
+        assert_eq!(safety_net().state, crate::activity::State::Paused);
+        assert_eq!(safety_net().reason.as_deref(), Some("queued notes go first"));
+        assert_eq!(pass(&session, g, &Lengths, &mut |_| {}).unwrap().stale, 1);
+
+        assert!(!between_passes(&session, g, poll, &mut net, &activity).unwrap(), "the scan's last page");
+        assert_eq!(net.after, None);
+        assert_eq!((net.checked, net.found), (600, 1));
+        let summary = safety_net().last_run.unwrap().summary;
+        assert_eq!(summary, "checked 600 notes, queued 1 that no write had queued");
+
+        assert!(!between_passes(&session, g, poll, &mut net, &activity).unwrap(), "scan done: waits for the queue");
+        assert_eq!(net.checked, 600);
+
+        session.lock();
+        assert!(matches!(between_passes(&session, g, poll, &mut net, &activity), Err(JobError::Locked)));
+        net.after = Some(0);
+        assert!(matches!(net.advance(&session, g, &activity), Err(JobError::Locked)));
     }
 }
