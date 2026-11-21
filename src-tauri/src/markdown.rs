@@ -296,6 +296,18 @@ pub fn parse_date(s: &str) -> Option<i64> {
         .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis())
 }
 
+fn add_frontmatter_tags(values: &[String], parsed: &mut Parsed) {
+    for tag in values.iter().flat_map(|v| v.split([',', ' '])) {
+        let tag = tag.trim().trim_start_matches('#');
+        if !tag.is_empty() {
+            push_unique(&mut parsed.frontmatter_tags, tag);
+        }
+        if is_tag(tag) {
+            push_unique(&mut parsed.tags, tag);
+        }
+    }
+}
+
 fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
     let Some(docs) = load_frontmatter(yaml) else {
         return;
@@ -308,17 +320,7 @@ fn apply_frontmatter(yaml: &str, parsed: &mut Parsed) {
         let key = key.to_lowercase();
         let values = values(&v);
         match key.as_str() {
-            "tags" | "tag" => {
-                for tag in values.iter().flat_map(|v| v.split([',', ' '])) {
-                    let tag = tag.trim().trim_start_matches('#');
-                    if !tag.is_empty() {
-                        push_unique(&mut parsed.frontmatter_tags, tag);
-                    }
-                    if is_tag(tag) {
-                        push_unique(&mut parsed.tags, tag);
-                    }
-                }
-            }
+            "tags" | "tag" => add_frontmatter_tags(&values, parsed),
             "author" => parsed.author = values.into_iter().next(),
             "topic" => parsed.topic = values.into_iter().next(),
             "rating" => match rating(&v) {
@@ -522,6 +524,42 @@ mod tests {
     #[test]
     fn comma_separated_tag_string() {
         assert_eq!(parse("---\ntags: \"aa, #bb\"\n---\n").tags, vec!["aa", "bb"]);
+    }
+
+    #[test]
+    fn frontmatter_that_is_not_a_mapping_is_ignored() {
+        for yaml in ["- a
+- b", "just text"] {
+            let p = parse(&format!("---
+{yaml}
+---
+#ok"));
+            assert_eq!((p.author, p.created_at, p.frontmatter_tags, p.attributes), (None, None, vec![], vec![]), "{yaml}");
+            assert_eq!(p.tags, vec!["ok"], "{yaml}");
+        }
+    }
+
+    #[test]
+    fn date_is_the_created_date_unless_created_is_given() {
+        let only_date = parse("---
+date: 2024-03-01
+---
+");
+        assert_eq!(only_date.created_at, parse_date("2024-03-01"));
+        assert!(only_date.attributes.is_empty(), "date isn't also an attribute");
+        for order in ["created: 2019-03-04
+date: 2024-03-01", "date: 2024-03-01
+created: 2019-03-04"] {
+            let p = parse(&format!("---
+{order}
+---
+"));
+            assert_eq!(p.created_at, parse_date("2019-03-04"), "{order}");
+        }
+        assert_eq!(parse("---
+date: not a date
+---
+").created_at, None);
     }
 
     #[test]
