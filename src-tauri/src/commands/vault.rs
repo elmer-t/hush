@@ -11,7 +11,7 @@ use std::time::Instant;
 use super::{LOCKED_EVENT, Result, activity, embeddings, training};
 use crate::activity::{Job, count};
 use crate::config::Config;
-use crate::db::{self, Compacted, UpgradeStep, Vault, VaultSpace};
+use crate::db::{self, Compacted, UpgradeStep, Vault, VaultIcon, VaultSpace};
 use crate::session::{self, Session};
 
 /// Emitted with a [`crate::db::Upgrade`] while opening a vault runs a migration that
@@ -22,12 +22,15 @@ pub const VAULT_UPGRADE_EVENT: &str = "vault-upgrade";
 pub struct VaultInfo {
     path: PathBuf,
     name: String,
+    /// Read from the unlocked vault, so the top bar has it on its first render. It is
+    /// never part of [`RecentVault`]: nothing of it exists before unlock (#241).
+    icon: Option<VaultIcon>,
 }
 
 impl VaultInfo {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, icon: Option<VaultIcon>) -> Self {
         let name = session::vault_name(&path);
-        Self { path, name }
+        Self { path, name, icon }
     }
 }
 
@@ -105,6 +108,8 @@ pub async fn open_vault(
 }
 
 fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
+    // An icon that can't be read must not keep the user out of the vault.
+    let icon = vault.vault_icon().unwrap_or_default();
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
     training::start(app, generation);
@@ -112,7 +117,7 @@ fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, pat
     activity::start(app, generation);
     // A config write failure must not keep the user out of an unlocked vault.
     let _ = config.update(|c| c.remember(&path));
-    Ok(VaultInfo::new(path))
+    Ok(VaultInfo::new(path, icon))
 }
 
 #[tauri::command(async)]
@@ -123,7 +128,25 @@ pub fn lock_vault(app: AppHandle, session: State<'_, Session>) {
 
 #[tauri::command(async)]
 pub fn vault_status(session: State<'_, Session>) -> Option<VaultInfo> {
-    session.path().map(VaultInfo::new)
+    let path = session.path()?;
+    match session.with_vault(|v| v.vault_icon()) {
+        // Locked between the two calls: there is no open vault to report.
+        Err(crate::session::SessionError::Locked) => None,
+        // An icon that can't be read is no icon; the vault is still open.
+        icon => Some(VaultInfo::new(path, icon.unwrap_or_default())),
+    }
+}
+
+/// The open vault's icon; fails while locked.
+#[tauri::command(async)]
+pub fn vault_icon(session: State<'_, Session>) -> Result<Option<VaultIcon>> {
+    Ok(session.with_vault(|v| v.vault_icon())?)
+}
+
+/// Sets the open vault's icon, `None` removes it. It is written to the vault only.
+#[tauri::command(async)]
+pub fn set_vault_icon(session: State<'_, Session>, icon: Option<VaultIcon>) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_vault_icon(icon.as_ref()))?)
 }
 
 /// Reports user activity, postponing auto-lock.
