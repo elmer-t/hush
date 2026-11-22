@@ -25,7 +25,6 @@ describe("the vault icon set", () => {
 describe("resolveVaultIcon", () => {
   it("gives the drawing and the colour token of a known icon", () => {
     expect(resolveVaultIcon({ icon: "anchor", color: "blue" })).toEqual({
-      label: "Anchor",
       paths: VAULT_ICONS.find((i) => i.id === "anchor")!.paths,
       color: "var(--vault-blue)",
     });

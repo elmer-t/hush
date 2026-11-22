@@ -35,24 +35,34 @@
   // Held here and in the top bar only, never in localStorage: it is vault data (#241).
   let vaultIcon = $state<VaultIcon | null>(null);
   let vaultIconError = $state("");
-  /** Numbers the writes, so an older one that fails late doesn't undo a newer choice. */
-  let vaultIconWrite = 0;
+  /** What the vault holds, as far as the answers so far tell. */
+  let storedVaultIcon: VaultIcon | null = null;
+  /** The last choice; the read on mount gives way to it. */
+  let vaultIconChosen = false;
+  /** Writes go to the vault one at a time, in the order chosen. */
+  let vaultIconWrites: Promise<void> = Promise.resolve();
+  let vaultIconPending = 0;
 
-  /** Shows the choice at once and stores it in the vault; a failed write puts the old one back. */
-  async function chooseVaultIcon(icon: VaultIcon | null) {
-    const before = vaultIcon;
-    const write = ++vaultIconWrite;
+  /** Shows the choice at once and stores it in the vault; a failed write puts back what the vault holds. */
+  function chooseVaultIcon(icon: VaultIcon | null) {
+    vaultIconChosen = true;
     vaultIconError = "";
     vaultIcon = icon;
     onvaulticon?.(icon);
-    try {
-      await api.setVaultIcon(icon);
-    } catch (e) {
-      if (write !== vaultIconWrite) return;
-      vaultIcon = before;
-      onvaulticon?.(before);
-      vaultIconError = errorMessage(e);
-    }
+    vaultIconPending++;
+    vaultIconWrites = vaultIconWrites.then(async () => {
+      try {
+        await api.setVaultIcon(icon);
+        storedVaultIcon = icon;
+      } catch (e) {
+        vaultIconError = errorMessage(e);
+      }
+      // After the last write, show what was stored: the choice, unless its write failed.
+      if (--vaultIconPending === 0 && vaultIcon !== storedVaultIcon) {
+        vaultIcon = storedVaultIcon;
+        onvaulticon?.(storedVaultIcon);
+      }
+    });
   }
 
   let theme = $state<ThemePreference>(themePreference());
@@ -218,7 +228,10 @@
     api.indexAllCores().then((on) => (allCores = on), () => {});
     api.memorySecurity().then((m) => ((memory = m), (wipeMemory = m.on)), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
-    api.vaultIcon().then((icon) => (vaultIcon = icon), () => {});
+    api.vaultIcon().then((icon) => {
+      if (vaultIconChosen) return;
+      vaultIcon = storedVaultIcon = icon;
+    }, () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),

@@ -54,7 +54,7 @@
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus (the radios inside take the focus) -->
-<div class="icons" role="radiogroup" aria-label="Icon" onkeydown={(e) => onkeydown(e, chooseIcon)}>
+<div class="icons" role="radiogroup" aria-label="Vault icon" onkeydown={(e) => onkeydown(e, chooseIcon)}>
   <button
     type="button"
     class="choice none"
@@ -84,7 +84,7 @@
 </div>
 
 <!-- svelte-ignore a11y_interactive_supports_focus (the radios inside take the focus) -->
-<div class="colors" role="radiogroup" aria-label="Colour" onkeydown={(e) => onkeydown(e, chooseColor)}>
+<div class="colors" role="radiogroup" aria-label="Icon colour" onkeydown={(e) => onkeydown(e, chooseColor)}>
   {#each VAULT_COLORS as choice, i (choice.id)}
     <button
       type="button"

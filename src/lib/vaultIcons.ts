@@ -52,7 +52,7 @@ export const DEFAULT_VAULT_COLOR = "blue";
 
 export const vaultColorToken = (id: string) => `var(--vault-${id})`;
 
-export type ResolvedVaultIcon = { label: string; paths: string; color: string };
+export type ResolvedVaultIcon = { paths: string; color: string };
 
 /**
  * What to draw for a vault's icon, or null to draw the Hush mark: the vault has no
@@ -63,7 +63,7 @@ export function resolveVaultIcon(icon: VaultIcon | null | undefined): ResolvedVa
   const drawing = VAULT_ICONS.find((i) => i.id === icon.icon);
   const color = VAULT_COLORS.find((c) => c.id === icon.color);
   if (!drawing || !color) return null;
-  return { label: drawing.label, paths: drawing.paths, color: vaultColorToken(color.id) };
+  return { paths: drawing.paths, color: vaultColorToken(color.id) };
 }
 
 /**

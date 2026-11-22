@@ -108,7 +108,8 @@ pub async fn open_vault(
 }
 
 fn unlock(app: &AppHandle, session: &Session, config: &Config, vault: Vault, path: PathBuf) -> Result<VaultInfo> {
-    let icon = vault.vault_icon()?;
+    // An icon that can't be read must not keep the user out of the vault.
+    let icon = vault.vault_icon().unwrap_or_default();
     let generation = session.unlock(vault, path.clone())?;
     embeddings::start(app, generation);
     training::start(app, generation);
@@ -128,9 +129,12 @@ pub fn lock_vault(app: AppHandle, session: State<'_, Session>) {
 #[tauri::command(async)]
 pub fn vault_status(session: State<'_, Session>) -> Option<VaultInfo> {
     let path = session.path()?;
-    // Locked between the two calls: there is no open vault to report.
-    let icon = session.with_vault(|v| v.vault_icon()).ok()?;
-    Some(VaultInfo::new(path, icon))
+    match session.with_vault(|v| v.vault_icon()) {
+        // Locked between the two calls: there is no open vault to report.
+        Err(crate::session::SessionError::Locked) => None,
+        // An icon that can't be read is no icon; the vault is still open.
+        icon => Some(VaultInfo::new(path, icon.unwrap_or_default())),
+    }
 }
 
 /// The open vault's icon; fails while locked.
