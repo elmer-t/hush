@@ -95,6 +95,11 @@
   // The Activity panel, toggled from the sidebar footer and with Ctrl+J.
   let showActivity = $state(loadStored(KEYS.showActivity, false, isBoolean));
   let opened = $state<OpenedNote | null>(null);
+  // Set while the open note is read again on the way back to it (#251): the view has
+  // changed already, and the editor waits for the note. `noteLoad` numbers the reads, so
+  // one that was overtaken (another note opened meanwhile) is dropped.
+  let reloading = $state(false);
+  let noteLoad = 0;
   let summary = $state<NoteSummary | null>(null);
   let meta = $state<NoteMeta | null>(null);
   let focusTitle = $state(false);
@@ -206,6 +211,17 @@
   /** Shows history entry `index`; false if its note can't be opened any more. */
   async function showEntry(entry: NavEntry, index: number): Promise<boolean> {
     const leavingSettings = view === "settings" && entry.view !== "settings";
+    if (entry.view === "note" && entry.noteId !== null && entry.noteId === opened?.note.id && !details) {
+      // Back to the open note from Settings, Import or Trash: at once, as the buttons do (#251).
+      nav = moveTo(nav, index);
+      // Not awaited: going further back or forward doesn't wait for the note either.
+      void showNote();
+      if (leavingSettings) {
+        void loadAutoLock();
+        void sidebar?.refreshRecent();
+      }
+      return true;
+    }
     if (entry.noteId !== null) {
       let note: OpenedNote;
       try {
@@ -390,23 +406,52 @@
   }
 
   /**
-   * Back to the note view. The editor remounts from `opened`, which autosaves don't
-   * update, so the open note is read again first: otherwise the editor would show the
-   * text from when it was opened, and its next autosave would write that back.
+   * Back to the note view, at once: leaving Settings, Import or Trash never waits for the
+   * vault, which a long query can hold (#251). The editor does wait. It remounts from
+   * `opened`, which autosaves don't update, so the open note is read again first:
+   * otherwise the editor would show the text from when it was opened, and its next
+   * autosave would write that back. Until the note arrives `reloading` keeps the editor
+   * unmounted.
    */
   async function showNote() {
-    if (opened) {
-      try {
-        const fresh = await api.reloadNote(opened.note.id);
+    view = "note";
+    if (!opened) return;
+    const id = opened.note.id;
+    const load = ++noteLoad;
+    reloading = true;
+    // The note can be trashed or closed while it is read: then there is nothing to show.
+    const still = () => opened?.note.id === id;
+    try {
+      const fresh = await api.reloadNote(id);
+      if (load !== noteLoad) return;
+      if (still()) {
         opened = fresh;
         summary = fresh.note;
         meta = fresh.meta;
-      } catch (e) {
-        opened = summary = meta = null;
-        error = errorMessage(e);
       }
+    } catch (e) {
+      if (load !== noteLoad) return;
+      if (still()) opened = summary = meta = null;
+      error = errorMessage(e);
     }
-    view = "note";
+    reloading = false;
+  }
+
+  /** The views Esc leaves, back to the note, as their button does when clicked again. */
+  const closesOnEscape = () => view === "settings" || view === "import" || view === "trash";
+
+  // Bubble phase and last: whatever else uses Esc gets it first. A menu stops the event;
+  // a field being edited and a dialog keep it.
+  function onescape(e: KeyboardEvent) {
+    if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    // Settings is modal while it compacts.
+    if (!closesOnEscape() || compacting) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("input, textarea, select, [contenteditable], dialog, [role=menu]")) return;
+    e.preventDefault();
+    const next = view as "settings" | "import" | "trash";
+    void toggleView(next);
   }
 
   const isOpen = (section: DetailsSection) => !collapsed.includes(section);
@@ -474,6 +519,9 @@
 
   /** Makes `note` the open note; `stay` keeps the graph view instead of showing the editor. */
   function show(note: OpenedNote, isNew: boolean, stay = false) {
+    // A read of the note that was open is overtaken.
+    noteLoad++;
+    reloading = false;
     opened = note;
     summary = note.note;
     meta = note.meta;
@@ -493,7 +541,11 @@
   }
 
   async function select(id: number) {
-    if (opened?.note.id === id && view === "note") return;
+    if (opened?.note.id === id) {
+      // The open note, from another view: the view changes at once (#251).
+      if (view !== "note") await showNote();
+      return;
+    }
     await editor?.flush();
     try {
       show(await api.openNote(id), false);
@@ -766,6 +818,7 @@
   bind:innerWidth={windowWidth}
   bind:innerHeight={windowHeight}
   onkeydowncapture={onkeydown}
+  onkeydown={onescape}
   onmousedowncapture={suppressSideButton}
   onauxclickcapture={suppressSideButton}
   onmouseupcapture={onmouseup}
@@ -924,7 +977,10 @@
         oncompact={() => void openStorageSettings()}
       />
     {:else if view === "note"}
-      {#if opened}
+      {#if reloading}
+        <!-- Shown only when the vault is slow to answer: the text fades in after a moment. -->
+        <div class="empty"><p class="muted late" role="status">Opening the note…</p></div>
+      {:else if opened}
         {#key `${opened.note.id}:${editorRevision}`}
           <NoteEditor
             bind:this={editor}
@@ -1185,5 +1241,16 @@
 
   .empty p {
     margin: 0;
+  }
+
+  /* Hidden for the first moments, so a note that arrives at once doesn't flash a message. */
+  .empty .late {
+    animation: late 0.2s 0.3s both;
+  }
+
+  @keyframes late {
+    from {
+      opacity: 0;
+    }
   }
 </style>
