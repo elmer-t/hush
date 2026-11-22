@@ -6,6 +6,7 @@ mod discover;
 mod embeddings;
 mod graph;
 mod heads;
+mod icon;
 mod internals;
 mod links;
 mod lock;
@@ -37,6 +38,7 @@ pub use embeddings::{
 };
 pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
 pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
+pub use icon::{VAULT_ICON_SETTING, VaultIcon};
 pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
@@ -100,6 +102,8 @@ pub enum Error {
     InvalidRecentOpenedCount,
     #[error("a rating must be a whole number from 1 to 5")]
     InvalidRating,
+    #[error("a vault icon and its colour are each 1 to 32 lowercase letters, digits or hyphens")]
+    InvalidVaultIcon,
     #[error("the suggestion threshold must be a number between -1 and 1")]
     InvalidThreshold,
     #[error("not enough free disk space to compact the vault: it needs {} free on the vault's drive, and {} is free", compact::byte_text(*.needed), compact::byte_text(*.available))]

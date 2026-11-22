@@ -118,6 +118,8 @@ pub fn run() {
             commands::vault::open_vault,
             commands::vault::lock_vault,
             commands::vault::vault_status,
+            commands::vault::vault_icon,
+            commands::vault::set_vault_icon,
             commands::vault::touch,
             commands::vault::auto_lock_minutes,
             commands::vault::set_auto_lock_minutes,
