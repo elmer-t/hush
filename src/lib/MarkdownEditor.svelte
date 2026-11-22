@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+  import { Compartment, EditorSelection, EditorState, Text, type Extension } from "@codemirror/state";
   import { EditorView, drawSelection, highlightActiveLine, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -101,18 +101,24 @@
    * The offset at the top left of what is shown. Within a wrapped paragraph that is the
    * start of the first row shown, not of the paragraph, which can be a screen higher.
    */
+  // A few pixels in, so a row that was put at the very top is the one found again.
+  const TOP_PROBE_PX = 4;
   function topOffset(v: EditorView): number {
     const box = v.scrollDOM.getBoundingClientRect();
     const content = v.contentDOM.getBoundingClientRect();
-    return v.posAtCoords({ x: content.left + 1, y: box.top + 1 }, false) ?? topLine(v);
+    return v.posAtCoords({ x: content.left + 1, y: box.top + TOP_PROBE_PX }, false);
   }
 
   onMount(() => {
-    const initial = untrack(() => doc);
-    const restored = untrack(() => position && clampPosition(position, initial.length));
-    // Live starts below the frontmatter, so it opens collapsed.
-    const fm = shownMode === "live" && !restored ? frontmatterRange(EditorState.create({ doc: initial }).doc) : null;
+    // Split as the editor does, so offsets are clamped to its length: it counts a CRLF as one.
+    const initial = Text.of(untrack(() => doc).split(/\r\n?|\n/));
+    let restored = untrack(() => position && clampPosition(position, initial.length));
+    // Live starts below the frontmatter, so it opens collapsed. A cursor that was never
+    // moved from the start (Source opens there) is not a reason to expand it.
+    const untouched = !restored || (restored.anchor === 0 && restored.head === 0);
+    const fm = shownMode === "live" && untouched ? frontmatterRange(initial) : null;
     const start = fm ? Math.min(fm.to + 1, initial.length) : 0;
+    if (restored && fm) restored = { ...restored, anchor: start, head: start };
     // False until the first layout has put the restored line at the top: a report before
     // that would say the note is at its start.
     let placed = false;
@@ -122,8 +128,8 @@
       read: (v: EditorView) => topOffset(v),
       write: (top: number, v: EditorView) => {
         if (!placed || !onposition) return;
-        const { anchor, head } = v.state.selection.main;
-        onposition({ anchor, head, top });
+        const selection = v.state.selection.main;
+        onposition({ anchor: selection.anchor, head: selection.head, top });
       },
     };
     const created = new EditorView({

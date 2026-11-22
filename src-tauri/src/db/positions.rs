@@ -74,10 +74,10 @@ impl Vault {
     /// Drops the positions of notes that are not in `recent`, the recently opened list as
     /// it was just written.
     pub(super) fn keep_note_positions(&self, recent: &[i64]) -> Result<()> {
-        let Some(stored) = self.setting(NOTE_POSITIONS_SETTING)? else {
+        if self.setting(NOTE_POSITIONS_SETTING)?.is_none() {
             return Ok(());
-        };
-        let mut positions: Positions = serde_json::from_str(&stored).unwrap_or_default();
+        }
+        let mut positions = self.note_positions()?;
         let before = positions.len();
         positions.retain(|id, _| recent.contains(id));
         if positions.is_empty() {

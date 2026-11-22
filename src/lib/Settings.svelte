@@ -324,6 +324,8 @@
     recentStatus = recentError = "";
     try {
       await api.clearRecentOpened();
+      // The vault dropped the positions with the list; the session's go too.
+      notePositions.clear();
       recentStatus = "List cleared.";
     } catch (err) {
       recentError = errorMessage(err);

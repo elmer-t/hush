@@ -177,6 +177,14 @@ async function main() {
     check(`${mode}: another note and back: same line at the top, same cursor`, same(left, back), `${show(left)} / ${show(back)}`);
     check(`${mode}: the editor has the focus, as before`, back.focus === "editor", back.focus);
 
+    // Reopening by itself must not move the position: five more round trips.
+    for (let i = 0; i < 5; i++) {
+      await open("Short");
+      await open("Long one");
+    }
+    const sixth = await look();
+    check(`${mode}: five more round trips without a move: the same row, no drift`, sixth.top === back.top && sixth.cursor === back.cursor, `${show(back)} / ${show(sixth)}`);
+
     // A selection, then Settings and back (the editor is rebuilt, no open_note call).
     await page.keyboard.down("Shift");
     for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowRight");
@@ -229,7 +237,7 @@ async function main() {
     // A new note: the title has the focus and the editor is at the top.
     await page.getByRole("button", { name: "New note" }).first().click();
     await page.waitForFunction(() => document.activeElement?.matches("input.title"));
-    check(`${mode}: a new note has the focus in its title`, true);
+    check(`${mode}: a new note has the focus in its title and its editor at the top`, (await look()).scrollTop === 0);
 
     // The note got shorter than the stored offsets (an import, a metadata edit).
     await open("Long one");

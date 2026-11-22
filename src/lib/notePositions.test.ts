@@ -63,6 +63,25 @@ describe("PositionMemory", () => {
     expect(memory.get(1)).toEqual(at(10));
   });
 
+  it("forget drops one note", () => {
+    const memory = new PositionMemory();
+    memory.set(1, at(10));
+    memory.set(2, at(20));
+    memory.forget(1);
+    expect(memory.get(1)).toBeNull();
+    expect(memory.get(2)).toEqual(at(20));
+  });
+
+  it("clear forgets every position and keeps remembering", () => {
+    const memory = new PositionMemory();
+    memory.set(1, at(10));
+    memory.clear();
+    expect(memory.get(1)).toBeNull();
+    expect(memory.enabled).toBe(true);
+    memory.set(1, at(11));
+    expect(memory.get(1)).toEqual(at(11));
+  });
+
   it("keeps the notes used last when it is full", () => {
     const memory = new PositionMemory(3);
     for (const id of [1, 2, 3]) memory.set(id, at(id));
@@ -89,7 +108,6 @@ describe("startPosition", () => {
 
   it("is null when nothing is remembered: the note opens at the top as before", () => {
     expect(startPosition({ isNew: false, remembered: null, stored: null, length: 100 })).toBeNull();
-    expect(startPosition({ isNew: false, remembered: null, stored: undefined, length: 100 })).toBeNull();
   });
 
   it("is null for a new note, whose title gets the focus", () => {

@@ -203,7 +203,10 @@ pub fn clear_recent_opened(session: State<'_, Session>) -> Result<()> {
 /// for a note in the recently opened list, while that list and the setting are on.
 #[tauri::command(async)]
 pub fn set_note_position(session: State<'_, Session>, id: i64, position: NotePosition) -> Result<()> {
-    session.with_vault(|v| v.set_note_position(id, position))?;
+    // Quiet: the editor also reports its position after scrolling by itself (a restore, a
+    // layout change), and that must not postpone auto-lock. The user's own scrolling and
+    // typing is reported as activity by the frontend.
+    session.with_vault_quiet(session.generation(), |v| v.set_note_position(id, position))?;
     Ok(())
 }
 

@@ -44,14 +44,18 @@
   let body = initial.body;
 
   // Where the note was left (#242). The session's memory is newer than the vault's copy.
+  // A new note can have the id of a note deleted earlier in the session.
+  if (untrack(() => focusTitle)) notePositions.forget(id);
   const start = startPosition({
     isNew: untrack(() => focusTitle),
     remembered: notePositions.get(id),
     stored: untrack(() => opened.position),
     length: initial.body.length,
   });
-  /** The editor's position now, and what the vault was last told. */
-  let position: NotePosition | null = null;
+  // The editor's position now. It starts at the restored one, so a position that only the
+  // session knew still reaches the vault when the note is left without a move.
+  let position: NotePosition | null = start;
+  /** What the vault holds for this note, as far as the answers so far tell. */
   let storedPosition: NotePosition | null = untrack(() => opened.position) ?? null;
   let positionTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -66,9 +70,14 @@
   /** Writes the position to the vault if it moved. Never throws: after an idle lock the vault is closed. */
   async function storePosition(): Promise<void> {
     clearTimeout(positionTimer);
-    if (!position || !notePositions.enabled || samePosition(position, storedPosition)) return;
-    storedPosition = position;
-    await api.setNotePosition(id, position).catch(() => {});
+    const next = position;
+    if (!next || !notePositions.enabled || samePosition(next, storedPosition)) return;
+    try {
+      await api.setNotePosition(id, next);
+      storedPosition = next;
+    } catch {
+      // Tried again at the next move or when the note is left.
+    }
   }
   let savedBody = initial.body;
   let title = $state(initial.title);
@@ -175,10 +184,14 @@
   /** Saves pending edits now. Never throws; a failure is shown in the editor. */
   export async function flush(): Promise<void> {
     clearTimeout(timer);
-    // Before a lock or a close, which follow a flush: the vault is still open.
-    await storePosition();
     await saving;
-    if (body === savedBody) return;
+    if (body !== savedBody) await save();
+    // After the text, which matters more when a close gives little time. A lock or a close
+    // follows a flush, so the vault is still open here.
+    await storePosition();
+  }
+
+  async function save(): Promise<void> {
     const toSave = body;
     status = "saving";
     saving = api.saveNote(id, toSave).then(

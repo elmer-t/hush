@@ -49,7 +49,17 @@ export class PositionMemory {
   /** The setting "Reopen notes where you left off"; off forgets everything. */
   setEnabled(on: boolean) {
     this.#enabled = on;
-    if (!on) this.#positions.clear();
+    if (!on) this.clear();
+  }
+
+  /** Forgets every position, as clearing the recently opened list does in the vault. */
+  clear() {
+    this.#positions.clear();
+  }
+
+  /** Forgets one note: a new note can get the id of one that was deleted. */
+  forget(id: number) {
+    this.#positions.delete(id);
   }
 
   get(id: number): NotePosition | null {
@@ -77,7 +87,7 @@ export const notePositions = new PositionMemory();
 export function startPosition(open: {
   isNew: boolean;
   remembered: NotePosition | null;
-  stored: NotePosition | null | undefined;
+  stored: NotePosition | null;
   length: number;
 }): NotePosition | null {
   if (open.isNew) return null;
