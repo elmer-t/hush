@@ -19,6 +19,7 @@
   import ModelSettings from "$lib/ModelSettings.svelte";
   import { notePositions } from "$lib/notePositions";
   import PassphraseStrength from "$lib/PassphraseStrength.svelte";
+  import { weakPassphraseQuestion } from "$lib/passphrase";
   import TagSettings from "$lib/TagSettings.svelte";
   import VaultIconPicker from "$lib/VaultIconPicker.svelte";
   import { setThemePreference, themePreference, type ThemePreference } from "$lib/theme";
@@ -88,6 +89,10 @@
   let changing = $state(false);
   let passphraseStatus = $state("");
   let passphraseError = $state("");
+  // The very weak new passphrase the form has asked about once: submitting it again uses it.
+  let weakAsked = $state("");
+  // Shown until that passphrase is submitted again or edited.
+  const weakQuestion = $derived(weakAsked && weakAsked === next ? weakPassphraseQuestion(next) : null);
 
   let memory = $state<MemorySecurity | null>(null);
   let wipeMemory = $state(false);
@@ -410,11 +415,15 @@
       passphraseError = "The new passphrases do not match.";
       return;
     }
+    if (weakAsked !== next && weakPassphraseQuestion(next)) {
+      weakAsked = next;
+      return;
+    }
     changing = true;
     try {
       await api.changePassphrase(current, next);
       passphraseStatus = "Passphrase changed.";
-      current = next = confirm = "";
+      current = next = confirm = weakAsked = "";
     } catch (err) {
       passphraseError = errorMessage(err);
     } finally {
@@ -529,11 +538,12 @@
               autocomplete="off"
               aria-describedby="new-passphrase-strength"
               bind:value={next}
+              oninput={() => (weakAsked = "")}
               disabled={changing}
               required
             />
           </label>
-          <PassphraseStrength passphrase={next} id="new-passphrase-strength" />
+          <PassphraseStrength passphrase={next} id="new-passphrase-strength" question={weakQuestion} />
         </div>
         <label>
           Repeat new passphrase
@@ -544,7 +554,7 @@
         <div class="actions">
           {#if passphraseStatus}<span class="muted">{passphraseStatus}</span>{/if}
           <button type="submit" class="primary" disabled={changing}>
-            {changing ? "Changing…" : "Change passphrase"}
+            {changing ? "Changing…" : weakQuestion ? "Use it anyway" : "Change passphrase"}
           </button>
         </div>
       </form>

@@ -1,27 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { MIN_PASSPHRASE_CHARS, passphraseStrength } from "$lib/passphrase";
-import rustDb from "../../src-tauri/src/db/mod.rs?raw";
+import { PASSPHRASE_GUIDANCE, passphraseStrength, weakPassphraseQuestion } from "$lib/passphrase";
 
 const level = (p: string) => passphraseStrength(p).level;
-
-describe("MIN_PASSPHRASE_CHARS", () => {
-  it("matches the minimum Rust enforces", () => {
-    expect(rustDb).toContain(`pub const MIN_PASSPHRASE_CHARS: usize = ${MIN_PASSPHRASE_CHARS};`);
-  });
-});
 
 describe("passphraseStrength", () => {
   it("has nothing to say about an empty field", () => {
     expect(passphraseStrength("")).toEqual({ level: "empty", bits: 0, warning: null });
   });
 
-  it("calls anything under the minimum too short, counting characters not bytes", () => {
-    expect(MIN_PASSPHRASE_CHARS).toBe(8);
-    expect(level("a")).toBe("tooShort");
-    expect(level("Xq7#mLp")).toBe("tooShort");
-    expect(level("ééééééé")).toBe("tooShort");
-    expect(passphraseStrength("abc").warning).toBe("Too short: use at least 8 characters.");
-    expect(level("éééééééé")).not.toBe("tooShort");
+  it("rates a passphrase under 8 characters like any other and advises a longer one", () => {
+    const advice = "Shorter than the advised 8 characters.";
+    for (const p of ["a", "kq", "1234", "ééééééé"]) {
+      expect(passphraseStrength(p), p).toMatchObject({ level: "weak", warning: advice });
+    }
+    // Seven random characters are not weak, only shorter than advised.
+    expect(passphraseStrength("Xq7#mLp")).toMatchObject({ level: "fair", warning: advice });
+    // Characters, not bytes.
+    expect(passphraseStrength("kq7#mLé2").warning).toBeNull();
+    expect(PASSPHRASE_GUIDANCE).toBe("Use four or more random words. 8 characters or more is advised.");
+  });
+
+  it("keeps the common-password warning for a short common password", () => {
+    for (const p of ["abc", "admin1"]) expect(passphraseStrength(p), p).toMatchObject({ level: "weak", warning: "This is one of the most common passwords." });
   });
 
   it("warns about common passwords, also with leet spelling, capitals and digits added", () => {
@@ -75,7 +75,7 @@ describe("passphraseStrength", () => {
   it("stays fast on long input", () => {
     const started = performance.now();
     for (const p of ["a".repeat(500), "ab".repeat(250), "velvet orbit pickle tundra ".repeat(20)]) {
-      expect(passphraseStrength(p).level).not.toBe("tooShort");
+      expect(passphraseStrength(p).level).not.toBe("empty");
     }
     expect(performance.now() - started).toBeLessThan(1000);
   });
@@ -86,5 +86,25 @@ describe("passphraseStrength", () => {
     const c = passphraseStrength("velvet orbit pickle tundra").bits;
     expect(a).toBeLessThan(b);
     expect(b).toBeLessThan(c);
+  });
+});
+
+describe("weakPassphraseQuestion", () => {
+  const time = (p: string) => weakPassphraseQuestion(p)?.match(/in (\w+)\./)?.[1];
+
+  it("asks before a passphrase that falls within days, with the time it takes", () => {
+    expect(weakPassphraseQuestion("1234")).toBe(
+      "Someone with a copy of the vault file can guess this passphrase in seconds. Use it anyway?",
+    );
+    expect(time("password")).toBe("seconds");
+    expect(time("Password1")).toBe("seconds");
+    expect(time("kqzvw")).toBe("minutes");
+    expect(time("kqzmtw")).toBe("hours");
+  });
+
+  it("asks nothing for an empty field or a passphrase that holds for longer", () => {
+    for (const p of ["", "Xq7#mLp", "kq7#mLp2", "correct horse battery staple"]) {
+      expect(weakPassphraseQuestion(p), p).toBeNull();
+    }
   });
 });

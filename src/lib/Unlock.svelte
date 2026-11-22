@@ -14,6 +14,7 @@
   } from "$lib/api";
   import Icon from "$lib/Icon.svelte";
   import PassphraseStrength from "$lib/PassphraseStrength.svelte";
+  import { weakPassphraseQuestion } from "$lib/passphrase";
   // The 256 px Tauri app icon, so the unlock screen always matches the installed icon.
   import appIcon from "../../src-tauri/icons/128x128@2x.png";
 
@@ -30,6 +31,8 @@
   let showPassphrase = $state(false);
   // The create form only submits once the user has said they know there is no recovery.
   let understood = $state(false);
+  // The very weak passphrase the create form has asked about once: submitting it again uses it.
+  let weakAsked = $state("");
   let busy = $state(false);
   // A schema upgrade running while the vault opens, shown after a second.
   let upgrade = $state<VaultUpgrade | null>(null);
@@ -37,6 +40,8 @@
   let error = $state<{ kind: string; message: string } | null>(null);
   let passphraseInput = $state<HTMLInputElement>();
 
+  // Shown until that passphrase is submitted again or edited.
+  const weakQuestion = $derived(weakAsked && weakAsked === passphrase ? weakPassphraseQuestion(passphrase) : null);
   const creating = $derived(target?.mode === "create");
   // A vault picked with "Open existing…" that isn't in the recent list yet.
   const picked = $derived(
@@ -64,7 +69,7 @@
 
   async function choose(mode: Target["mode"], path: string) {
     target = { mode, path, name: fileName(path) };
-    passphrase = confirm = "";
+    passphrase = confirm = weakAsked = "";
     understood = showPassphrase = false;
     error = null;
     await tick();
@@ -104,6 +109,11 @@
       error = { kind: "mismatch", message: "The passphrases do not match." };
       return;
     }
+    if (target.mode === "create" && weakAsked !== passphrase && weakPassphraseQuestion(passphrase)) {
+      weakAsked = passphrase;
+      error = null;
+      return;
+    }
     busy = true;
     error = null;
     upgrade = null;
@@ -115,7 +125,7 @@
         target.mode === "create"
           ? await api.createVault(withExtension(target.path.trim()), passphrase)
           : await api.openVault(target.path, passphrase);
-      passphrase = confirm = "";
+      passphrase = confirm = weakAsked = "";
       onunlock(vault);
     } catch (err) {
       error = { kind: isApiError(err) ? err.kind : "", message: errorMessage(err) };
@@ -142,6 +152,7 @@
         spellcheck="false"
         bind:this={passphraseInput}
         bind:value={passphrase}
+        oninput={() => (weakAsked = "")}
         aria-describedby={strength ? `${id}-strength` : undefined}
         disabled={busy}
         required
@@ -157,7 +168,7 @@
       </button>
     </div>
     {#if strength}
-      <PassphraseStrength {passphrase} id="{id}-strength" />
+      <PassphraseStrength {passphrase} id="{id}-strength" question={weakQuestion} />
     {/if}
   </div>
 {/snippet}
@@ -228,7 +239,7 @@
       {@render problem()}
 
       <button type="submit" class="primary submit" disabled={busy || !passphrase || !understood}>
-        {busy ? "Creating…" : "Create vault"}
+        {busy ? "Creating…" : weakQuestion ? "Use it anyway" : "Create vault"}
       </button>
       <button type="button" class="link back" onclick={back} disabled={busy}>Open an existing vault instead</button>
     </form>
