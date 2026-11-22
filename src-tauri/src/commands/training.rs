@@ -66,7 +66,18 @@ fn retag_changed(result: std::result::Result<Option<Retag>, RetagError>, activit
 /// Example counts, status and cross-validated quality of every used or described tag.
 #[tauri::command(async)]
 pub fn tag_training(session: State<'_, Session>) -> Result<Vec<TagTraining>> {
-    Ok(session.with_vault(|v| v.tag_training())?)
+    Ok(count_tag_training(&session)?)
+}
+
+/// [`crate::db::Vault::tag_training`] a slice at a time, so the vault is never held for
+/// long: it counts over every tag use, and another command (opening a note, leaving
+/// Settings) must not wait for all of it (#251). After the first slice it steps aside for
+/// foreground callers, as background work does.
+pub fn count_tag_training(session: &Session) -> std::result::Result<Vec<TagTraining>, crate::session::SessionError> {
+    let generation = session.generation();
+    let mut count = session.with_vault(|v| v.tag_training_start())?;
+    while session.with_vault_quiet(generation, |v| v.tag_training_step(&mut count))? {}
+    Ok(count.finish())
 }
 
 #[cfg(test)]

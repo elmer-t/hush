@@ -454,9 +454,13 @@ impl Vault {
         let count: i64 = if folder.is_empty() {
             self.conn.query_row("SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL", [], |r| r.get(0))?
         } else {
+            // Two ranges of the folder index: the folder, and what sorts between
+            // `folder/` and `folder0` (the character after `/`), its subfolders. An
+            // `OR ... LIKE` here read the index entry of every note in the vault (#251).
             self.conn.query_row(
-                "SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL AND (folder = ?1 OR folder LIKE ?2 ESCAPE '\\')",
-                rusqlite::params![folder, format!("{}/%", escape_like(&folder))],
+                "SELECT (SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL AND folder = ?1)
+                      + (SELECT COUNT(*) FROM notes WHERE deleted_at IS NULL AND folder >= ?2 AND folder < ?3)",
+                rusqlite::params![folder, format!("{folder}/"), format!("{folder}0")],
                 |r| r.get(0),
             )?
         };
@@ -671,10 +675,6 @@ fn clean_snippet(snippet: &str) -> Option<String> {
     let first = snippet.find(HIGHLIGHT_START)?;
     let start = snippet[..first].rfind("---").map_or(0, |i| i + 3);
     Some(snippet[start..].trim_start().to_string())
-}
-
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 #[cfg(test)]

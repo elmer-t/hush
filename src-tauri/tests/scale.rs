@@ -858,16 +858,37 @@ fn unlock_contention_benchmark() {
     );
 }
 
-/// What opening Settings and Import asks of the vault, by call (#251). The app runs these
-/// when the view opens, each holding the vault, so the slowest is how long anything else
-/// can wait. `tag_training` is listed twice because the Tags section asked twice.
-fn settings_calls(folder: String) -> Vec<(&'static str, Box<dyn Fn(&mut Vault) + Send + Sync>)> {
+/// What opening Settings and Import asks of the vault (#251), by call, each returning how
+/// long it held the vault at a stretch. The app runs these when the view opens, so the
+/// longest hold is how long anything else can wait. `tag_training` counts in slices and
+/// gives the vault up in between (`commands::training::count_tag_training`), so its
+/// longest slice is its hold.
+fn settings_calls(folder: String) -> Vec<(&'static str, Box<dyn Fn(&mut Vault) -> Duration + Send + Sync>)> {
+    fn held<T>(f: impl FnOnce() -> T) -> Duration {
+        let t = Instant::now();
+        f();
+        t.elapsed()
+    }
     vec![
-        ("vault_space", Box::new(|v| drop(v.space().unwrap()))),
-        ("tag_list", Box::new(|v| drop(v.tag_list().unwrap()))),
-        ("tag_training", Box::new(|v| drop(v.tag_training().unwrap()))),
-        ("model_overview (note count)", Box::new(|v| { v.live_note_count().unwrap(); })),
-        ("import_target_notes", Box::new(move |v| { v.count_in_folder(&folder).unwrap(); })),
+        ("vault_space", Box::new(|v| held(|| v.space().unwrap()))),
+        ("tag_list", Box::new(|v| held(|| v.tag_list().unwrap()))),
+        (
+            "tag_training (longest slice)",
+            Box::new(|v| {
+                let mut longest = Duration::ZERO;
+                let mut count = None;
+                longest = longest.max(held(|| count = Some(v.tag_training_start().unwrap())));
+                let mut count = count.unwrap();
+                let mut more = true;
+                while more {
+                    longest = longest.max(held(|| more = v.tag_training_step(&mut count).unwrap()));
+                }
+                longest
+            }),
+        ),
+        ("tag_training (all slices)", Box::new(|v| held(|| v.tag_training().unwrap()))),
+        ("model_overview (note count)", Box::new(|v| held(|| v.live_note_count().unwrap()))),
+        ("import_target_notes", Box::new(move |v| held(|| v.count_in_folder(&folder).unwrap()))),
     ]
 }
 
@@ -912,14 +933,11 @@ fn settings_open_benchmark() {
     for (name, call) in settings_calls(folder.clone()) {
         // A vault just opened has nothing of the tables in SQLite's cache.
         let mut vault = Vault::open(&path, common::PASS).unwrap();
-        let t = Instant::now();
-        call(&mut vault);
-        let first = t.elapsed();
-        let t = Instant::now();
-        call(&mut vault);
-        let again = t.elapsed();
+        let first = call(&mut vault);
+        let again = call(&mut vault);
         println!("{name:<30} {:>12} {:>12}", ms(first), ms(again));
-        if first.max(again) > HOLD {
+        // In all its slices the count is not one hold of the vault.
+        if first.max(again) > HOLD && !name.contains("all slices") {
             slow.push(name);
         }
     }
@@ -933,10 +951,13 @@ fn settings_open_benchmark() {
     std::thread::scope(|s| {
         s.spawn(|| {
             for (name, call) in settings_calls(folder.clone()) {
-                for _ in 0..if name == "tag_training" { 2 } else { 1 } {
-                    session.with_vault(|v| Ok(call(v))).unwrap();
+                if name.starts_with("tag_training") {
+                    continue;
                 }
+                session.with_vault(|v| Ok(call(v))).unwrap();
             }
+            // As the app's command does it.
+            hush_lib::commands::training::count_tag_training(&session).unwrap();
             loading.store(false, Ordering::SeqCst);
         });
         while loading.load(Ordering::SeqCst) || waits.len() < 5 {

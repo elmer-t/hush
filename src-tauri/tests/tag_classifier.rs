@@ -187,6 +187,44 @@ fn training_counts_leave_out_trashed_notes() {
     assert_eq!((restored.positives, restored.negatives, restored.rejected), (4, 6, 0));
 }
 
+/// Counting a slice at a time (so the vault isn't held for long) gives the counts of
+/// counting in one go, whatever the slice.
+#[test]
+fn training_counts_are_the_same_counted_in_slices() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    for i in 0..9 {
+        let tags = ["dreams", "money", "travel"].iter().enumerate().filter(|(t, _)| (i + t) % 3 != 0).map(|(_, t)| *t);
+        let tags = tags.collect::<Vec<_>>().join(", ");
+        create(&session, &format!("n{i}"), &format!("---\ntags: [{tags}]\n---\ndream night w{i}"));
+    }
+    let plain = create(&session, "plain", "invoice budget");
+    session.with_vault(|v| v.accept_tag_suggestion(plain, "travel")).unwrap();
+    let unindexed = |s: &Session| s.with_vault(|v| v.tag_training()).unwrap();
+    assert!(unindexed(&session).iter().all(|t| t.positives == 0 && t.negatives == 0), "no vectors yet");
+    index(&session, g, &source);
+    let whole = session.with_vault(|v| v.tag_training()).unwrap();
+    assert_eq!(whole.iter().map(|t| (t.tag.as_str(), t.positives, t.negatives)).collect::<Vec<_>>(), [
+        ("dreams", 6, 4),
+        ("money", 6, 4),
+        ("travel", 7, 3),
+    ]);
+    for size in [1, 2, 5, 18, 19, 1_000] {
+        let mut steps = 0;
+        let sliced = session
+            .with_vault(|v| {
+                let mut count = v.tag_training_start()?.step(size);
+                while v.tag_training_step(&mut count)? {
+                    steps += 1;
+                }
+                Ok(count.finish())
+            })
+            .unwrap();
+        assert_eq!(sliced, whole, "slices of {size}");
+        assert!(steps >= 18 / size, "{steps} steps for slices of {size}");
+    }
+}
+
 #[test]
 fn a_rejection_lowers_that_notes_score_after_retraining() {
     let source = Fakes::new(&[64]);
