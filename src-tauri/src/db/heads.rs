@@ -5,11 +5,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::{Result, Vault, now_ms};
+use super::{Result, TagInfo, Vault, now_ms};
 use crate::classify::{self, Head, MIN_NEGATIVES, MIN_POSITIVES, PROBABILITY_THRESHOLD};
 use crate::embed;
 
@@ -350,51 +350,145 @@ impl Vault {
     }
 
     /// The classifier state of every tag that is used or described, for the Tags settings.
+    /// All at once, holding the vault throughout: on a large vault use
+    /// [`Vault::tag_training_start`] and [`Vault::tag_training_step`] instead.
     pub fn tag_training(&self) -> Result<Vec<TagTraining>> {
+        let mut count = self.tag_training_start()?;
+        while self.tag_training_step(&mut count)? {}
+        Ok(count.finish())
+    }
+
+    /// Begins counting for [`Vault::tag_training`]: the tags, their heads and the user's
+    /// decisions, which are small. The counting over every note and every tag use is
+    /// left to [`Vault::tag_training_step`], a slice at a time, so the vault can go to
+    /// someone else in between (#251: in one go it held the vault for a minute).
+    pub fn tag_training_start(&self) -> Result<TrainingCount> {
         let model = self.embedding_model_ready()?;
         let heads: HashMap<String, StoredHead> = match &model {
             Some(m) => self.tag_heads()?.into_iter().filter(|h| &h.model == m).map(|h| (h.tag.clone(), h)).collect(),
             None => HashMap::new(),
         };
-        let total: usize = match &model {
-            Some(m) => self
-                .conn
-                .query_row(
-                    "SELECT count(*) FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-                     WHERE e.model = ?1 AND n.deleted_at IS NULL",
-                    [m],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()?
-                .unwrap_or(0) as usize,
-            None => 0,
-        };
-        // Counted against the notes that have a ready vector: only those can be examples.
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut names = HashMap::new();
         if let Some(m) = &model {
-            let mut stmt = self.conn.prepare_cached(
-                "WITH v AS (SELECT e.note_id FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-                            WHERE e.model = ?1 AND n.deleted_at IS NULL),
-                      pos AS (SELECT t.name AS tag, nt.note_id FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
-                              UNION SELECT tag, note_id FROM tag_feedback WHERE accepted = 1)
-                 SELECT tag, count(*), 0 FROM pos WHERE note_id IN v GROUP BY tag
-                 UNION ALL
-                 SELECT f.tag, 0, count(*) FROM tag_feedback f
-                 WHERE f.accepted = 0 AND f.note_id IN v
-                   AND NOT EXISTS (SELECT 1 FROM pos WHERE pos.tag = f.tag AND pos.note_id = f.note_id)
-                 GROUP BY f.tag",
-            )?;
-            let rows = stmt.query_map([m], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
+            // Decisions on notes that don't have the tag: an accepted one is a positive
+            // example, a rejected one is shown as such. A note has one decision per tag.
+            let mut stmt = self.conn.prepare_cached(&format!(
+                "SELECT f.tag, f.accepted, count(*) FROM tag_feedback f
+                 WHERE {live}
+                   AND NOT EXISTS (SELECT 1 FROM tags t JOIN note_tags nt ON nt.tag_id = t.id
+                                   WHERE t.name = f.tag AND nt.note_id = f.note_id)
+                 GROUP BY f.tag, f.accepted",
+                live = usable("f.note_id")
+            ))?;
+            let rows = stmt.query_map([m], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, i64>(2)?)))?;
             for row in rows {
-                let (tag, pos, rej) = row?;
+                let (tag, accepted, n) = row?;
                 let entry = counts.entry(tag).or_default();
-                entry.0 += pos as usize;
-                entry.1 += rej as usize;
+                if accepted {
+                    entry.0 += n as usize;
+                } else {
+                    entry.1 += n as usize;
+                }
+            }
+            let mut stmt = self.conn.prepare_cached("SELECT id, name FROM tags")?;
+            for row in stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+                let (id, name) = row?;
+                names.insert(id, name);
             }
         }
-        let training = self
-            .tag_list()?
-            .into_iter()
+        Ok(TrainingCount { tags: self.tag_list()?, model, heads, counts, names, total: 0, vectors_after: Some(i64::MIN), after: Some((i64::MIN, i64::MIN)), step: TRAINING_STEP })
+    }
+
+    /// Counts one more slice for `count`; false once there is nothing left to count.
+    /// Each call reads a bounded run of index entries ([`TRAINING_STEP`] tag uses, or a
+    /// few times as many vector keys), without reading a note or a vector.
+    pub fn tag_training_step(&self, count: &mut TrainingCount) -> Result<bool> {
+        let Some(model) = count.model.clone() else { return Ok(false) };
+        if let Some(after) = count.vectors_after {
+            // Every live note with a ready vector: only those can be examples. From the
+            // vectors' key and the trash's index, without reading a note or a vector.
+            let (read, live, last): (i64, i64, Option<i64>) = self.conn.query_row(
+                "SELECT count(*), coalesce(sum(live), 0), max(note_id) FROM (
+                     SELECT e.note_id AS note_id,
+                            +e.model = ?1 AND e.note_id NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL) AS live
+                     FROM note_embeddings e WHERE e.note_id > ?2 ORDER BY e.note_id LIMIT ?3)",
+                params![model, after, VECTORS_PER_USE * count.step as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            count.total += live as usize;
+            count.vectors_after = last.filter(|_| read == VECTORS_PER_USE * count.step as i64);
+            return Ok(true);
+        }
+        let Some((note, tag)) = count.after else { return Ok(false) };
+        // In note order, which is the order of `note_tags` itself and of the vectors'
+        // key: both are then read front to back. By tag, each use looked up a vector
+        // somewhere else in that key, and with the vault's small page cache every
+        // lookup decrypted a page (5 times slower at 350,000 notes).
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT nt.note_id, nt.tag_id, {live} FROM note_tags nt
+             WHERE (nt.note_id, nt.tag_id) > (?2, ?3) ORDER BY nt.note_id, nt.tag_id LIMIT ?4",
+            live = usable("nt.note_id")
+        ))?;
+        let mut rows = stmt.query(params![model, note, tag, count.step as i64])?;
+        let mut read = 0;
+        let mut last = (note, tag);
+        while let Some(r) = rows.next()? {
+            last = (r.get(0)?, r.get(1)?);
+            read += 1;
+            if r.get::<_, bool>(2)?
+                && let Some(name) = count.names.get(&last.1)
+            {
+                count.counts.entry(name.clone()).or_default().0 += 1;
+            }
+        }
+        count.after = (read == count.step).then_some(last);
+        Ok(count.after.is_some())
+    }
+}
+
+/// How many tag uses one [`Vault::tag_training_step`] reads, to hold the vault for some
+/// tens of milliseconds at most.
+pub const TRAINING_STEP: usize = 25_000;
+/// A vector is counted this many times faster than a tag use is checked.
+const VECTORS_PER_USE: i64 = 4;
+
+/// SQL for "`note` is live and has a vector of the ready model (`?1`)", from indexes only.
+fn usable(note: &str) -> String {
+    format!(
+        "(EXISTS (SELECT 1 FROM note_embeddings e WHERE e.note_id = {note} AND e.model = ?1)
+          AND {note} NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL))"
+    )
+}
+
+/// [`Vault::tag_training`] under way: what is counted so far, and where it goes on.
+pub struct TrainingCount {
+    tags: Vec<TagInfo>,
+    model: Option<String>,
+    heads: HashMap<String, StoredHead>,
+    /// Positive examples and rejections, by tag.
+    counts: HashMap<String, (usize, usize)>,
+    /// Tag names by id.
+    names: HashMap<i64, String>,
+    /// Live notes with a ready vector, as far as counted.
+    total: usize,
+    /// The last vector counted for `total`; `None` when all are.
+    vectors_after: Option<i64>,
+    /// The last (note, tag) use counted; `None` when all are.
+    after: Option<(i64, i64)>,
+    step: usize,
+}
+
+impl TrainingCount {
+    /// Tag uses per step instead of [`TRAINING_STEP`] (at least one).
+    pub fn step(mut self, uses: usize) -> Self {
+        self.step = uses.max(1);
+        self
+    }
+
+    pub fn finish(self) -> Vec<TagTraining> {
+        let Self { tags, heads, counts, total, .. } = self;
+        tags.into_iter()
             .map(|info| {
                 let (positives, rejected) = counts.get(&info.tag).copied().unwrap_or_default();
                 let negatives = total.saturating_sub(positives);
@@ -418,8 +512,7 @@ impl Vault {
                     trained_at: head.map(|h| h.trained_at),
                 }
             })
-            .collect();
-        Ok(training)
+            .collect()
     }
 }
 

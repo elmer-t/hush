@@ -38,7 +38,10 @@ pub use embeddings::{
     QueuedVector, StoredVector,
 };
 pub use graph::{GraphScopeNotes, LinkTarget, Resolver};
-pub use heads::{ScoreMethod, StoredHead, TagLabels, TagScorer, TagTraining, TrainingPage, TrainingStatus, new_stored_head};
+pub use heads::{
+    ScoreMethod, StoredHead, TRAINING_STEP, TagLabels, TagScorer, TagTraining, TrainingCount, TrainingPage, TrainingStatus,
+    new_stored_head,
+};
 pub use icon::{VAULT_ICON_SETTING, VaultIcon};
 pub use internals::{HeadTime, NoteInternals, NoteTag, NoteVector, TagSource};
 pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};

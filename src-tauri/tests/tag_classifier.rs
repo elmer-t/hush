@@ -163,6 +163,68 @@ fn a_tag_crossing_ten_examples_switches_from_its_description_to_a_head() {
     assert!(suggestions(&session, target).is_empty(), "no head and no description");
 }
 
+/// The counts Settings shows leave out notes in the trash (#251: counted without reading
+/// the notes themselves).
+#[test]
+fn training_counts_leave_out_trashed_notes() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    let tagged = notes(&session, "dreams", 4, 6);
+    let other = create(&session, "other extra", "invoice budget meeting office extra");
+    session.with_vault(|v| v.reject_tag_suggestion(other, "dreams")).unwrap();
+    index(&session, g, &source);
+    let before = training_of(&session, "dreams");
+    assert_eq!((before.positives, before.negatives, before.rejected), (4, 7, 1));
+
+    session.with_vault(|v| v.trash_note(tagged[0])).unwrap();
+    session.with_vault(|v| v.trash_note(other)).unwrap();
+    let after = training_of(&session, "dreams");
+    assert_eq!((after.positives, after.negatives, after.rejected), (3, 6, 0));
+
+    session.with_vault(|v| v.restore_note(tagged[0]).map(drop)).unwrap();
+    index(&session, g, &source);
+    let restored = training_of(&session, "dreams");
+    assert_eq!((restored.positives, restored.negatives, restored.rejected), (4, 6, 0));
+}
+
+/// Counting a slice at a time (so the vault isn't held for long) gives the counts of
+/// counting in one go, whatever the slice.
+#[test]
+fn training_counts_are_the_same_counted_in_slices() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    for i in 0..9 {
+        let tags = ["dreams", "money", "travel"].iter().enumerate().filter(|(t, _)| (i + t) % 3 != 0).map(|(_, t)| *t);
+        let tags = tags.collect::<Vec<_>>().join(", ");
+        create(&session, &format!("n{i}"), &format!("---\ntags: [{tags}]\n---\ndream night w{i}"));
+    }
+    let plain = create(&session, "plain", "invoice budget");
+    session.with_vault(|v| v.accept_tag_suggestion(plain, "travel")).unwrap();
+    let unindexed = |s: &Session| s.with_vault(|v| v.tag_training()).unwrap();
+    assert!(unindexed(&session).iter().all(|t| t.positives == 0 && t.negatives == 0), "no vectors yet");
+    index(&session, g, &source);
+    let whole = session.with_vault(|v| v.tag_training()).unwrap();
+    assert_eq!(whole.iter().map(|t| (t.tag.as_str(), t.positives, t.negatives)).collect::<Vec<_>>(), [
+        ("dreams", 6, 4),
+        ("money", 6, 4),
+        ("travel", 7, 3),
+    ]);
+    for size in [1, 2, 5, 18, 19, 1_000] {
+        let mut steps = 0;
+        let sliced = session
+            .with_vault(|v| {
+                let mut count = v.tag_training_start()?.step(size);
+                while v.tag_training_step(&mut count)? {
+                    steps += 1;
+                }
+                Ok(count.finish())
+            })
+            .unwrap();
+        assert_eq!(sliced, whole, "slices of {size}");
+        assert!(steps >= 18 / size, "{steps} steps for slices of {size}");
+    }
+}
+
 #[test]
 fn a_rejection_lowers_that_notes_score_after_retraining() {
     let source = Fakes::new(&[64]);

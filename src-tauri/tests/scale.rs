@@ -858,6 +858,122 @@ fn unlock_contention_benchmark() {
     );
 }
 
+/// What opening Settings and Import asks of the vault (#251), by call, each returning how
+/// long it held the vault at a stretch. The app runs these when the view opens, so the
+/// longest hold is how long anything else can wait. `tag_training` counts in slices and
+/// gives the vault up in between (`commands::training::count_tag_training`), so its
+/// longest slice is its hold.
+fn settings_calls(folder: String) -> Vec<(&'static str, Box<dyn Fn(&mut Vault) -> Duration + Send + Sync>)> {
+    fn held<T>(f: impl FnOnce() -> T) -> Duration {
+        let t = Instant::now();
+        f();
+        t.elapsed()
+    }
+    vec![
+        ("vault_space", Box::new(|v| held(|| v.space().unwrap()))),
+        ("tag_list", Box::new(|v| held(|| v.tag_list().unwrap()))),
+        (
+            "tag_training (longest slice)",
+            Box::new(|v| {
+                let mut longest = Duration::ZERO;
+                let mut count = None;
+                longest = longest.max(held(|| count = Some(v.tag_training_start().unwrap())));
+                let mut count = count.unwrap();
+                let mut more = true;
+                while more {
+                    longest = longest.max(held(|| more = v.tag_training_step(&mut count).unwrap()));
+                }
+                longest
+            }),
+        ),
+        ("tag_training (all slices)", Box::new(|v| held(|| v.tag_training().unwrap()))),
+        ("model_overview (note count)", Box::new(|v| held(|| v.live_note_count().unwrap()))),
+        ("import_target_notes", Box::new(move |v| held(|| v.count_in_folder(&folder).unwrap()))),
+    ]
+}
+
+/// Opening Settings and Import on a large vault (#251): how long each call they make holds
+/// the vault, on a vault just opened and again, and how long reading a note waits while
+/// Settings loads. Same environment variables as [`scale_benchmark`]. Fails when a call
+/// holds the vault for more than 200 ms, or the note waits more than 500 ms.
+#[test]
+#[ignore = "scale benchmark: minutes; run with --ignored --nocapture"]
+fn settings_open_benchmark() {
+    const HOLD: Duration = Duration::from_millis(200);
+    const WAIT: Duration = Duration::from_millis(500);
+    let notes: usize = std::env::var("HUSH_SCALE_NOTES").ok().and_then(|n| n.replace('_', "").parse().ok()).unwrap_or(1_000_000);
+    let temp = tempfile::tempdir().unwrap();
+    let path: PathBuf = std::env::var_os("HUSH_SCALE_VAULT").map_or_else(|| temp.path().join("scale.hush"), PathBuf::from);
+    println!("machine: {}", machine());
+    let vault = prepare(&path, notes);
+    let session = Session::default();
+    let g = session.unlock(vault, path.clone()).unwrap();
+    let source = Counting::default();
+    let start = Instant::now();
+    while job::pass(&session, g, &source, &mut |_| {}).unwrap().stale > 0 {}
+    println!("indexed (or checked) with the fake embedder: {}", secs(start.elapsed()));
+    // A trash of 2% of the notes, for the Storage section's sizes.
+    let (folder, note) = session
+        .with_vault(|v| {
+            if v.trash_count()? == 0 {
+                let ids: Vec<i64> = (1..=notes as i64).filter(|id| id % 50 == 0).collect();
+                for chunk in ids.chunks(1_000) {
+                    v.trash_notes(chunk)?;
+                }
+            }
+            let folder = v.folders()?.into_iter().find(|f| !f.is_empty() && !f.contains('/')).unwrap_or_default();
+            Ok((folder, 1i64))
+        })
+        .unwrap();
+    session.lock();
+    println!("{notes} notes; import target {folder:?}");
+
+    let mut slow = Vec::new();
+    println!("{:<30} {:>12} {:>12}", "call", "just opened", "again");
+    for (name, call) in settings_calls(folder.clone()) {
+        // A vault just opened has nothing of the tables in SQLite's cache.
+        let mut vault = Vault::open(&path, common::PASS).unwrap();
+        let first = call(&mut vault);
+        let again = call(&mut vault);
+        println!("{name:<30} {:>12} {:>12}", ms(first), ms(again));
+        // In all its slices the count is not one hold of the vault.
+        if first.max(again) > HOLD && !name.contains("all slices") {
+            slow.push(name);
+        }
+    }
+
+    // A note read every 20 ms while Settings loads, as when the view is left again.
+    let vault = Vault::open(&path, common::PASS).unwrap();
+    session.unlock(vault, path.clone()).unwrap();
+    let _stop = LockOnDrop(&session);
+    let loading = std::sync::atomic::AtomicBool::new(true);
+    let mut waits = Vec::new();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            for (name, call) in settings_calls(folder.clone()) {
+                if name.starts_with("tag_training") {
+                    continue;
+                }
+                session.with_vault(|v| Ok(call(v))).unwrap();
+            }
+            // As the app's command does it.
+            hush_lib::commands::training::count_tag_training(&session).unwrap();
+            loading.store(false, Ordering::SeqCst);
+        });
+        while loading.load(Ordering::SeqCst) || waits.len() < 5 {
+            let t = Instant::now();
+            session.with_vault(|v| v.note(note)).unwrap();
+            waits.push(t.elapsed());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    waits.sort();
+    let longest = *waits.last().unwrap();
+    println!("reading a note while Settings loads: {} reads, median {}, max {}", waits.len(), ms(waits[waits.len() / 2]), ms(longest));
+    assert!(slow.is_empty(), "held the vault for more than {}: {slow:?}", ms(HOLD));
+    assert!(longest <= WAIT, "a note waited {} for the vault", ms(longest));
+}
+
 #[test]
 fn generator_is_deterministic_and_shaped_as_specified() {
     let mut a = Generator::new(20_000);
