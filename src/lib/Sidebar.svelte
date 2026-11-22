@@ -1119,6 +1119,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-text);
+    user-select: none;
     font-size: 11px;
     line-height: 18px;
     text-align: center;
@@ -1239,6 +1240,7 @@
     border-radius: 10px;
     background: var(--text);
     color: var(--bg);
+    user-select: none;
   }
 
   .picked {
@@ -1253,6 +1255,7 @@
     border-radius: 6px;
     background: var(--inverse-button);
     color: var(--bg);
+    user-select: none;
     font-size: 13px;
   }
 

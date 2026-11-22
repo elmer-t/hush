@@ -35,8 +35,10 @@ export const sourceTheme = EditorView.theme({
 /** Both modes. */
 export const editorTheme = EditorView.theme({
   "&.cm-focused": { outline: "none" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-    backgroundColor: "var(--selection)",
+  // The first selector is as specific as CodeMirror's own rule for a focused editor, which
+  // otherwise wins with its light lavender, in the dark theme too (#245).
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": {
+    backgroundColor: "var(--text-selection)",
   },
   // Find: the note's find bar drives CodeMirror's search, whose own panel stays hidden.
   ".cm-panels": { display: "none" },
