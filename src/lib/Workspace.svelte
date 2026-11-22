@@ -59,10 +59,13 @@
   import Settings from "$lib/Settings.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import Trash from "$lib/Trash.svelte";
-  // Same shipped Tauri icon as the unlock screen.
-  import appIcon from "../../src-tauri/icons/128x128@2x.png";
+  import VaultIcon from "$lib/VaultIcon.svelte";
 
   let { vault }: { vault: VaultInfo } = $props();
+  // The vault's icon, changed from Settings. Component state only: locking reloads the
+  // page, and nothing of it is kept outside the vault (#241).
+  // svelte-ignore state_referenced_locally (the workspace is mounted once per unlock)
+  let vaultIcon = $state(vault.icon);
 
   // Auto-lock is enforced by the backend; activity is reported at most this often.
   const TOUCH_INTERVAL_MS = 15_000;
@@ -809,7 +812,7 @@
       </button>
     </div>
     <div class="vault" title={vault.path}>
-      <img class="mark" src={appIcon} alt="" width="28" height="28" />
+      <VaultIcon icon={vaultIcon} size={28} />
       <span class="names">
         <strong>{vault.name}</strong>
         <span class="path">{vault.path}</span>
@@ -903,7 +906,7 @@
       <div class="page" hidden={view !== "import"}><Import onimported={() => sidebar?.refresh("all")} /></div>
     {/if}
     {#if view === "settings"}
-      <div class="page"><Settings onreviewtag={reviewTag} oncompacting={compactingChanged} /></div>
+      <div class="page"><Settings onreviewtag={reviewTag} oncompacting={compactingChanged} onvaulticon={(icon) => (vaultIcon = icon)} /></div>
     {:else if view === "graph"}
       <GraphView
         centre={summary ? { id: summary.id, folder: summary.folder } : null}
@@ -1055,13 +1058,6 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
-  }
-
-  .mark {
-    flex: none;
-    display: block;
-    width: 28px;
-    height: 28px;
   }
 
   .names {
