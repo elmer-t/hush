@@ -121,7 +121,10 @@ async function main() {
   await page.locator("main .cm-content").click();
   await page.keyboard.press("Control+Home");
   await page.keyboard.type("EDITED-ONE ");
+  // Typing scrolls the cursor into view in the editor's next measure; scroll after that.
+  await page.waitForTimeout(300);
   await page.evaluate(() => { const s = document.querySelector("main .cm-scroller"); s.scrollTop = 4000; });
+  await page.waitForFunction(() => document.querySelector("main .cm-scroller").scrollTop > 3000);
   await page.waitForTimeout(400);
   const before = await look();
 
