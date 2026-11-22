@@ -7,7 +7,7 @@
 // (diagrams, the graph) when the resolved scheme changes, whether by a manual switch or
 // by the OS while System is chosen. Code that needs the scheme asks here, not `matchMedia`:
 // the media query says what the OS wants, not what the user chose.
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { KEYS, loadStored, oneOf, saveStored } from "$lib/layout";
 
@@ -52,7 +52,17 @@ function apply() {
   document.documentElement.dataset.theme = next;
   if (next === scheme) return;
   scheme = next;
+  mirrorScheme(next);
   for (const listener of [...listeners]) listener(next);
+}
+
+/**
+ * Tells the app which scheme is showing. It gives the window that background and keeps
+ * the scheme for the next start, when the window needs it before this page has loaded (#239).
+ */
+function mirrorScheme(next: Scheme) {
+  if (!isTauri()) return;
+  invoke("set_window_scheme", { dark: next === "dark" }).catch(() => {});
 }
 
 /** Has the native window (title bar, native dialogs) follow the choice; `null` follows the OS. */

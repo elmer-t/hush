@@ -30,6 +30,10 @@ pub struct AppConfig {
     /// because of its speed cost; read once at startup, so a change applies on restart.
     #[serde(default)]
     pub memory_security: bool,
+    /// Whether the last run ended in the dark scheme, for the window's background before
+    /// the page has loaded (#239). The theme choice itself lives in the webview's storage.
+    #[serde(default)]
+    pub window_dark: Option<bool>,
 }
 
 impl AppConfig {

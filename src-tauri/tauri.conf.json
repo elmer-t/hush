@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Hush",
+        "visible": false,
         "dragDropEnabled": false,
         "width": 1280,
         "height": 800,

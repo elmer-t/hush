@@ -147,6 +147,47 @@ describe("applying the theme", () => {
   });
 });
 
+describe("telling the app the scheme (#239)", () => {
+  afterEach(() => vi.doUnmock("@tauri-apps/api/core"));
+
+  /** The theme module inside a (fake) Tauri window; `invoke` records the commands sent. */
+  async function inTauri() {
+    const invoke = vi.fn((_command: string, _args?: unknown) => Promise.resolve());
+    vi.doMock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke }));
+    vi.doMock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ setTheme: () => Promise.resolve() }) }));
+    const theme = await freshTheme();
+    const sent = () => invoke.mock.calls.filter(([command]) => command === "set_window_scheme").map(([, args]) => args);
+    return { theme, sent };
+  }
+
+  afterEach(() => vi.doUnmock("@tauri-apps/api/window"));
+
+  it("reports the scheme at start and on each real change, not on a repeat", async () => {
+    const data = fakeStorage();
+    data.set(KEYS.theme, '"dark"');
+    const win = fakeWindow(false);
+    const { theme, sent } = await inTauri();
+    theme.initTheme();
+    expect(sent()).toEqual([{ dark: true }]);
+    theme.setThemePreference("dark");
+    expect(sent()).toEqual([{ dark: true }]);
+    theme.setThemePreference("system");
+    expect(sent()).toEqual([{ dark: true }, { dark: false }]);
+    win.setDark(true);
+    expect(sent()).toEqual([{ dark: true }, { dark: false }, { dark: true }]);
+  });
+
+  it("sends nothing outside the app", async () => {
+    fakeStorage();
+    fakeWindow(true);
+    const invoke = vi.fn(() => Promise.resolve());
+    vi.doMock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke }));
+    const theme = await freshTheme();
+    theme.initTheme();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
 describe("app.css", () => {
   /** The declarations of the first rule whose selector is `selector`, normalised. */
   function declarations(css: string, selector: string): string[] {
