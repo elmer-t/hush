@@ -57,6 +57,7 @@
   import ContextMenu, { type MenuItem } from "$lib/ContextMenu.svelte";
   import ResizeHandle from "$lib/ResizeHandle.svelte";
   import Settings from "$lib/Settings.svelte";
+  import { notePositions } from "$lib/notePositions";
   import Sidebar from "$lib/Sidebar.svelte";
   import Trash from "$lib/Trash.svelte";
   import VaultIcon from "$lib/VaultIcon.svelte";
@@ -263,6 +264,8 @@
     model.open = () => void openModelSettings();
     void loadAutoLock();
     void loadTrashCount();
+    // "Reopen notes where you left off" (#242); the vault already leaves the positions out when it is off.
+    void api.restorePosition().then((on) => notePositions.setEnabled(on), () => {});
     void api
       .collapsedSections()
       .then((sections) => (collapsed = sections))

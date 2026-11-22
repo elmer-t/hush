@@ -9,6 +9,7 @@
   import type { EditorMode } from "$lib/layout";
   import { normalizeFolder } from "$lib/markdown";
   import MarkdownEditor from "$lib/MarkdownEditor.svelte";
+  import { notePositions, samePosition, startPosition, type NotePosition } from "$lib/notePositions";
 
   type Props = {
     opened: OpenedNote;
@@ -32,12 +33,52 @@
   }: Props = $props();
 
   const SAVE_DELAY_MS = 500;
+  // How long after the last scroll or cursor move the position goes to the vault, so a
+  // crash or an idle lock loses little. Not on every move: each is a vault write.
+  const POSITION_DELAY_MS = 3000;
 
   // The parent remounts this component per note, so the initial note is all it needs.
   const initial = untrack(() => opened.note);
   const id = initial.id;
 
   let body = initial.body;
+
+  // Where the note was left (#242). The session's memory is newer than the vault's copy.
+  // A new note can have the id of a note deleted earlier in the session.
+  if (untrack(() => focusTitle)) notePositions.forget(id);
+  const start = startPosition({
+    isNew: untrack(() => focusTitle),
+    remembered: notePositions.get(id),
+    stored: untrack(() => opened.position),
+    length: initial.body.length,
+  });
+  // The editor's position now. It starts at the restored one, so a position that only the
+  // session knew still reaches the vault when the note is left without a move.
+  let position: NotePosition | null = start;
+  /** What the vault holds for this note, as far as the answers so far tell. */
+  let storedPosition: NotePosition | null = untrack(() => opened.position) ?? null;
+  let positionTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function onposition(next: NotePosition) {
+    if (!notePositions.enabled) return;
+    position = next;
+    notePositions.set(id, next);
+    clearTimeout(positionTimer);
+    positionTimer = setTimeout(() => void storePosition(), POSITION_DELAY_MS);
+  }
+
+  /** Writes the position to the vault if it moved. Never throws: after an idle lock the vault is closed. */
+  async function storePosition(): Promise<void> {
+    clearTimeout(positionTimer);
+    const next = position;
+    if (!next || !notePositions.enabled || samePosition(next, storedPosition)) return;
+    try {
+      await api.setNotePosition(id, next);
+      storedPosition = next;
+    } catch {
+      // Tried again at the next move or when the note is left.
+    }
+  }
   let savedBody = initial.body;
   let title = $state(initial.title);
   let folder = $state(initial.folder);
@@ -125,7 +166,11 @@
   onMount(() => {
     if (untrack(() => focusTitle)) titleInput?.select();
     else editor?.focus();
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // Leaving the note. Usually `flush` has stored it already.
+      void storePosition();
+    };
   });
 
   function onchange(doc: string) {
@@ -140,7 +185,13 @@
   export async function flush(): Promise<void> {
     clearTimeout(timer);
     await saving;
-    if (body === savedBody) return;
+    if (body !== savedBody) await save();
+    // After the text, which matters more when a close gives little time. A lock or a close
+    // follows a flush, so the vault is still open here.
+    await storePosition();
+  }
+
+  async function save(): Promise<void> {
     const toSave = body;
     status = "saving";
     saving = api.saveNote(id, toSave).then(
@@ -337,6 +388,8 @@
       doc={initial.body}
       {mode}
       {onchange}
+      position={start}
+      {onposition}
       onfindresult={editorFindResult}
       {onwikilink}
     />

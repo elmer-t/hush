@@ -12,6 +12,7 @@ mod links;
 mod lock;
 mod metadata;
 mod notes;
+mod positions;
 mod readme;
 mod reasons;
 mod recent;
@@ -44,6 +45,7 @@ pub use links::{Backlink, OutgoingLink, Resolution, SNIPPET_CHARS};
 pub use lock::lock_path;
 pub use metadata::{MetadataEdit, MetadataEditReport, TitledNote};
 pub use notes::{FolderSize, NewNote, Note, NoteSummary, ReadStatus};
+pub use positions::{NOTE_POSITIONS_SETTING, NotePosition, RESTORE_POSITION_SETTING};
 pub use reasons::{MAX_VIA, Reasons};
 pub use recent::{
     DEFAULT_RECENT_OPENED_COUNT, LAST_OPENED_SETTING, MAX_RECENT_OPENED_COUNT, RECENT_OPENED_COUNT_SETTING,

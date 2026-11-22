@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::Result;
-use crate::db::{FolderContents, FolderSize, MetadataEdit, MetadataEditReport, Note, NoteSummary, ReadStatus, TrashEntry, Vault};
+use crate::db::{FolderContents, FolderSize, MetadataEdit, MetadataEditReport, Note, NotePosition, NoteSummary, ReadStatus, TrashEntry, Vault};
 use crate::markdown;
 use crate::session::Session;
 
@@ -40,6 +40,8 @@ impl NoteMeta {
 pub struct OpenedNote {
     note: Note,
     meta: NoteMeta,
+    /// Where the note was left, so the editor opens there on its first render (#242).
+    position: Option<NotePosition>,
 }
 
 #[derive(Serialize)]
@@ -51,7 +53,8 @@ pub struct SavedNote {
 pub(super) fn opened(vault: &Vault, id: i64) -> crate::db::Result<OpenedNote> {
     let note = vault.note(id)?;
     let meta = NoteMeta::of(&note.body);
-    Ok(OpenedNote { note, meta })
+    let position = vault.note_position(id)?;
+    Ok(OpenedNote { note, meta, position })
 }
 
 #[tauri::command(async)]
@@ -194,6 +197,29 @@ pub fn set_recent_opened_count(session: State<'_, Session>, count: u32) -> Resul
 #[tauri::command(async)]
 pub fn clear_recent_opened(session: State<'_, Session>) -> Result<()> {
     Ok(session.with_vault(|v| v.clear_recent_opened())?)
+}
+
+/// Remembers where note `id` was left: the selection and the first line shown. Stored only
+/// for a note in the recently opened list, while that list and the setting are on.
+#[tauri::command(async)]
+pub fn set_note_position(session: State<'_, Session>, id: i64, position: NotePosition) -> Result<()> {
+    // Quiet: the editor also reports its position after scrolling by itself (a restore, a
+    // layout change), and that must not postpone auto-lock. The user's own scrolling and
+    // typing is reported as activity by the frontend.
+    session.with_vault_quiet(session.generation(), |v| v.set_note_position(id, position))?;
+    Ok(())
+}
+
+/// Whether notes reopen where they were left (Settings, General). On by default.
+#[tauri::command(async)]
+pub fn restore_position(session: State<'_, Session>) -> Result<bool> {
+    Ok(session.with_vault(|v| v.restore_position())?)
+}
+
+/// Turning it off deletes the stored positions.
+#[tauri::command(async)]
+pub fn set_restore_position(session: State<'_, Session>, on: bool) -> Result<()> {
+    Ok(session.with_vault(|v| v.set_restore_position(on))?)
 }
 
 /// Whether the "Recently opened" section is collapsed: `"true"` collapses it.
