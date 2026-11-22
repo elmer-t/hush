@@ -2,7 +2,16 @@
   import { onMount, tick } from "svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import { listen } from "@tauri-apps/api/event";
-  import { api, errorMessage, GPU_STATUS_EVENT, type Compacted, type GpuStatus, type MemorySecurity, type VaultSpace } from "$lib/api";
+  import {
+    api,
+    errorMessage,
+    GPU_STATUS_EVENT,
+    type Compacted,
+    type GpuStatus,
+    type MemorySecurity,
+    type VaultIcon,
+    type VaultSpace,
+  } from "$lib/api";
   import { compactNote, elapsedText } from "$lib/compact";
   import { formatSize } from "$lib/size";
   import { gpuText } from "$lib/gpu";
@@ -10,6 +19,7 @@
   import ModelSettings from "$lib/ModelSettings.svelte";
   import PassphraseStrength from "$lib/PassphraseStrength.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
+  import VaultIconPicker from "$lib/VaultIconPicker.svelte";
   import { setThemePreference, themePreference, type ThemePreference } from "$lib/theme";
 
   type Props = {
@@ -17,8 +27,33 @@
     onreviewtag: (tag: string) => void;
     /** Called when compacting starts (true) and ends (false). */
     oncompacting?: (running: boolean) => void;
+    /** Called when the vault's icon was changed, so the top bar follows at once. */
+    onvaulticon?: (icon: VaultIcon | null) => void;
   };
-  let { onreviewtag, oncompacting }: Props = $props();
+  let { onreviewtag, oncompacting, onvaulticon }: Props = $props();
+
+  // Held here and in the top bar only, never in localStorage: it is vault data (#241).
+  let vaultIcon = $state<VaultIcon | null>(null);
+  let vaultIconError = $state("");
+  /** Numbers the writes, so an older one that fails late doesn't undo a newer choice. */
+  let vaultIconWrite = 0;
+
+  /** Shows the choice at once and stores it in the vault; a failed write puts the old one back. */
+  async function chooseVaultIcon(icon: VaultIcon | null) {
+    const before = vaultIcon;
+    const write = ++vaultIconWrite;
+    vaultIconError = "";
+    vaultIcon = icon;
+    onvaulticon?.(icon);
+    try {
+      await api.setVaultIcon(icon);
+    } catch (e) {
+      if (write !== vaultIconWrite) return;
+      vaultIcon = before;
+      onvaulticon?.(before);
+      vaultIconError = errorMessage(e);
+    }
+  }
 
   let theme = $state<ThemePreference>(themePreference());
   const THEMES: { value: ThemePreference; label: string }[] = [
@@ -183,6 +218,7 @@
     api.indexAllCores().then((on) => (allCores = on), () => {});
     api.memorySecurity().then((m) => ((memory = m), (wipeMemory = m.on)), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
+    api.vaultIcon().then((icon) => (vaultIcon = icon), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
@@ -374,6 +410,16 @@
   <div class="sections">
     <section id="settings-general" aria-labelledby="settings-general-h">
       <h2 id="settings-general-h" tabindex="-1"><span class="num" aria-hidden="true">01</span>General</h2>
+      <div class="card">
+        <h3>Vault icon</h3>
+        <VaultIconPicker value={vaultIcon} onchange={chooseVaultIcon} />
+        <p class="muted">
+          Shown next to the vault's name while it is unlocked. Kept inside the vault, so the unlock screen doesn't show
+          it.
+        </p>
+        {#if vaultIconError}<p class="error" role="alert">{vaultIconError}</p>{/if}
+      </div>
+
       <div class="card">
         <h3 id="theme-h">Theme</h3>
         <div class="segmented" role="group" aria-labelledby="theme-h">

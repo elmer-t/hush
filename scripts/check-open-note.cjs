@@ -79,7 +79,7 @@ function backend({ notes, backendMs, mode, perFolder }) {
   const pick = (id, n) => Array.from({ length: n }, (_, i) => summaries[(id * 7 + i * 131) % notes]);
   const reasons = { linksTo: false, linkedFrom: true, bothLinkTo: [], bothLinkedFrom: [], via: [], sharedTags: ["journal"], sameFolder: true, sameAuthor: null, sameTopic: null };
   const commands = {
-    vault_status: () => ({ name: "bench", path: "/bench.hush" }),
+    vault_status: () => ({ name: "bench", path: "/bench.hush", icon: null }),
     folders: () => folders,
     folder_sizes: () => folders.map((path) => ({ path, bytes: 1000 })),
     folder_notes: ({ folder, offset, limit }) => summaries.filter((s) => s.folder === folder).slice(offset, offset + limit).map((s) => ({ ...s, size: 1000 })),
