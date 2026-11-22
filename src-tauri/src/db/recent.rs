@@ -120,7 +120,7 @@ impl Vault {
         self.delete_setting(LAST_OPENED_SETTING)
     }
 
-    fn recent_opened_ids(&self) -> Result<Vec<i64>> {
+    pub(super) fn recent_opened_ids(&self) -> Result<Vec<i64>> {
         // An unreadable value is treated as an empty list; the next open rewrites it.
         Ok(self
             .setting(RECENT_OPENED_SETTING)?
@@ -130,7 +130,9 @@ impl Vault {
 
     fn write_recent_opened(&self, ids: &[i64]) -> Result<()> {
         let json = serde_json::to_string(ids).expect("a list of integers serialises");
-        self.set_setting(RECENT_OPENED_SETTING, &json)
+        self.set_setting(RECENT_OPENED_SETTING, &json)?;
+        // A note that left the list loses its remembered position (#242).
+        self.keep_note_positions(ids)
     }
 }
 

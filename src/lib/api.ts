@@ -1,6 +1,7 @@
 // Typed wrappers around the Rust commands. The backend owns all vault access.
 import { invoke } from "@tauri-apps/api/core";
 import type { FolderSize } from "$lib/folderTree";
+import type { NotePosition } from "$lib/notePositions";
 
 export type VaultInfo = { path: string; name: string };
 export type RecentVault = { path: string; name: string; exists: boolean };
@@ -42,7 +43,8 @@ export type NoteMeta = {
   attributes: [string, string][];
 };
 
-export type OpenedNote = { note: Note; meta: NoteMeta };
+/** Where the note was left, when the vault remembers it (see `$lib/notePositions`). */
+export type OpenedNote = { note: Note; meta: NoteMeta; position?: NotePosition | null };
 /** The graph's scope; `folder` null is the open note's folder. */
 export type StoredGraphScope = { kind: "folder" | "tag" | "search" | "all"; folder: string | null; tag: string };
 /** A note in the trash; `folder` is where it was deleted from. */
@@ -331,6 +333,12 @@ export const api = {
   /** The recently opened notes, most recent first, without trashed ones. */
   recentOpenedNotes: () => invoke<NoteSummary[]>("recent_opened_notes"),
   /** How many recently opened notes are kept, 0–1000; 0 turns the list off. */
+  /** Remembers where a note was left; the vault keeps it for recently opened notes only. */
+  setNotePosition: (id: number, position: NotePosition) => invoke<void>("set_note_position", { id, position }),
+  /** Whether notes reopen where they were left. */
+  restorePosition: () => invoke<boolean>("restore_position"),
+  /** Turning it off deletes the stored positions. */
+  setRestorePosition: (on: boolean) => invoke<void>("set_restore_position", { on }),
   recentOpenedCount: () => invoke<number>("recent_opened_count"),
   setRecentOpenedCount: (count: number) => invoke<void>("set_recent_opened_count", { count }),
   clearRecentOpened: () => invoke<void>("clear_recent_opened"),

@@ -14,7 +14,7 @@ function mocks() {
   });
   const status = { model: "e5-small", readyModel: "e5-small", load: { state: "ready" }, reduced: null };
   const replies = {
-    auto_lock_minutes: 10, default_author: "Elmer", trash_days: 30, confirm_trash: true, recent_opened_count: 10,
+    auto_lock_minutes: 10, default_author: "Elmer", trash_days: 30, confirm_trash: true, recent_opened_count: 10, restore_position: true,
     index_all_cores: false, memory_security: { on: false, active: false },
     gpu_status: { adapters: [], best: null, enabled: true, model: "e5-small", device: "cpu", reason: null, gpuModel: "e5-small-fp16" },
     model_status: status, index_status: { state: "idle" }, model_downloads: [],

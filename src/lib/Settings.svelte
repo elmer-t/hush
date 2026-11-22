@@ -8,6 +8,7 @@
   import { gpuText } from "$lib/gpu";
   import { licenceSummary } from "$lib/notices";
   import ModelSettings from "$lib/ModelSettings.svelte";
+  import { notePositions } from "$lib/notePositions";
   import PassphraseStrength from "$lib/PassphraseStrength.svelte";
   import TagSettings from "$lib/TagSettings.svelte";
   import { setThemePreference, themePreference, type ThemePreference } from "$lib/theme";
@@ -62,6 +63,8 @@
   let recentCount = $state(10);
   let recentStatus = $state("");
   let recentError = $state("");
+  let restorePosition = $state(true);
+  let restoreError = $state("");
 
   let space = $state<VaultSpace | null>(null);
   let compacting = $state(false);
@@ -183,6 +186,7 @@
     api.indexAllCores().then((on) => (allCores = on), () => {});
     api.memorySecurity().then((m) => ((memory = m), (wipeMemory = m.on)), () => {});
     api.gpuStatus().then((s) => ((gpu = s), (useGpu = s.enabled)), () => {});
+    api.restorePosition().then((on) => (restorePosition = on), () => {});
     [minutes, author, trashDays, confirmTrash, recentCount] = await Promise.all([
       api.autoLockMinutes(),
       api.defaultAuthor().then((a) => a ?? ""),
@@ -244,6 +248,19 @@
     } catch (err) {
       confirmError = errorMessage(err);
       confirmTrash = !confirmTrash;
+    }
+  }
+
+  // Saved on change, like the other checkboxes. Off deletes the positions in the vault
+  // and in this session's memory.
+  async function saveRestorePosition() {
+    restoreError = "";
+    try {
+      await api.setRestorePosition(restorePosition);
+      notePositions.setEnabled(restorePosition);
+    } catch (err) {
+      restoreError = errorMessage(err);
+      restorePosition = !restorePosition;
     }
   }
 
@@ -404,6 +421,15 @@
           <input type="number" min="0" max="1000" step="1" bind:value={recentCount} required />
         </label>
         <p class="muted">Kept inside the vault, per vault. Turning it off clears the list.</p>
+        <label class="check">
+          <input type="checkbox" bind:checked={restorePosition} onchange={saveRestorePosition} />
+          Reopen notes where you left off
+        </label>
+        <p class="muted">
+          Remembers the cursor and the scroll position of the notes in this list, inside the vault. Turning it off
+          deletes them. With the list off, they are kept only until the vault locks.
+        </p>
+        {#if restoreError}<p class="error" role="alert">{restoreError}</p>{/if}
         {#if recentError}<p class="error" role="alert">{recentError}</p>{/if}
         <div class="actions">
           {#if recentStatus}<span class="muted">{recentStatus}</span>{/if}

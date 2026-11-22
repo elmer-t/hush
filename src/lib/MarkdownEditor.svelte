@@ -29,18 +29,23 @@
   import { frontmatterRange } from "$lib/liveDecorations";
   import { liveLinks } from "$lib/liveLinks";
   import { livePreview } from "$lib/livePreview";
+  import { clampPosition, type NotePosition } from "$lib/notePositions";
 
   type Props = {
     doc: string;
     /** Source (the monospaced markdown) or Live (formatted in place, #134); same document and history. */
     mode?: EditorMode;
     onchange: (doc: string) => void;
+    /** Where to start: the selection, and the line at the top. Without it: the top of the note. */
+    position?: NotePosition | null;
+    /** The selection or the first line shown changed, by the user or by the editor. */
+    onposition?: (position: NotePosition) => void;
     /** The current find match (-1 for none) and the number of matches, while find is on. */
     onfindresult?: (current: number, total: number) => void;
     /** A `[[wikilink]]` in the Live view was clicked at viewport position `x`, `y`. */
     onwikilink?: (target: string, x: number, y: number) => void;
   };
-  let { doc, mode = "source", onchange, onfindresult, onwikilink }: Props = $props();
+  let { doc, mode = "source", onchange, position = null, onposition, onfindresult, onwikilink }: Props = $props();
 
   // Links in Live open on a click, and show where they go in the link bar (#137).
   let linkBar: ReturnType<typeof LinkBar>;
@@ -89,16 +94,45 @@
 
   let shownMode: EditorMode = untrack(() => mode);
 
+  /** The start of the first line shown: a document offset, which a mode switch or another width keeps. */
+  const topLine = (v: EditorView) => v.lineBlockAtHeight(v.scrollDOM.scrollTop).from;
+
+  /**
+   * The offset at the top left of what is shown. Within a wrapped paragraph that is the
+   * start of the first row shown, not of the paragraph, which can be a screen higher.
+   */
+  function topOffset(v: EditorView): number {
+    const box = v.scrollDOM.getBoundingClientRect();
+    const content = v.contentDOM.getBoundingClientRect();
+    return v.posAtCoords({ x: content.left + 1, y: box.top + 1 }, false) ?? topLine(v);
+  }
+
   onMount(() => {
     const initial = untrack(() => doc);
+    const restored = untrack(() => position && clampPosition(position, initial.length));
     // Live starts below the frontmatter, so it opens collapsed.
-    const fm = shownMode === "live" ? frontmatterRange(EditorState.create({ doc: initial }).doc) : null;
+    const fm = shownMode === "live" && !restored ? frontmatterRange(EditorState.create({ doc: initial }).doc) : null;
     const start = fm ? Math.min(fm.to + 1, initial.length) : 0;
-    view = new EditorView({
+    // False until the first layout has put the restored line at the top: a report before
+    // that would say the note is at its start.
+    let placed = false;
+    // Read in the editor's measure phase: its layout can't be read while it updates.
+    const report = {
+      key: "note-position",
+      read: (v: EditorView) => topOffset(v),
+      write: (top: number, v: EditorView) => {
+        if (!placed || !onposition) return;
+        const { anchor, head } = v.state.selection.main;
+        onposition({ anchor, head, top });
+      },
+    };
+    const created = new EditorView({
       parent: host,
+      // In the first layout, so the note doesn't jump after it is shown.
+      scrollTo: restored ? EditorView.scrollIntoView(restored.top, { y: "start", yMargin: 0 }) : undefined,
       state: EditorState.create({
         doc: initial,
-        selection: EditorSelection.cursor(start),
+        selection: restored ? EditorSelection.single(restored.anchor, restored.head) : EditorSelection.cursor(start),
         extensions: [
           history(),
           drawSelection(),
@@ -110,6 +144,7 @@
           keymap.of([...defaultKeymap, ...historyKeymap, ...findKeys, indentWithTab]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onchange(u.state.doc.toString());
+            if (u.docChanged || u.selectionSet) u.view.requestMeasure(report);
             if (!searchPanelOpen(u.state)) return;
             const queryChanged = !getSearchQuery(u.state).eq(getSearchQuery(u.startState));
             if (u.docChanged || u.selectionSet || queryChanged || !searchPanelOpen(u.startState)) reportFind(u.state);
@@ -117,13 +152,20 @@
         ],
       }),
     });
-    return () => view?.destroy();
+    view = created;
+    created.requestMeasure({ read: () => null, write: () => void (placed = true) });
+    const onscroll = () => created.requestMeasure(report);
+    created.scrollDOM.addEventListener("scroll", onscroll, { passive: true });
+    return () => {
+      created.scrollDOM.removeEventListener("scroll", onscroll);
+      created.destroy();
+    };
   });
 
   // The line at the top of the editor, before the layout around it changes with the mode.
   let anchor = 0;
   $effect.pre(() => {
-    if (mode !== shownMode && view) untrack(() => (anchor = view!.lineBlockAtHeight(view!.scrollDOM.scrollTop).from));
+    if (mode !== shownMode && view) untrack(() => (anchor = topLine(view!)));
   });
 
   // Switches the mode and keeps that line at the top. Only the display changes: no document change.
