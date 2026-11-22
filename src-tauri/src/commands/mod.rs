@@ -102,6 +102,7 @@ impl CommandError {
                 D::InvalidThreshold => "invalidThreshold",
                 D::InvalidRecentOpenedCount => "invalidRecentOpenedCount",
                 D::InvalidRating => "invalidRating",
+                D::InvalidVaultIcon => "invalidVaultIcon",
                 D::NotEnoughDiskSpace { .. } => "notEnoughDiskSpace",
                 D::DiskSpace(_) => "diskSpace",
                 D::UpgradeDiskFull => "upgradeDiskFull",
@@ -210,10 +211,11 @@ mod tests {
             D::InvalidThreshold => 16,
             D::InvalidRecentOpenedCount => 17,
             D::InvalidRating => 18,
-            D::NotEnoughDiskSpace { .. } => 19,
-            D::DiskSpace(_) => 20,
-            D::UpgradeDiskFull => 21,
-            D::Sql(_) => 22,
+            D::InvalidVaultIcon => 19,
+            D::NotEnoughDiskSpace { .. } => 20,
+            D::DiskSpace(_) => 21,
+            D::UpgradeDiskFull => 22,
+            D::Sql(_) => 23,
         }
     }
 
@@ -240,6 +242,7 @@ mod tests {
             (D::InvalidThreshold, "invalidThreshold"),
             (D::InvalidRecentOpenedCount, "invalidRecentOpenedCount"),
             (D::InvalidRating, "invalidRating"),
+            (D::InvalidVaultIcon, "invalidVaultIcon"),
             (D::NotEnoughDiskSpace { needed: 2, available: 1 }, "notEnoughDiskSpace"),
             (D::DiskSpace(io()), "diskSpace"),
             (D::UpgradeDiskFull, "upgradeDiskFull"),

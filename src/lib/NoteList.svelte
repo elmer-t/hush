@@ -166,6 +166,7 @@
     border-color: var(--accent);
     background: var(--accent);
     color: var(--accent-text);
+    user-select: none;
   }
 
   .text {

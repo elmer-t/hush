@@ -521,6 +521,7 @@
     border-color: var(--accent);
     background: var(--accent);
     color: var(--accent-text);
+    user-select: none;
   }
 
   .text {
@@ -614,6 +615,7 @@
     border-radius: 10px;
     background: var(--text);
     color: var(--bg);
+    user-select: none;
   }
 
   .picked {
@@ -628,6 +630,7 @@
     border-radius: 6px;
     background: var(--inverse-button);
     color: var(--bg);
+    user-select: none;
     font-size: 13px;
   }
 

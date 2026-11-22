@@ -23,6 +23,7 @@
   import { codeHighlighting, codeLanguage } from "$lib/codeHighlight";
   import { editorTheme, sourceHighlight, sourceTheme } from "$lib/editorTheme";
   import type { FindSpec } from "$lib/find";
+  import EditorScrollbar from "$lib/EditorScrollbar.svelte";
   import type { EditorMode } from "$lib/layout";
   import LinkBar from "$lib/LinkBar.svelte";
   import { openLink } from "$lib/linkOpen";
@@ -53,6 +54,9 @@
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
+  // The editor's scrolling element, once there is one, for its scrollbar (#243).
+  let scroller = $state<HTMLElement>();
+  let scrollbarShown = $state(false);
 
   // The mode's own extensions; switching them keeps the document, selection and undo history.
   const modeConfig = new Compartment();
@@ -117,6 +121,7 @@
         ],
       }),
     });
+    scroller = view.scrollDOM;
     return () => view?.destroy();
   });
 
@@ -220,11 +225,28 @@
   }
 </script>
 
-<div class="editor" bind:this={host}></div>
+<div class="editor" class:with-scrollbar={scrollbarShown} bind:this={host}>
+  {#if scroller}<EditorScrollbar {scroller} onshown={(shown) => (scrollbarShown = shown)} />{/if}
+</div>
 <LinkBar bind:this={linkBar} />
 
 <style>
   .editor {
+    position: relative;
     height: 100%;
+  }
+
+  /* The editor's own scrollbar takes the place of the native one (#243), which is hidden
+     in both browser engines' ways; the text keeps clear of it. */
+  .editor :global(.cm-scroller) {
+    scrollbar-width: none;
+  }
+
+  .editor :global(.cm-scroller::-webkit-scrollbar) {
+    display: none;
+  }
+
+  .editor.with-scrollbar :global(.cm-scroller) {
+    padding-right: var(--scrollbar-size);
   }
 </style>

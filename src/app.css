@@ -27,6 +27,8 @@
   --accent-soft-text: #5e1e2b;
   --selection: #f3e7e6;
   --selection-text: #5e1e2b;
+  /* Selected text (#245): every text colour of the editor reaches 4.5:1 on it. */
+  --text-selection: #ffe9ee;
   --warn: #8a5100;
   --warn-soft: #fbefd9;
   --ok: #2e7a3c;
@@ -41,6 +43,14 @@
   --highlight-text: #1a1b19;
   --callout-blue: #1b5a85;
   --callout-purple: #5a44a8;
+  --vault-red: #b3261e;
+  --vault-orange: #a14a00;
+  --vault-amber: #7d5a00;
+  --vault-green: #2e7a3c;
+  --vault-teal: #0f6e6e;
+  --vault-blue: #1b5a85;
+  --vault-violet: #5a44a8;
+  --vault-pink: #a3246b;
   --syn-keyword: #8f2d56;
   --syn-string: #2a6a36;
   --syn-number: #8a4b00;
@@ -60,6 +70,41 @@
   color: var(--text);
   background: var(--bg);
   color-scheme: light;
+}
+
+/* Scrollbars (#243). The editor draws its own (EditorScrollbar.svelte), so the native ones
+   of the other panes get the same size and handle. The colours follow --text, so they need
+   no dark values. */
+:root {
+  --scrollbar-size: 14px;
+  --scrollbar-inset: 4px;
+  --scrollbar-handle: color-mix(in srgb, var(--text) 26%, transparent);
+  --scrollbar-handle-hover: color-mix(in srgb, var(--text) 42%, transparent);
+  --scrollbar-handle-active: color-mix(in srgb, var(--text) 58%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-thumb {
+  border: var(--scrollbar-inset) solid transparent;
+  border-radius: var(--scrollbar-size);
+  background-color: var(--scrollbar-handle);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-handle-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-handle-active);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Dark tokens (#173). `theme.ts` sets data-theme on <html> to the resolved scheme before the
@@ -87,6 +132,7 @@
   --accent-soft-text: #f2c9d0;
   --selection: #35212a;
   --selection-text: #f2c9d0;
+  --text-selection: #5b172e;
   --warn: #e8a94f;
   --warn-soft: #372a14;
   --ok: #7cc68a;
@@ -101,6 +147,14 @@
   --highlight-text: #e6f4e3;
   --callout-blue: #88c0e8;
   --callout-purple: #bcaef2;
+  --vault-red: #ff8a80;
+  --vault-orange: #f2a15e;
+  --vault-amber: #e2bd4f;
+  --vault-green: #7cc68a;
+  --vault-teal: #5fc9c3;
+  --vault-blue: #88c0e8;
+  --vault-violet: #bcaef2;
+  --vault-pink: #f29ac6;
   --syn-keyword: #e79bb9;
   --syn-string: #9ccf98;
   --syn-number: #e3b56b;
@@ -133,6 +187,7 @@
     --accent-soft-text: #f2c9d0;
     --selection: #35212a;
     --selection-text: #f2c9d0;
+    --text-selection: #5b172e;
     --warn: #e8a94f;
     --warn-soft: #372a14;
     --ok: #7cc68a;
@@ -147,6 +202,14 @@
     --highlight-text: #e6f4e3;
     --callout-blue: #88c0e8;
     --callout-purple: #bcaef2;
+    --vault-red: #ff8a80;
+    --vault-orange: #f2a15e;
+    --vault-amber: #e2bd4f;
+    --vault-green: #7cc68a;
+    --vault-teal: #5fc9c3;
+    --vault-blue: #88c0e8;
+    --vault-violet: #bcaef2;
+    --vault-pink: #f29ac6;
     --syn-keyword: #e79bb9;
     --syn-string: #9ccf98;
     --syn-number: #e3b56b;
@@ -301,6 +364,14 @@ body {
   background: var(--bg);
 }
 
+/* Selected text looks the same in every pane and does not follow the system's colour (#245).
+   No `color`: the text keeps its own. Text in an inverse colour (a filled button, a badge,
+   the bulk bar) would vanish on it, so those rules set `user-select: none`: they are
+   controls, not text to select. selectionContrast.test.ts checks that each one does. */
+::selection {
+  background-color: var(--text-selection);
+}
+
 input,
 select,
 textarea,
@@ -379,6 +450,7 @@ button.primary {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-text);
+  user-select: none;
   font-weight: 500;
 }
 
@@ -430,6 +502,7 @@ button.danger-fill {
   border-color: var(--danger);
   background: var(--danger);
   color: var(--danger-text);
+  user-select: none;
   font-weight: 500;
 }
 
