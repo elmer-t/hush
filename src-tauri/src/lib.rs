@@ -23,6 +23,7 @@ use crate::commands::discover::DiscoverJob;
 use crate::commands::embeddings::Indexer;
 use crate::commands::import::ImportJob;
 use crate::commands::models::Downloads;
+use crate::commands::window::StartupWindow;
 use crate::commands::{CLOSE_EVENT, LOCKED_EVENT};
 use crate::config::Config;
 use crate::embed::models::ModelDirs;
@@ -49,15 +50,18 @@ pub fn run() {
         .manage(DiscoverJob::default())
         .manage(ActivityPanel::default())
         .manage(Downloads::default())
+        .manage(StartupWindow::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = Config::new(config_path);
-            let (all_cores, gpu_off) = {
+            let (all_cores, gpu_off, window_dark) = {
                 let c = config.get();
                 // Before any vault opens: SQLCipher can't turn it off again (#153).
                 db::set_memory_security(c.memory_security);
-                (c.index_all_cores, c.index_gpu_off)
+                (c.index_all_cores, c.index_gpu_off, c.window_dark)
             };
+            // The window is created hidden and shown once the frontend has rendered (#239).
+            commands::window::prepare(app.handle(), window_dark);
             app.manage(config);
             // Downloaded and imported models go to the local (not roaming) app data
             // folder: they are large, and per machine.
@@ -106,6 +110,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::about::third_party_notices,
             commands::locale::os_locale,
+            commands::window::window_ready,
+            commands::window::set_window_scheme,
             commands::vault::recent_vaults,
             commands::vault::forget_recent_vault,
             commands::vault::create_vault,

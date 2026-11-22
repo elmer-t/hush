@@ -21,6 +21,7 @@ pub mod search;
 pub mod tags;
 pub mod training;
 pub mod vault;
+pub mod window;
 
 use serde::{Serialize, Serializer};
 
@@ -308,6 +309,7 @@ mod tests {
         ("tags", include_str!("tags.rs")),
         ("training", include_str!("training.rs")),
         ("vault", include_str!("vault.rs")),
+        ("window", include_str!("window.rs")),
     ];
 
     /// A command on the main thread that waits for the vault freezes the window.
