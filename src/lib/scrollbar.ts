@@ -25,7 +25,10 @@ const range = (box: Omit<ScrollBox, "scrollTop">) => Math.max(0, box.scrollHeigh
  * The handle's size and its offset from the top of a track `track` px long, or null when
  * there is nothing to scroll (or no room for a handle): then no scrollbar is shown.
  */
-export function handleGeometry(box: ScrollBox, track: number): { size: number; offset: number } | null {
+/** The handle on its track, in px: its length and how far down it sits. */
+export type Handle = { size: number; offset: number };
+
+export function handleGeometry(box: ScrollBox, track: number): Handle | null {
   const scrollable = range(box);
   if (scrollable < 1 || track <= MIN_HANDLE_PX) return null;
   const size = clamp((box.clientHeight / box.scrollHeight) * track, MIN_HANDLE_PX, track);

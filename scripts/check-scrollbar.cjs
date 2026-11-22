@@ -119,6 +119,29 @@ async function main() {
       check(`${tag}: the handle is at the bottom of the track`, Math.abs(s.handle.y + s.handle.height - bottom) <= 1.5);
       check(`${tag}: the note grew while it was dragged through (${fresh.scrollHeight} to ${s.scrollHeight} px), which is what made the native handle lag`, s.scrollHeight > fresh.scrollHeight * 1.03);
 
+      // Let go at once, before the editor has measured the lines it just drew.
+      await mount(long);
+      s = await look();
+      await page.mouse.move(x, s.handle.y + grab);
+      await page.mouse.down();
+      await page.mouse.move(x, bottom + 60);
+      await page.mouse.up();
+      await frames(30);
+      s = await look();
+      check(`${tag}: let go at the bottom at once, the end of the note is shown`, s.endShown && s.range - s.scrollTop <= 1, `scrollTop ${s.scrollTop} of ${s.range}`);
+      // The released place no longer holds once something else scrolls.
+      await page.mouse.move(x - 300, fresh.bar.y + 300);
+      await page.mouse.wheel(0, -900);
+      await frames(30);
+      s = await look();
+      check(`${tag}: the wheel scrolls away from the released place`, s.range - s.scrollTop > 500, `scrollTop ${s.scrollTop} of ${s.range}`);
+      await page.mouse.move(x, s.handle.y + grab);
+      await page.mouse.down();
+      await page.mouse.move(x, bottom + 60, { steps: 6 });
+      await page.mouse.up();
+      await frames(6);
+      s = await look();
+
       // And back up in one motion.
       await page.mouse.move(x, s.handle.y + grab);
       await page.mouse.down();
