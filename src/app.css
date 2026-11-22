@@ -62,6 +62,17 @@
   color-scheme: light;
 }
 
+/* Scrollbars (#243). The editor draws its own (EditorScrollbar.svelte), so the native ones
+   of the other panes get the same size and handle. The colours follow --text, so they need
+   no dark values. */
+:root {
+  --scrollbar-size: 14px;
+  --scrollbar-inset: 4px;
+  --scrollbar-handle: color-mix(in srgb, var(--text) 26%, transparent);
+  --scrollbar-handle-hover: color-mix(in srgb, var(--text) 42%, transparent);
+  --scrollbar-handle-active: color-mix(in srgb, var(--text) 58%, transparent);
+}
+
 /* Dark tokens (#173). `theme.ts` sets data-theme on <html> to the resolved scheme before the
    app renders. The media query covers the paint before that script runs (the stylesheet loads
    first), so a dark OS on System never flashes light. The two token lists must stay equal;
