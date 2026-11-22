@@ -306,7 +306,9 @@ body {
 }
 
 /* Selected text looks the same in every pane and does not follow the system's colour (#245).
-   No `color`: the text keeps its own. */
+   No `color`: the text keeps its own. Text in an inverse colour (a filled button, a badge,
+   the bulk bar) would vanish on it, so those rules set `user-select: none`: they are
+   controls, not text to select. selectionContrast.test.ts checks that each one does. */
 ::selection {
   background-color: var(--text-selection);
 }
@@ -389,6 +391,7 @@ button.primary {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-text);
+  user-select: none;
   font-weight: 500;
 }
 
@@ -440,6 +443,7 @@ button.danger-fill {
   border-color: var(--danger);
   background: var(--danger);
   color: var(--danger-text);
+  user-select: none;
   font-weight: 500;
 }
 

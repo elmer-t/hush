@@ -401,6 +401,7 @@
     border-radius: 4px;
     background: var(--accent);
     color: var(--accent-text);
+    user-select: none;
     font-family: var(--mono);
     font-size: 10.5px;
     font-weight: 600;

@@ -84,6 +84,8 @@ async function main() {
       check(`${tag}: focused, the selection is drawn (${s.pieces} pieces)`, s.focused && s.pieces > 0);
       check(`${tag}: focused, the selection has the app's colour ${s.token}`, s.backgrounds.length === 1 && s.backgrounds[0] === s.token, s.backgrounds.join(" / "));
       check(`${tag}: it is not CodeMirror's lavender`, !s.backgrounds.includes("rgb(215, 212, 240)"));
+      // The native selection stays hidden under the drawn one, or the two colours would add up.
+      check(`${tag}: the native selection in the editor is transparent`, s.native === "rgba(0, 0, 0, 0)", s.native);
       const worst = s.colours.map((c) => ({ c, ratio: contrast(rgb(c), token) })).sort((a, b) => a.ratio - b.ratio)[0];
       check(`${tag}: all ${s.colours.length} text colours shown reach 4.5:1 on it (lowest ${worst.ratio.toFixed(2)} for ${worst.c})`, worst.ratio >= 4.5);
       if (SHOTS) await page.screenshot({ path: `${SHOTS}/selection-${scheme}-${mode}.png` });
