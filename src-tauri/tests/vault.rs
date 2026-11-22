@@ -1,7 +1,7 @@
 mod common;
 
 use common::PASS;
-use hush_lib::db::{Error, MIN_PASSPHRASE_CHARS, Vault, lock_path};
+use hush_lib::db::{Error, Vault, lock_path};
 
 #[test]
 fn create_lock_unlock_roundtrip() {
@@ -66,58 +66,44 @@ fn create_and_open_guard_paths_and_passphrase() {
     assert!(matches!(Vault::create(&dir.path().join("x.hush"), ""), Err(Error::EmptyPassphrase)));
 }
 
+/// Length is advice in the forms, not a rule (#249): only an empty passphrase is refused.
 #[test]
-fn create_rejects_a_passphrase_under_the_minimum() {
+fn create_accepts_a_short_passphrase() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("short.hush");
-    // Seven characters, one under the minimum.
-    let err = Vault::create(&path, "abc1234").err().expect("short passphrase rejected");
-    assert!(matches!(err, Error::PassphraseTooShort));
-    assert_eq!(err.to_string(), format!("passphrase must be at least {MIN_PASSPHRASE_CHARS} characters"));
-    assert!(!path.exists(), "no vault file is left behind");
-    assert!(!hush_lib::db::lock_path(&path).exists(), "no lock file is left behind");
+    for (name, passphrase) in [("abc.hush", "abc"), ("one.hush", "é"), ("space.hush", " ")] {
+        let path = dir.path().join(name);
+        let mut vault = Vault::create(&path, passphrase).unwrap();
+        let id = vault.create_note("", "Short", "still encrypted").unwrap();
+        vault.verify_passphrase(passphrase).unwrap();
+        vault.close().unwrap();
 
-    // Characters, not bytes: eight characters of two bytes each is enough, seven is not.
-    assert!(matches!(Vault::create(&path, "ééééééé"), Err(Error::PassphraseTooShort)));
-    Vault::create(&path, "éééééééé").unwrap();
+        assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)), "{passphrase:?} keyed the vault");
+        let vault = Vault::open(&path, passphrase).unwrap();
+        assert_eq!(vault.note(id).unwrap().body, "still encrypted");
+    }
 }
 
 #[test]
-fn change_rejects_a_passphrase_under_the_minimum_and_keeps_the_old_one() {
+fn create_rejects_an_empty_passphrase_and_leaves_no_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.hush");
+    assert!(matches!(Vault::create(&path, ""), Err(Error::EmptyPassphrase)));
+    assert!(!path.exists(), "no vault file is left behind");
+    assert!(!lock_path(&path).exists(), "no lock file is left behind");
+}
+
+#[test]
+fn change_accepts_a_short_passphrase_and_rejects_an_empty_one() {
     let (dir, vault) = common::vault();
     let path = dir.path().join("vault.hush");
-    assert!(matches!(vault.change_passphrase("short"), Err(Error::PassphraseTooShort)));
     assert!(matches!(vault.change_passphrase(""), Err(Error::EmptyPassphrase)));
     vault.verify_passphrase(PASS).unwrap();
+
+    vault.change_passphrase("abc").unwrap();
     vault.close().unwrap();
-    Vault::open(&path, PASS).unwrap();
-}
-
-/// Leaves a Hush vault at `path` keyed with `passphrase`, as a version without the
-/// minimum could: created with a valid passphrase, then rekeyed directly through
-/// SQLCipher, past the check in `Vault::change_passphrase`.
-fn legacy_vault(path: &std::path::Path, passphrase: &str) {
-    Vault::create(path, PASS).unwrap().close().unwrap();
-    let conn = rusqlite::Connection::open(path).unwrap();
-    conn.pragma_update(None, "key", PASS).unwrap();
-    conn.pragma_update(None, "rekey", passphrase).unwrap();
-    conn.close().unwrap();
-}
-
-#[test]
-fn existing_vault_with_a_short_passphrase_still_opens() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("old.hush");
-    legacy_vault(&path, "a");
-    assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)), "the rekey took");
-    let mut vault = Vault::open(&path, "a").unwrap();
-    let id = vault.create_note("", "Old", "still readable").unwrap();
-    vault.verify_passphrase("a").unwrap();
-    vault.close().unwrap();
-
-    let vault = Vault::open(&path, "a").unwrap();
-    assert_eq!(vault.note(id).unwrap().body, "still readable");
-    // Moving to a passphrase that meets the minimum works from a short one.
+    assert!(matches!(Vault::open(&path, PASS), Err(Error::WrongPassphrase)), "the old passphrase stopped working");
+    let vault = Vault::open(&path, "abc").unwrap();
+    // And back to a long one.
     vault.change_passphrase(PASS).unwrap();
     vault.close().unwrap();
     Vault::open(&path, PASS).unwrap();

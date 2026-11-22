@@ -1,13 +1,13 @@
 <script lang="ts">
   // Strength meter, warning and guidance under a new passphrase (create vault, change
-  // passphrase). Advisory only: the minimum length is enforced in Rust.
+  // passphrase). Advisory only: Hush accepts any passphrase that is not empty (#249).
   import { PASSPHRASE_GUIDANCE, passphraseStrength } from "$lib/passphrase";
   import Icon from "$lib/Icon.svelte";
 
   let { passphrase, id }: { passphrase: string; id?: string } = $props();
 
-  const LABELS = { empty: "", tooShort: "Too short", weak: "Weak", fair: "Fair", strong: "Strong" };
-  const FILLED = { empty: 0, tooShort: 1, weak: 1, fair: 2, strong: 3 };
+  const LABELS = { empty: "", weak: "Weak", fair: "Fair", strong: "Strong" };
+  const FILLED = { empty: 0, weak: 1, fair: 2, strong: 3 };
 
   const strength = $derived(passphraseStrength(passphrase));
 </script>
@@ -40,7 +40,6 @@
     font-size: 12px;
   }
 
-  .strength[data-level="tooShort"],
   .strength[data-level="weak"] {
     --level: var(--danger);
   }

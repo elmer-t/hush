@@ -4,21 +4,28 @@
 // repeats and years first would need, in the spirit of zxcvbn but with a short
 // embedded list instead of zxcvbn's 800 kB of dictionaries.
 
-/** Mirrors `MIN_PASSPHRASE_CHARS` in src-tauri/src/db/mod.rs, which is the rule that counts. */
-export const MIN_PASSPHRASE_CHARS = 8;
+/** The advised length. Advice only (#249): Hush accepts any passphrase that is not empty. */
+export const ADVISED_PASSPHRASE_CHARS = 8;
 
 /** The one line of guidance shown under a new passphrase. */
-export const PASSPHRASE_GUIDANCE = "Use four or more random words. At least 8 characters.";
+export const PASSPHRASE_GUIDANCE = `Use four or more random words. ${ADVISED_PASSPHRASE_CHARS} characters or more is advised.`;
 
-export type StrengthLevel = "empty" | "tooShort" | "weak" | "fair" | "strong";
+export type StrengthLevel = "empty" | "weak" | "fair" | "strong";
 export type Strength = { level: StrengthLevel; bits: number; warning: string | null };
 
 /** Under this many bits of guessing work a passphrase is weak; from STRONG_BITS on, strong. */
 const WEAK_BITS = 40;
 const STRONG_BITS = 60;
+/** Under this many bits the forms ask once more before they use the passphrase. */
+const VERY_WEAK_BITS = 30;
+/**
+ * Guesses per second against a vault file on one fast graphics card: PBKDF2-HMAC-SHA512
+ * at SQLCipher's 256,000 iterations. An estimate from published benchmarks (#249).
+ */
+const GUESSES_PER_SECOND = 5000;
 
 const WARNINGS = {
-  tooShort: `Too short: use at least ${MIN_PASSPHRASE_CHARS} characters.`,
+  short: `Shorter than the advised ${ADVISED_PASSPHRASE_CHARS} characters.`,
   common: "This is one of the most common passwords.",
   pattern: "Keyboard patterns and sequences are easy to guess.",
   repeat: "Repeated characters or words are easy to guess.",
@@ -103,11 +110,12 @@ export function passphraseStrength(passphrase: string): Strength {
   // Past this length a passphrase is strong anyway; the cap keeps typing fast.
   const { bits, kinds } = guess(chars.slice(0, MAX_ANALYSED), Math.log2(charsetSize(chars)), new Map());
 
-  if (chars.length < MIN_PASSPHRASE_CHARS) return { level: "tooShort", bits, warning: WARNINGS.tooShort };
+  const short = chars.length < ADVISED_PASSPHRASE_CHARS;
   // Digits and symbols added around a common password do little, so strip them first;
   // inside it they are read as letter substitutions.
   const core = Array.from(lower.join("").replace(/^[^\p{L}]+|[^\p{L}]+$/gu, ""), (c) => LEET[c] ?? c).join("");
   if (core && COMMON_PASSWORDS.has(core)) return { level: "weak", bits: Math.min(bits, WORD_BITS + 7), warning: WARNINGS.common };
+  if (short) return { level: bits < WEAK_BITS ? "weak" : "fair", bits, warning: WARNINGS.short };
   if (bits < WEAK_BITS) {
     const warning = kinds.has("pattern")
       ? WARNINGS.pattern
@@ -119,6 +127,19 @@ export function passphraseStrength(passphrase: string): Strength {
     return { level: "weak", bits, warning };
   }
   return { level: bits < STRONG_BITS ? "fair" : "strong", bits, warning: null };
+}
+
+/**
+ * The question the create and change forms ask before they use a passphrase that falls
+ * within days, or null when there is nothing to ask. Nothing is refused: the second
+ * submit of the same passphrase goes through.
+ */
+export function weakPassphraseQuestion(passphrase: string): string | null {
+  const { level, bits } = passphraseStrength(passphrase);
+  if (level === "empty" || bits >= VERY_WEAK_BITS) return null;
+  const seconds = 2 ** bits / GUESSES_PER_SECOND;
+  const time = seconds < 60 ? "seconds" : seconds < 3600 ? "minutes" : seconds < 86400 ? "hours" : "days";
+  return `Someone with a copy of the vault file can guess this passphrase in ${time}. Use it anyway?`;
 }
 
 /**
