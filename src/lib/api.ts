@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { FolderSize } from "$lib/folderTree";
 import type { NotePosition } from "$lib/notePositions";
 
-export type VaultInfo = { path: string; name: string };
+/** A vault's icon: IDs from `$lib/vaultIcons`. Stored in the vault only, so it exists only while unlocked. */
+export type VaultIcon = { icon: string; color: string };
+export type VaultInfo = { path: string; name: string; icon: VaultIcon | null };
 export type RecentVault = { path: string; name: string; exists: boolean };
 export type LockReason = "manual" | "idle";
 /** Memory wiping: `on` is the saved choice, `active` what this run of Hush started with; they differ until a restart. */
@@ -294,6 +296,10 @@ export const api = {
   openVault: (path: string, passphrase: string) => invoke<VaultInfo>("open_vault", { path, passphrase }),
   lockVault: () => invoke<void>("lock_vault"),
   vaultStatus: () => invoke<VaultInfo | null>("vault_status"),
+  /** The open vault's icon, null when it has none. */
+  vaultIcon: () => invoke<VaultIcon | null>("vault_icon"),
+  /** Sets the open vault's icon; null removes it. */
+  setVaultIcon: (icon: VaultIcon | null) => invoke<void>("set_vault_icon", { icon }),
   touch: () => invoke<void>("touch"),
   exitApp: () => invoke<void>("exit_app"),
   autoLockMinutes: () => invoke<number>("auto_lock_minutes"),
