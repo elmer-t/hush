@@ -163,6 +163,30 @@ fn a_tag_crossing_ten_examples_switches_from_its_description_to_a_head() {
     assert!(suggestions(&session, target).is_empty(), "no head and no description");
 }
 
+/// The counts Settings shows leave out notes in the trash (#251: counted without reading
+/// the notes themselves).
+#[test]
+fn training_counts_leave_out_trashed_notes() {
+    let source = Fakes::new(&[64]);
+    let (_dir, _path, session, g) = session("fake-64", 0.3);
+    let tagged = notes(&session, "dreams", 4, 6);
+    let other = create(&session, "other extra", "invoice budget meeting office extra");
+    session.with_vault(|v| v.reject_tag_suggestion(other, "dreams")).unwrap();
+    index(&session, g, &source);
+    let before = training_of(&session, "dreams");
+    assert_eq!((before.positives, before.negatives, before.rejected), (4, 7, 1));
+
+    session.with_vault(|v| v.trash_note(tagged[0])).unwrap();
+    session.with_vault(|v| v.trash_note(other)).unwrap();
+    let after = training_of(&session, "dreams");
+    assert_eq!((after.positives, after.negatives, after.rejected), (3, 6, 0));
+
+    session.with_vault(|v| v.restore_note(tagged[0]).map(drop)).unwrap();
+    index(&session, g, &source);
+    let restored = training_of(&session, "dreams");
+    assert_eq!((restored.positives, restored.negatives, restored.rejected), (4, 6, 0));
+}
+
 #[test]
 fn a_rejection_lowers_that_notes_score_after_retraining() {
     let source = Fakes::new(&[64]);

@@ -360,8 +360,12 @@ impl Vault {
             Some(m) => self
                 .conn
                 .query_row(
-                    "SELECT count(*) FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-                     WHERE e.model = ?1 AND n.deleted_at IS NULL",
+                    // Read from two indexes only, the vectors' key and the trash's. Joining
+                    // `notes` to test `deleted_at` read every note's row, which on a large
+                    // vault held it for most of a minute (#251). `+e.model` keeps the
+                    // planner off the model index, which would fetch each vector's row.
+                    "SELECT count(*) FROM note_embeddings e
+                     WHERE +e.model = ?1 AND e.note_id NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)",
                     [m],
                     |r| r.get::<_, i64>(0),
                 )
@@ -373,8 +377,8 @@ impl Vault {
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
         if let Some(m) = &model {
             let mut stmt = self.conn.prepare_cached(
-                "WITH v AS (SELECT e.note_id FROM note_embeddings e JOIN notes n ON n.id = e.note_id
-                            WHERE e.model = ?1 AND n.deleted_at IS NULL),
+                "WITH v AS (SELECT e.note_id FROM note_embeddings e
+                            WHERE +e.model = ?1 AND e.note_id NOT IN (SELECT id FROM notes WHERE deleted_at IS NOT NULL)),
                       pos AS (SELECT t.name AS tag, nt.note_id FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
                               UNION SELECT tag, note_id FROM tag_feedback WHERE accepted = 1)
                  SELECT tag, count(*), 0 FROM pos WHERE note_id IN v GROUP BY tag

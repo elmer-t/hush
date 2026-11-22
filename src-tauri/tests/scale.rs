@@ -866,8 +866,8 @@ fn settings_calls(folder: String) -> Vec<(&'static str, Box<dyn Fn(&mut Vault) +
         ("vault_space", Box::new(|v| drop(v.space().unwrap()))),
         ("tag_list", Box::new(|v| drop(v.tag_list().unwrap()))),
         ("tag_training", Box::new(|v| drop(v.tag_training().unwrap()))),
-        ("model_overview (note count)", Box::new(|v| drop(v.live_note_count().unwrap()))),
-        ("import_target_notes", Box::new(move |v| drop(v.count_in_folder(&folder).unwrap()))),
+        ("model_overview (note count)", Box::new(|v| { v.live_note_count().unwrap(); })),
+        ("import_target_notes", Box::new(move |v| { v.count_in_folder(&folder).unwrap(); })),
     ]
 }
 

@@ -171,7 +171,8 @@
     {#if newError}<p class="error" role="alert">{newError}</p>{/if}
   </form>
 
-  <TagTraining {tags} />
+  <!-- Once the tags are in: it reads its counts whenever they change, and each read holds the vault (#251). -->
+  {#if loaded}<TagTraining {tags} />{/if}
 
   {#if threshold}
     <form class="threshold" onsubmit={saveThreshold}>
