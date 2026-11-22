@@ -4,7 +4,9 @@
   import { PASSPHRASE_GUIDANCE, passphraseStrength } from "$lib/passphrase";
   import Icon from "$lib/Icon.svelte";
 
-  let { passphrase, id }: { passphrase: string; id?: string } = $props();
+  // `question`: what the form asks before it uses a very weak passphrase (#249). It
+  // takes the place of the warning, next to the level.
+  let { passphrase, id, question = null }: { passphrase: string; id?: string; question?: string | null } = $props();
 
   const LABELS = { empty: "", weak: "Weak", fair: "Fair", strong: "Strong" };
   const FILLED = { empty: 0, weak: 1, fair: 2, strong: 3 };
@@ -23,7 +25,9 @@
   <p class="status" aria-live="polite">
     {#if strength.level !== "empty"}
       <span class="label">{LABELS[strength.level]}</span>
-      {#if strength.warning}
+      {#if question}
+        <span class="warning question" role="alert"><Icon name="warning" size={13} strokeWidth={2} />{question}</span>
+      {:else if strength.warning}
         <span class="warning"><Icon name="warning" size={13} strokeWidth={2} />{strength.warning}</span>
       {/if}
     {/if}
@@ -94,6 +98,15 @@
   .warning :global(svg) {
     flex: none;
     color: var(--level);
+  }
+
+  .question {
+    align-items: baseline;
+    color: var(--danger);
+  }
+
+  .question :global(svg) {
+    align-self: center;
   }
 
   .guidance {

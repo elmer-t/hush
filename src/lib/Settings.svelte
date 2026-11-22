@@ -456,15 +456,14 @@
               required
             />
           </label>
-          <PassphraseStrength passphrase={next} id="new-passphrase-strength" />
+          <PassphraseStrength passphrase={next} id="new-passphrase-strength" question={weakQuestion} />
         </div>
         <label>
           Repeat new passphrase
           <input type="password" autocomplete="off" bind:value={confirm} disabled={changing} required />
         </label>
         <p class="muted">There is no recovery. Make sure you can remember the new passphrase.</p>
-        {#if passphraseError}<p class="error" role="alert">{passphraseError}</p>
-        {:else if weakQuestion}<p class="error" role="alert">{weakQuestion}</p>{/if}
+        {#if passphraseError}<p class="error" role="alert">{passphraseError}</p>{/if}
         <div class="actions">
           {#if passphraseStatus}<span class="muted">{passphraseStatus}</span>{/if}
           <button type="submit" class="primary" disabled={changing}>

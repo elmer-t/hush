@@ -168,7 +168,7 @@
       </button>
     </div>
     {#if strength}
-      <PassphraseStrength {passphrase} id="{id}-strength" />
+      <PassphraseStrength {passphrase} id="{id}-strength" question={weakQuestion} />
     {/if}
   </div>
 {/snippet}
@@ -183,11 +183,6 @@
     <p class="error inline" role="alert">
       <Icon name="alert" size={14} strokeWidth={2} />
       {error.kind === "wrongPassphrase" ? `Wrong passphrase for ${target?.name}.hush.` : error.message}
-    </p>
-  {:else if weakQuestion}
-    <p class="error inline" role="alert">
-      <Icon name="warning" size={14} strokeWidth={2} />
-      {weakQuestion}
     </p>
   {/if}
 {/snippet}
