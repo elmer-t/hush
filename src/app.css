@@ -27,6 +27,8 @@
   --accent-soft-text: #5e1e2b;
   --selection: #f3e7e6;
   --selection-text: #5e1e2b;
+  /* Selected text (#245): every text colour of the editor reaches 4.5:1 on it. */
+  --text-selection: #ffe9ee;
   --warn: #8a5100;
   --warn-soft: #fbefd9;
   --ok: #2e7a3c;
@@ -87,6 +89,7 @@
   --accent-soft-text: #f2c9d0;
   --selection: #35212a;
   --selection-text: #f2c9d0;
+  --text-selection: #5b172e;
   --warn: #e8a94f;
   --warn-soft: #372a14;
   --ok: #7cc68a;
@@ -133,6 +136,7 @@
     --accent-soft-text: #f2c9d0;
     --selection: #35212a;
     --selection-text: #f2c9d0;
+    --text-selection: #5b172e;
     --warn: #e8a94f;
     --warn-soft: #372a14;
     --ok: #7cc68a;
@@ -299,6 +303,12 @@
 body {
   margin: 0;
   background: var(--bg);
+}
+
+/* Selected text looks the same in every pane and does not follow the system's colour (#245).
+   No `color`: the text keeps its own. */
+::selection {
+  background-color: var(--text-selection);
 }
 
 input,
